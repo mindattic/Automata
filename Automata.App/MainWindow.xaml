@@ -1,0 +1,22 @@
+<Window x:Class="Automata.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Automata" Height="1000" Width="1400"
+        WindowStartupLocation="Manual" Left="0" Top="0">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="380" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Control panel: navigate/run controls + live log. Plain WebView2 + vanilla JS
+             (wwwroot/panel.html) — proven pattern from Prose.KdpPublish (BlazorWebView had an
+             unresolved click/interactivity bug in this hosting combination there). -->
+        <wv2:WebView2 x:Name="ControlPanel" Grid.Column="0" />
+
+        <!-- The live target-site browser surface. Persistent user-data folder (set in
+             code-behind) so a site login only has to happen once. -->
+        <wv2:WebView2 x:Name="TargetBrowser" Grid.Column="1" />
+    </Grid>
+</Window>

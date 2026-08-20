@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Automata</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <h1>Automata</h1>
+
+  <section>
+    <label for="url">Navigate</label>
+    <div class="row">
+      <input id="url" type="text" placeholder="https://www.google.com" />
+      <button id="go">Go</button>
+    </div>
+  </section>
+
+  <section>
+    <label for="task">Task</label>
+    <textarea id="task" rows="4" placeholder="e.g. search for 'cats' and report the first 5 result titles"></textarea>
+    <div class="row">
+      <button id="run">Run</button>
+      <button id="cancel" disabled>Cancel</button>
+    </div>
+  </section>
+
+  <section class="log-section">
+    <label>Log</label>
+    <div id="log"></div>
+  </section>
+
+<script>
+  (function () {
+    var logEl = document.getElementById('log');
+    var runBtn = document.getElementById('run');
+    var cancelBtn = document.getElementById('cancel');
+
+    function post(action, data) {
+      window.chrome.webview.postMessage(Object.assign({ action: action }, data || {}));
+    }
+
+    document.getElementById('go').addEventListener('click', function () {
+      var url = document.getElementById('url').value.trim();
+      if (url) post('navigate', { url: url });
+    });
+
+    runBtn.addEventListener('click', function () {
+      var task = document.getElementById('task').value.trim();
+      if (task) post('run', { task: task });
+    });
+
+    cancelBtn.addEventListener('click', function () { post('cancel'); });
+
+    window.ssPanel = {
+      onLog: function (line) {
+        var div = document.createElement('div');
+        div.className = 'log-line';
+        div.textContent = line;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+      },
+      onRunState: function (running) {
+        runBtn.disabled = running;
+        cancelBtn.disabled = !running;
+      },
+    };
+
+    post('ready');
+  })();
+</script>
+</body>
+</html>
