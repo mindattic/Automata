@@ -35,8 +35,8 @@ real example in front of you —
 1. *"A Collection is a group of Tasks"* → OK creates the **Google Searches** collection.
 2. *"A Task is a member of a Collection; a Task is a group of Steps that run in order"* → OK
    creates the **Wolf Tshirts** task.
-3. The sample steps appear (navigate to Google, type *wolf tshirts*, press Enter, then
-   verify/extract the first result), and a final popup says to click **Run**.
+3. The sample steps appear (navigate to Google, type *wolf tshirts*, press Enter, wait for the
+   results, then click **Images**), and a final popup says to click **Run**.
 
 Run it, watch the steps light up, then poke at everything else — the rest of the app works the
 way that example looks.

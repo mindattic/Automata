@@ -623,16 +623,13 @@
                 }, children: [],
             },
             {
-                id: newId(), action: 'group', label: 'Verify results', children: [
-                    {
-                        id: newId(), action: 'waitForElement', label: 'Results container',
-                        target: { tag: 'div', id: 'search', cssSelector: '#search', classList: [] }, children: [],
-                    },
-                    {
-                        id: newId(), action: 'extractText', label: 'First result title',
-                        target: { tag: 'h3', cssSelector: '#search h3', classList: [] }, children: [],
-                    },
-                ],
+                id: newId(), action: 'waitForElement', label: 'Wait for results',
+                target: { tag: 'div', id: 'search', cssSelector: '#search', classList: [] }, children: [],
+            },
+            {
+                // The results page's "Images" tab — found by its visible link text.
+                id: newId(), action: 'click', label: "Click 'Images'",
+                target: { tag: 'a', visibleText: 'Images', classList: [] }, children: [],
             },
         ];
     }
