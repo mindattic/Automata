@@ -11,6 +11,11 @@ public interface IBrowserSurface
     /// <summary>The current page's URL.</summary>
     string CurrentUrl { get; }
 
+    /// <summary>Navigate the pane to <paramref name="url"/> and complete when the navigation
+    /// finishes (success or failure) — implementations must enforce their own timeout so a page
+    /// that never fires navigation-completed can't hang a replay run forever.</summary>
+    Task NavigateAsync(string url, CancellationToken ct);
+
     /// <summary>Evaluate JavaScript on the current page and return its result. Implementations
     /// are expected to enforce their own hard timeout — a blocked renderer (e.g. a native
     /// alert/confirm dialog) must never hang the caller forever.</summary>

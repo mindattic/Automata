@@ -47,14 +47,8 @@ public class SetFieldTool : IBrowserTool
 
         var script = $$"""
         (function() {
-            function apply(el) {
-                var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-                var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-                setter.call(el, {{valueJs}});
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.blur();
-            }
+            {{Automation.Replay.BrowserActions.NativeSetterJsFunction(valueJs)}}
+            var apply = __automataApplyValue;
 
             var byId = document.getElementById({{idJs}});
             if (byId) { apply(byId); return JSON.stringify({ found: true, strategy: 'id', elementId: {{idJs}}, value: byId.value }); }

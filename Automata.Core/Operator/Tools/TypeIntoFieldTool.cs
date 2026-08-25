@@ -80,15 +80,8 @@ public class TypeIntoFieldTool : IBrowserTool
         // A real click both focuses the field AND (via its native text-input behavior) puts the
         // caret in it — then a real select-all + real typing replaces the existing value with
         // exactly what a human typing over it would produce.
-        await ctx.Browser.ClickAtPointAsync(centerX, centerY, ct);
-        await Task.Delay(150, ct);
-        await ctx.Browser.EvalAsync("(function(){ var el = document.activeElement; if (el && el.select) el.select(); return 'ok'; })()", ct);
-        await Task.Delay(100, ct);
-        await ctx.Browser.TypeTextAsync(text, ct);
-        await Task.Delay(200, ct);
-
-        var readBack = await ctx.Browser.EvalAsync("(function(){ var el = document.activeElement; return JSON.stringify({ value: el ? el.value : null }); })()", ct);
-        using var readDoc = JsonDocument.Parse(readBack);
-        return JsonSerializer.Serialize(new { found = true, typed = text, value = readDoc.RootElement.GetProperty("value").GetString() });
+        var value = await Automation.Replay.BrowserActions.TypeViaKeystrokesAsync(
+            ctx.Browser, centerX, centerY, text, ct);
+        return JsonSerializer.Serialize(new { found = true, typed = text, value });
     }
 }

@@ -20,6 +20,13 @@ public sealed class FakeBrowserSurface : IBrowserSurface
     /// <summary>Used when the queue is empty. Defaults to "{}".</summary>
     public Func<string, string> DefaultEvalResponse { get; set; } = _ => "{}";
 
+    public Task NavigateAsync(string url, CancellationToken ct)
+    {
+        Calls.Add(("Navigate", url));
+        CurrentUrl = url;
+        return Task.CompletedTask;
+    }
+
     public Task<string> EvalAsync(string script, CancellationToken ct)
     {
         Calls.Add(("Eval", script));

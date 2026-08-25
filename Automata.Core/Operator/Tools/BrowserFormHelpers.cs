@@ -24,10 +24,16 @@ public static class BrowserFormHelpers
 
     /// <summary>True (plus the matched snippet) if the page shows a visible, short status/progress
     /// element whose text matches <paramref name="processingWordsPattern"/>.</summary>
-    public static async Task<(bool IsProcessing, string? Indicator)> CheckIsProcessingAsync(
+    public static Task<(bool IsProcessing, string? Indicator)> CheckIsProcessingAsync(
         BrowserOperatorContext ctx, string processingWordsPattern, CancellationToken ct)
+        => CheckIsProcessingAsync(ctx.Browser, processingWordsPattern, ct);
+
+    /// <summary>Surface-based overload so callers without a tool context (the replay engine's
+    /// settle-wait) share the same page-busy detector.</summary>
+    public static async Task<(bool IsProcessing, string? Indicator)> CheckIsProcessingAsync(
+        IBrowserSurface browser, string processingWordsPattern, CancellationToken ct)
     {
-        var result = await ctx.Browser.EvalAsync(ProcessingCheckScript(processingWordsPattern), ct);
+        var result = await browser.EvalAsync(ProcessingCheckScript(processingWordsPattern), ct);
         using var doc = JsonDocument.Parse(result);
         var root = doc.RootElement;
         var isProcessing = root.GetProperty("isProcessing").GetBoolean();

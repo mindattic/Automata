@@ -17,6 +17,30 @@ public class WebView2BrowserSurface : IBrowserSurface
 
     public string CurrentUrl => core.Source;
 
+    // Navigations get a longer leash than script calls — a cold page over a slow connection can
+    // legitimately take a while, and the caller (replay engine) budgets per-step anyway.
+    private static readonly TimeSpan NavigationTimeout = TimeSpan.FromSeconds(60);
+
+    public async Task NavigateAsync(string url, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Handler(object? sender, CoreWebView2NavigationCompletedEventArgs e) => tcs.TrySetResult();
+
+        core.NavigationCompleted += Handler;
+        try
+        {
+            core.Navigate(url);
+            var winner = await Task.WhenAny(tcs.Task, Task.Delay(NavigationTimeout, ct));
+            if (winner != tcs.Task)
+                throw new TimeoutException($"Navigation to {url} did not complete within {NavigationTimeout.TotalSeconds}s.");
+            await tcs.Task;
+        }
+        finally
+        {
+            core.NavigationCompleted -= Handler;
+        }
+    }
+
     // ExecuteScriptAsync/CallDevToolsProtocolMethodAsync take no CancellationToken and have no
     // built-in timeout — if the renderer's JS thread is ever blocked (a native alert/confirm
     // dialog, a print dialog, anything else that steals the message loop), the awaited call
