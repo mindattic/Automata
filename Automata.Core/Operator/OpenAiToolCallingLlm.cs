@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MindAttic.Legion;
 
@@ -25,6 +26,11 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
 
     public string Name => "OpenAI";
 
+    // Both public ctors start (HttpClient, ILogger, …), which makes the typed-client factory's
+    // constructor selection ambiguous — ActivatorUtilities throws at resolve time without this
+    // attribute pinning the production one (crashed at startup once ReplayEngine began resolving
+    // BrowserOperatorService eagerly).
+    [ActivatorUtilitiesConstructor]
     public OpenAiToolCallingLlm(HttpClient http, ILogger<OpenAiToolCallingLlm> log)
     {
         this.http = http;
