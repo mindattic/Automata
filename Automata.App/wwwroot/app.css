@@ -267,6 +267,13 @@ details[open] > summary { margin-bottom: 6px; }
 
 .modal-box .row { justify-content: flex-end; margin-top: 10px; }
 
+#modal-msg {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #ccc;
+}
+
 button.secondary { background: #3a3a3a; color: #ccc; }
 button.secondary:hover { background: #4a4a4a; }
 

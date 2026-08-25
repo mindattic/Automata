@@ -268,18 +268,39 @@
         });
     }
 
-    // ---- rename modal ----------------------------------------------------------------------
+    // ---- modal (rename + info modes) -------------------------------------------------------
 
     var modalCommit = null;
+    var modalIsInfo = false;
 
     function openRenameModal(title, currentName, onCommit) {
+        modalIsInfo = false;
         $('modal-title').textContent = title;
+        $('modal-msg').classList.add('hidden');
         var input = $('modal-input');
+        input.classList.remove('hidden');
+        $('modal-cancel').classList.remove('hidden');
+        $('modal-ok').textContent = 'Rename';
         input.value = currentName;
         modalCommit = onCommit;
         $('modal').classList.remove('hidden');
         input.focus();
         input.select();
+    }
+
+    // Message + single OK button — used by the first-run tutorial. Dismissing any other way
+    // (Escape, backdrop) counts as OK so a stray click can never strand the tutorial mid-flow.
+    function openInfoModal(title, message, onOk) {
+        modalIsInfo = true;
+        $('modal-title').textContent = title;
+        $('modal-msg').textContent = message;
+        $('modal-msg').classList.remove('hidden');
+        $('modal-input').classList.add('hidden');
+        $('modal-cancel').classList.add('hidden');
+        $('modal-ok').textContent = 'OK';
+        modalCommit = onOk;
+        $('modal').classList.remove('hidden');
+        $('modal-ok').focus();
     }
 
     function closeModal() {
@@ -288,10 +309,16 @@
     }
 
     function commitModal() {
+        var isInfo = modalIsInfo;
         var name = $('modal-input').value.trim();
         var commit = modalCommit;
         closeModal();
-        if (name && commit) commit(name);
+        if (commit && (isInfo || name)) commit(isInfo ? null : name);
+    }
+
+    function dismissModal() {
+        if (modalIsInfo) commitModal();   // tutorial popups always advance
+        else closeModal();
     }
 
     $('modal-ok').addEventListener('click', commitModal);
@@ -300,8 +327,11 @@
         if (e.key === 'Enter') commitModal();
         if (e.key === 'Escape') closeModal();
     });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) dismissModal();
+    });
     $('modal').addEventListener('mousedown', function (e) {
-        if (e.target === $('modal')) closeModal();   // click on the backdrop cancels
+        if (e.target === $('modal')) dismissModal();
     });
 
     function inlineRename(nodeEl, action, id) {
@@ -437,6 +467,102 @@
         });
     }
 
+    // ---- first-run tutorial ----------------------------------------------------------------
+
+    // When the app opens onto an empty store, walk the user through the model by building a
+    // real example in front of them: Collection → Task → Steps, one OK-gated popup per concept.
+    // Evaluated only on the FIRST state push of the session, so deleting everything later
+    // doesn't restart the tour mid-work.
+    var tutorialStage = 0;
+    var tutorialChecked = false;
+
+    function tutorialSteps() {
+        return [
+            { id: newId(), action: 'navigate', label: 'Go to Google', url: 'https://www.google.com', children: [] },
+            {
+                id: newId(), action: 'typeText', label: "Type 'wolf tshirts' into Search", value: 'wolf tshirts',
+                target: {
+                    tag: 'textarea', nameAttr: 'q', ariaRole: 'combobox', ariaLabel: 'Search',
+                    cssSelector: 'textarea[name="q"]', classList: [],
+                }, children: [],
+            },
+            {
+                id: newId(), action: 'click', label: "Click 'Google Search'", isCommitPoint: true,
+                target: {
+                    tag: 'input', typeAttr: 'submit', nameAttr: 'btnK', visibleText: 'Google Search',
+                    ariaLabel: 'Google Search', cssSelector: 'input[name="btnK"]', classList: [],
+                }, children: [],
+            },
+            {
+                id: newId(), action: 'group', label: 'Verify results', children: [
+                    {
+                        id: newId(), action: 'waitForElement', label: 'Results container',
+                        target: { tag: 'div', id: 'search', cssSelector: '#search', classList: [] }, children: [],
+                    },
+                    {
+                        id: newId(), action: 'extractText', label: 'First result title',
+                        target: { tag: 'h3', cssSelector: '#search h3', classList: [] }, children: [],
+                    },
+                ],
+            },
+        ];
+    }
+
+    function maybeStartTutorial() {
+        if (tutorialChecked) return;
+        tutorialChecked = true;
+        if (state.collections.length > 0) return;
+        tutorialStage = 1;
+        openInfoModal('Welcome to Automata',
+            "A Collection is a group of Tasks. Everything you automate lives inside one. " +
+            "Press OK to create your first Collection: 'Google Searches'.",
+            function () { post('createCollection', { name: 'Google Searches' }); });
+    }
+
+    // Each stage waits for the host to echo the object it just created back through onState,
+    // then shows the next popup — creation is visibly paused on each OK.
+    function advanceTutorial() {
+        if (!tutorialStage) return;
+
+        if (tutorialStage === 1) {
+            var col = state.collections.find(function (c) { return c.name === 'Google Searches'; });
+            if (!col) return;
+            tutorialStage = 2;
+            state.sel = { collectionId: col.id, taskId: null, stepId: null };
+            render();
+            openInfoModal('Tasks',
+                "A Task is a member of a Collection. A Task is a group of Steps that run in " +
+                "order — each Step is one browser action (navigate, type, click, extract…). " +
+                "Press OK to create the Task 'Wolf Tshirts'.",
+                function () { post('createTask', { collectionId: col.id, name: 'Wolf Tshirts' }); });
+            return;
+        }
+
+        if (tutorialStage === 2) {
+            var col2 = state.collections.find(function (c) { return c.name === 'Google Searches'; });
+            var task = col2 && (col2.tasks || []).find(function (t) { return t.name === 'Wolf Tshirts'; });
+            if (!task) return;
+            tutorialStage = 3;
+            task.steps = tutorialSteps();
+            state.sel = { collectionId: col2.id, taskId: task.id, stepId: null };
+            state.expanded[task.id] = true;
+            saveTask(task);
+            return;
+        }
+
+        if (tutorialStage === 3) {
+            var done = state.sel.taskId && findTask(state.sel.taskId);
+            if (!done || !(done.steps || []).length) return;
+            tutorialStage = 0;
+            render();
+            openInfoModal('Run it',
+                "Click Run to execute a Task's Steps. Dry Run stops before the ◆ commit-point " +
+                "step, and Validate just highlights each element without doing anything. " +
+                "Click any Step to edit it, or press ● Record to capture your own.",
+                null);
+        }
+    }
+
     // ---- recording preview ---------------------------------------------------------------------
 
     function renderRecPreview(steps) {
@@ -473,6 +599,8 @@
             if (state.sel.taskId && !findTask(state.sel.taskId)) state.sel.taskId = state.sel.stepId = null;
             if (state.sel.collectionId && !findCollection(state.sel.collectionId)) state.sel.collectionId = null;
             render();
+            maybeStartTutorial();
+            advanceTutorial();
         },
         onStepEvent: function (e) {
             state.stepStatus[e.stepId] = e.status;
