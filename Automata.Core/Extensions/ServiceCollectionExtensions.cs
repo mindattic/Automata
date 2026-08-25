@@ -40,6 +40,8 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(sp =>
             new CollectionStore(rootPath: null, sp.GetRequiredService<ILogger<CollectionStore>>()));
+        services.AddSingleton(sp => new ArchiveService(
+            sp.GetRequiredService<CollectionStore>(), sp.GetRequiredService<ILogger<ArchiveService>>()));
 
         return services;
     }
