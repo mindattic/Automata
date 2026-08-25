@@ -17,10 +17,22 @@ public partial class MainWindow : Window
 {
     private IBrowserSurface? targetBrowser;
     private CancellationTokenSource? runCts;
+    private readonly AutomationController controller;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        controller = new AutomationController(
+            App.Services.GetRequiredService<Automata.Core.Automation.Storage.CollectionStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Storage.ArchiveService>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Replay.ReplayEngine>(),
+            () => targetBrowser,
+            () => TargetBrowser.CoreWebView2,
+            script => ControlPanel.CoreWebView2 == null
+                ? Task.CompletedTask
+                : TryExecuteScriptAsync(ControlPanel.CoreWebView2, script),
+            PostLogAsync);
 
 #if DEBUG
         KeyDown += (_, e) =>
@@ -86,9 +98,28 @@ public partial class MainWindow : Window
             args.Accept();
         };
 
+        // The recorder rides along on every document, dormant until the Record button arms it.
+        // fingerprint.js is Automata.Core's embedded resource; recorder.js ships in wwwroot.
+        var recorderJs = Automata.Core.Automation.AutomationScripts.FingerprintJs + "\n" +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wwwroot", "target", "recorder.js"));
+        await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(recorderJs);
+        TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;
+        TargetBrowser.CoreWebView2.NavigationCompleted += (_, _) =>
+            _ = controller.OnTargetNavigationCompletedAsync(TargetBrowser.CoreWebView2.Source);
+
         TargetBrowser.CoreWebView2.Navigate("about:blank");
 
         targetBrowser = new WebView2BrowserSurface(TargetBrowser.CoreWebView2);
+    }
+
+    private void OnTargetMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        JsonNode? msg;
+        try { msg = JsonNode.Parse(args.WebMessageAsJson); }
+        catch { return; }
+        // Only the injected recorder's envelope is trusted; anything else a page posts is noise.
+        if (msg?["source"]?.GetValue<string>() != "automata-recorder") return;
+        _ = controller.HandleRecorderMessageAsync(msg!);
     }
 
     private async void OnControlPanelMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
@@ -113,6 +144,10 @@ public partial class MainWindow : Window
                     break;
                 case "cancel":
                     runCts?.Cancel();
+                    break;
+                default:
+                    if (action != null && msg != null)
+                        await controller.TryHandlePanelMessageAsync(action, msg);
                     break;
             }
         }
