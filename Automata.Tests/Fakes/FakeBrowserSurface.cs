@@ -51,4 +51,10 @@ public sealed class FakeBrowserSurface : IBrowserSurface
         Calls.Add(("TypeText", text));
         return Task.CompletedTask;
     }
+
+    public Task PressEnterAsync(CancellationToken ct)
+    {
+        Calls.Add(("PressEnter", ""));
+        return Task.CompletedTask;
+    }
 }

@@ -21,7 +21,7 @@ public enum StepStatus
 /// </summary>
 public abstract record StepEvent
 {
-    public sealed record RunStarted(string TaskId, string TaskName, ReplayMode Mode) : StepEvent;
+    public sealed record RunStarted(string TaskId, string TaskName) : StepEvent;
 
     public sealed record StepStarted(string StepId, string Label) : StepEvent;
 

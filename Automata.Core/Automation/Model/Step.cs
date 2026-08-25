@@ -20,6 +20,13 @@ public enum StepAction
     /// </summary>
     SetValue,
 
+    /// <summary>
+    /// Press the Enter key (real CDP key event). With a <see cref="Step.Target"/>, the element
+    /// is focused first; without one, Enter goes to whatever currently has focus — the way to
+    /// submit search boxes and Enter-to-submit forms where clicking a button is unreliable.
+    /// </summary>
+    PressEnter,
+
     /// <summary>Ensure the target checkbox ends up checked.</summary>
     Check,
 

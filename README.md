@@ -35,9 +35,8 @@ real example in front of you —
 1. *"A Collection is a group of Tasks"* → OK creates the **Google Searches** collection.
 2. *"A Task is a member of a Collection; a Task is a group of Steps that run in order"* → OK
    creates the **Wolf Tshirts** task.
-3. The sample steps appear (navigate to Google, type *wolf tshirts*, click Search — flagged ◆ as
-   a commit point — then verify/extract the first result), and a final popup says to click
-   **Run**.
+3. The sample steps appear (navigate to Google, type *wolf tshirts*, press Enter, then
+   verify/extract the first result), and a final popup says to click **Run**.
 
 Run it, watch the steps light up, then poke at everything else — the rest of the app works the
 way that example looks.
@@ -59,6 +58,7 @@ way that example looks.
 | `click` | Trusted CDP mouse click at the element's center |
 | `typeText` | Real CDP keystrokes (for fields with `onkeydown`-style logic) |
 | `setValue` | Native-property-setter + input/change events (React-safe, fast) |
+| `pressEnter` | Real Enter key press (submits search boxes / Enter-to-submit forms) |
 | `check` / `uncheck` | Ensure a checkbox's final state (native or `role=checkbox` widget) |
 | `selectRadio` | Select a radio input or `role=radio` widget |
 | `selectOption` | Pick a `<select>` option by visible text |
@@ -71,8 +71,8 @@ way that example looks.
 Two per-step flags:
 
 - **`pauseForUser`** — replay halts before the step until you press **Continue**.
-- **`isCommitPoint`** — marks a permanent-write boundary (submit/save/purchase). Auto-flagged at
-  record time for submit-looking clicks; toggle it in the editor.
+- **`isCommitPoint`** — informational ◆ marker for steps that commit a permanent write
+  (submit/save/purchase). Auto-flagged at record time for submit-looking clicks.
 
 ## Recording
 
@@ -92,23 +92,21 @@ Notes:
 
 - **Tree**: hover a collection or task row for its buttons — **+task/+step**, **✎ rename**
   (opens a modal), **⧉ duplicate**, **🗑 delete**. Double-click a name for quick inline rename.
+- **Insert between steps**: hover the gap between two step rows — a "＋ add step here" sliver
+  appears; clicking it opens a picker listing every action, and the new step lands exactly
+  there, selected in the editor.
 - **Step editor**: click any step — typed action dropdown, label, value/URL, editable target
   fingerprint fields, `pause for user` / `commit point` flags, timeout, add-substep/delete.
 - **Drag & drop**: drag steps to reorder (drop on a row's middle to nest as a substep); drag a
-  task onto another collection to move it; drag anything to the trash zone to delete.
+  task onto another collection to move it.
+- **Deletes always confirm**: every delete (collection, task, step) opens a purpose-built
+  confirm modal — Escape or clicking away cancels; destruction takes an explicit click.
 
 ## Replaying
 
-Select a task, then:
-
-- **▶ Run** — execute everything.
-- **Dry Run** — execute for real but **stop before** the first `isCommitPoint` step: exercises
-  the whole flow without committing any permanent submission.
-- **Validate** — resolve and flash-highlight every step's element, mutating nothing
-  (`navigate` steps still execute so multi-page tasks validate end-to-end).
-
-Step rows light up live (running / passed / failed / healed / paused). Every run also writes a
-log file to `Documents\Automata\Logs\<timestamp>-<task>.log`.
+Select a task and click **▶ Run**. Step rows light up live (running / passed / failed / healed /
+paused); `pauseForUser` steps hold until **Continue**. Every run also writes a log file to
+`Documents\Automata\Logs\<timestamp>-<task>.log`.
 
 ### Self-healing element resolution
 
@@ -161,6 +159,16 @@ The **📁 button** in the sidebar toolbar opens the Collections folder in File 
 names get ` (2)` suffixes, and a task imported without its collection lands in an auto-created
 **Imported** collection.
 
+## Settings
+
+The **⚙ Settings** fold-out in the sidebar holds:
+
+- **Anthropic key (BYO-key)** — an API key that overrides the default credential chain
+  (Claude Code OAuth session → shared MindAttic credential store) for the AI paths. The escape
+  hatch when the OAuth session is rate-limited or out of quota. Saved to
+  `%APPDATA%\MindAttic\Automata\settings.json`; takes effect on the next run, no restart.
+- **Border radius** — 0–10px slider (default 5) rounding every button and input, applied live.
+
 ## Free-text AI mode (advanced)
 
 The original plain-English path is folded under *AI task (advanced)*: type an instruction and an
@@ -175,9 +183,9 @@ MindAttic.Vault.
 Automata.App    WPF host: two WebView2 panes, postMessage bridge, AutomationController
 Automata.Core   engine: model, name-based store, zip archive, fingerprint/resolver JS (embedded),
                 replay engine, recorder coalescer, LLM tool loop — WebView2-free (IBrowserSurface)
-Automata.Tests  NUnit 4 — 75 tests over model, store (incl. name round-trip, healing, migration),
-                archive, resolver, replay, recorder, logs
+Automata.Tests  NUnit 4 — 78 tests over model, store (incl. name round-trip and healing),
+                archive, resolver, replay, recorder, settings, logs
 ```
 
 Known limitations (v2): top-document, light-DOM only (no cross-origin iframes / shadow roots);
-Enter-to-submit-only sites need a recorded click or navigation; single app instance assumed.
+single app instance assumed.

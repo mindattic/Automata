@@ -51,6 +51,18 @@ public static partial class RecorderSessionBuilder
                 case "change":
                     OnChange(steps, evt);
                     break;
+
+                case "key":
+                    if (evt.Value == "Enter" && evt.Fingerprint != null)
+                    {
+                        steps.Add(new Step
+                        {
+                            Action = StepAction.PressEnter,
+                            Target = evt.Fingerprint,
+                            Label = $"Press Enter in {TargetName(evt.Fingerprint)}",
+                        });
+                    }
+                    break;
             }
         }
         return steps;
@@ -148,6 +160,15 @@ public static partial class RecorderSessionBuilder
                 if (last is { Action: StepAction.TypeText } && SameElement(last.Target, evt.Fingerprint))
                 {
                     ApplyTypedValue(last, evt);
+                    return;
+                }
+                // Enter fires keydown BEFORE the field's change event: look past a trailing
+                // PressEnter so the change still folds into the typing burst behind it.
+                if (last is { Action: StepAction.PressEnter } && steps.Count >= 2
+                    && steps[^2] is { Action: StepAction.TypeText } typed
+                    && SameElement(typed.Target, evt.Fingerprint))
+                {
+                    ApplyTypedValue(typed, evt);
                     return;
                 }
                 // A change with no typing behind it (autofill, paste via menu) → direct SetValue.

@@ -15,8 +15,19 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAutomataCore(this IServiceCollection services)
     {
+        services.AddSingleton<AutomataSettingsStore>();
+
         services.AddHttpClient<AnthropicToolClient>();
-        services.AddSingleton<AnthropicToolCallingLlm>();
+        // BYO-key: a key saved in the sidebar's Settings overrides the default credential chain
+        // (Claude Code OAuth → shared credential store). Resolved live per call, so saving a key
+        // takes effect without a restart.
+        services.AddSingleton(sp => new AnthropicToolCallingLlm(
+            sp.GetRequiredService<AnthropicToolClient>(),
+            () =>
+            {
+                var byoKey = sp.GetRequiredService<AutomataSettingsStore>().Load().AnthropicApiKey;
+                return !string.IsNullOrWhiteSpace(byoKey) ? byoKey : AnthropicToolCallingLlm.DefaultResolveApiKey();
+            }));
 
         services.AddHttpClient<OpenAiToolCallingLlm>();
 

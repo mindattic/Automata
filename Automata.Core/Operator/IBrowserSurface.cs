@@ -37,4 +37,10 @@ public interface IBrowserSurface
     /// derived-value logic only fires off genuine keyboard events, not a value set via a
     /// property-setter + dispatched input/change events.</summary>
     Task TypeTextAsync(string text, CancellationToken ct);
+
+    /// <summary>Press Enter as a real, trusted key event (virtual key code and all) into
+    /// whatever element currently has focus. TypeTextAsync's plain text-carrying key events
+    /// don't fire keydown handlers listening for keyCode 13, so form-submit-on-Enter needs
+    /// this dedicated dispatch.</summary>
+    Task PressEnterAsync(CancellationToken ct);
 }

@@ -189,6 +189,23 @@ public class RecorderCoalescingTests
     }
 
     [Test]
+    public void EnterKeydown_BecomesPressEnterStep_AfterTheTypingBurst()
+    {
+        var q = Field("textarea[name=q]", label: "Search");
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("input", q, "text", "cats"),
+            Ev("key", q, "text", value: "Enter"),
+            Ev("change", q, "text", "cats"),   // change fires AFTER the Enter keydown
+        ]);
+
+        Assert.That(steps.Select(s => s.Action),
+            Is.EqualTo(new[] { StepAction.TypeText, StepAction.PressEnter }));
+        Assert.That(steps[0].Value, Is.EqualTo("cats"));   // change folded into the burst
+        Assert.That(steps[1].Label, Does.Contain("Enter").And.Contain("Search"));
+    }
+
+    [Test]
     public void FullRecordingScenario_ProducesCleanStepList()
     {
         var q = Field("textarea[name=q]", label: "Search");

@@ -102,9 +102,17 @@
         post(payload);
     }
 
+    function onKeydown(e) {
+        if (!enabled || e.key !== 'Enter') return;
+        var el = e.target;
+        if (!el || el.nodeType !== 1 || targetKind(el) !== 'text') return;
+        post({ kind: 'key', value: 'Enter', targetKind: 'text', fingerprint: window.__automataFingerprint(el) });
+    }
+
     document.addEventListener('click', onClick, true);
     document.addEventListener('input', onInput, true);
     document.addEventListener('change', onChange, true);
+    document.addEventListener('keydown', onKeydown, true);
 
     window.__automataRecorder = {
         enable: function () { enabled = true; },

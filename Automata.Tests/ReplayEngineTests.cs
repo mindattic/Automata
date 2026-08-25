@@ -10,9 +10,8 @@ public class ReplayEngineTests
 {
     private static ReplayEngine Engine() => new(new FingerprintResolver { PollIntervalMs = 10 });
 
-    private static ReplayOptions Options(ReplayMode mode = ReplayMode.Run, ReplayControl? control = null) => new()
+    private static ReplayOptions Options(ReplayControl? control = null) => new()
     {
-        Mode = mode,
         DefaultStepTimeoutMs = 300,
         SettlePollMs = 1,
         Control = control ?? new ReplayControl(),
@@ -87,28 +86,40 @@ public class ReplayEngineTests
     }
 
     [Test]
-    public async Task DryRun_StopsBeforeCommitPoint_WithoutExecutingIt()
+    public async Task PressEnter_WithoutTarget_SendsEnterToFocusedElement()
     {
         var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
         var task = new TaskDefinition
         {
             Name = "T",
-            Steps =
-            [
-                new Step { Id = "s1", Action = StepAction.SetValue, Label = "Fill", Value = "cats", Target = Target() },
-                new Step { Id = "s2", Action = StepAction.Click, Label = "Submit", IsCommitPoint = true, Target = Target() },
-                new Step { Id = "s3", Action = StepAction.SetValue, Label = "After", Value = "cats", Target = Target() },
-            ],
+            Steps = [new Step { Id = "e1", Action = StepAction.PressEnter, Label = "Press Enter" }],
         };
 
-        var events = await RunToEnd(Engine(), task, Options(ReplayMode.DryRun), browser);
+        var events = await RunToEnd(Engine(), task, Options(), browser);
 
-        var commit = events.OfType<StepEvent.StepCompleted>().Single(c => c.StepId == "s2");
-        Assert.That(commit.Status, Is.EqualTo(StepStatus.Skipped));
-        Assert.That(events.OfType<StepEvent.StepStarted>().Select(s => s.StepId), Does.Not.Contain("s2"));
-        Assert.That(events.OfType<StepEvent.StepStarted>().Select(s => s.StepId), Does.Not.Contain("s3"));
+        Assert.That(browser.Calls.Any(c => c.Method == "PressEnter"), Is.True);
+        Assert.That(browser.Calls.Any(c => c.Method == "ClickAtPoint"), Is.False); // nothing to focus
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Passed));
         Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
-        Assert.That(browser.Calls.Any(c => c.Method == "ClickAtPoint"), Is.False); // commit never clicked
+    }
+
+    [Test]
+    public async Task PressEnter_WithTarget_FocusesItFirst()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "e1", Action = StepAction.PressEnter, Label = "Press Enter", Target = Target() }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var clickIndex = browser.Calls.FindIndex(c => c.Method == "ClickAtPoint");
+        var enterIndex = browser.Calls.FindIndex(c => c.Method == "PressEnter");
+        Assert.That(clickIndex, Is.GreaterThanOrEqualTo(0));
+        Assert.That(enterIndex, Is.GreaterThan(clickIndex)); // focus click precedes Enter
+        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
     }
 
     [Test]
@@ -148,31 +159,6 @@ public class ReplayEngineTests
         Assert.That(finished, Is.EqualTo(run));
         lock (events)
             Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
-    }
-
-    [Test]
-    public async Task Validate_ResolvesAndNavigates_ButNeverMutates()
-    {
-        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
-        var task = new TaskDefinition
-        {
-            Name = "T",
-            Steps =
-            [
-                new Step { Id = "n", Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" },
-                new Step { Id = "c", Action = StepAction.Click, Label = "Click", Target = Target() },
-                new Step { Id = "t", Action = StepAction.TypeText, Label = "Type", Value = "cats", Target = Target() },
-            ],
-        };
-
-        var events = await RunToEnd(Engine(), task, Options(ReplayMode.Validate), browser);
-
-        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
-        Assert.That(events.OfType<StepEvent.StepCompleted>().Count(c => c.Status == StepStatus.Passed), Is.EqualTo(3));
-        Assert.That(browser.Calls.Any(c => c.Method == "ClickAtPoint"), Is.False);
-        Assert.That(browser.Calls.Any(c => c.Method == "TypeText"), Is.False);
-        Assert.That(browser.Calls.Any(c => c.Method == "Navigate"), Is.True);   // multi-page validate
-        Assert.That(browser.Calls.Any(c => c.Method == "Eval" && c.Args.Contains("__automataResolve(")), Is.True);
     }
 
     [Test]
@@ -268,7 +254,6 @@ public class ReplayEngineTests
         };
         var options = new ReplayOptions
         {
-            Mode = ReplayMode.Run,
             AllowLlmRepair = true,
             DefaultStepTimeoutMs = 50,
             SettlePollMs = 1,

@@ -4,21 +4,20 @@
 <meta charset="utf-8" />
 <title>Automata</title>
 <link rel="stylesheet" href="app.css" />
+<link rel="stylesheet" href="tooltip.css" />
 </head>
 <body>
   <header>
     <h1>Automata</h1>
     <div class="toolbar">
-      <button id="btn-record" title="Record your actions in the browser pane into steps">● Record</button>
-      <button id="btn-stop" disabled title="Stop recording and save the captured steps">■ Stop</button>
-      <button id="btn-run" disabled title="Run the selected task for real">▶ Run</button>
-      <button id="btn-dryrun" disabled title="Execute but stop before the first commit-point step">Dry Run</button>
-      <button id="btn-validate" disabled title="Resolve + highlight every element, change nothing">Validate</button>
-      <button id="btn-continue" disabled title="Resume a run paused by a wait-for-user step">➤ Continue</button>
-      <button id="btn-cancel-run" disabled title="Cancel the current run">✕</button>
-      <button id="btn-import" title="Import a collection or task from a zip">⇪ Import</button>
-      <button id="btn-export" disabled title="Export the selected collection or task as a zip">⇩ Export</button>
-      <button id="btn-folder" title="Open the Collections folder in File Explorer">📁</button>
+      <button id="btn-record" data-tooltip="Record your actions in the browser pane into steps">● Record</button>
+      <button id="btn-stop" disabled data-tooltip="Stop recording and save the captured steps">■ Stop</button>
+      <button id="btn-run" disabled data-tooltip="Run the selected task's steps">▶ Run</button>
+      <button id="btn-continue" disabled data-tooltip="Resume a run paused by a wait-for-user step">➤ Continue</button>
+      <button id="btn-cancel-run" disabled data-tooltip="Cancel the current run">✕ Cancel</button>
+      <button id="btn-import" data-tooltip="Import a collection or task from a zip">⇪ Import</button>
+      <button id="btn-export" disabled data-tooltip="Export the selected collection or task as a zip">⇩ Export</button>
+      <button id="btn-folder" data-tooltip="Open the Collections folder in File Explorer">📁 Files</button>
     </div>
     <div class="row">
       <input id="url" type="text" placeholder="https://www.google.com" />
@@ -37,10 +36,27 @@
       <button id="btn-new-collection" class="mini">+ collection</button>
     </div>
     <div id="tree"></div>
-    <div id="trash">🗑 drag a task or step here to delete it</div>
   </nav>
 
   <section id="editor" class="hidden"></section>
+
+  <details id="settings">
+    <summary>⚙ Settings</summary>
+    <div class="field">
+      <span>Anthropic key</span>
+      <input type="password" id="set-anthropic-key" placeholder="BYO-key: overrides the default credentials" />
+    </div>
+    <div class="row settings-row">
+      <span id="set-key-status" class="key-status">no override — using default credentials</span>
+      <button id="set-key-save" class="mini">Save key</button>
+      <button id="set-key-clear" class="mini">Clear</button>
+    </div>
+    <div class="field">
+      <span>Border radius</span>
+      <input type="range" id="set-radius" min="0" max="10" step="1" value="5" />
+      <span id="set-radius-value" class="key-status">5px</span>
+    </div>
+  </details>
 
   <details id="advanced">
     <summary>AI task (advanced — free-text, interpreted by an LLM)</summary>
@@ -61,6 +77,7 @@
     <div class="modal-box">
       <label id="modal-title">Rename</label>
       <p id="modal-msg" class="hidden"></p>
+      <div id="modal-list" class="hidden"></div>
       <input type="text" id="modal-input" />
       <div class="row">
         <button id="modal-ok">Rename</button>
@@ -69,6 +86,7 @@
     </div>
   </div>
 
+<script src="tooltip.js"></script>
 <script src="panel.js"></script>
 </body>
 </html>

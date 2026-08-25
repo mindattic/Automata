@@ -95,8 +95,25 @@
 
     // ---- rendering -----------------------------------------------------------------------------
 
-    var ACTIONS = ['navigate', 'click', 'typeText', 'setValue', 'check', 'uncheck', 'selectRadio',
-        'selectOption', 'uploadFile', 'waitForElement', 'assertElement', 'extractText', 'group'];
+    var ACTIONS = ['navigate', 'click', 'typeText', 'setValue', 'pressEnter', 'check', 'uncheck',
+        'selectRadio', 'selectOption', 'uploadFile', 'waitForElement', 'assertElement', 'extractText', 'group'];
+
+    var ACTION_INFO = {
+        navigate: 'Load a URL',
+        click: 'Click an element (trusted mouse click)',
+        typeText: 'Type text with real keystrokes',
+        setValue: 'Set a field’s value directly',
+        pressEnter: 'Press the Enter key (submit a search/form)',
+        check: 'Tick a checkbox',
+        uncheck: 'Untick a checkbox',
+        selectRadio: 'Select a radio option',
+        selectOption: 'Pick a dropdown option by its text',
+        uploadFile: 'Attach a local file to a file input',
+        waitForElement: 'Wait until an element appears',
+        assertElement: 'Fail the run unless an element/text is present',
+        extractText: 'Read an element’s text into the log',
+        group: 'A container that groups substeps',
+    };
 
     var STATUS_GLYPH = { running: '⟳', passed: '✓', healed: '✓♻', failed: '✗', skipped: '▷', paused: '⏸' };
 
@@ -109,10 +126,7 @@
     function renderToolbar() {
         $('btn-record').disabled = state.recording || state.running;
         $('btn-stop').disabled = !state.recording;
-        var hasTask = !!state.sel.taskId;
-        $('btn-run').disabled = !hasTask || state.running || state.recording;
-        $('btn-dryrun').disabled = !hasTask || state.running || state.recording;
-        $('btn-validate').disabled = !hasTask || state.running || state.recording;
+        $('btn-run').disabled = !state.sel.taskId || state.running || state.recording;
         $('btn-continue').disabled = !state.pausedStepId;
         $('btn-cancel-run').disabled = !state.running;
         $('btn-export').disabled = !state.sel.taskId && !state.sel.collectionId;
@@ -127,10 +141,10 @@
                 '<span class="twist">' + (open ? '▾' : '▸') + '</span>' +
                 '<span class="name">' + esc(c.name) + '</span>' +
                 '<span class="node-btns">' +
-                '<button class="mini" data-op="add-task" title="New task">+task</button>' +
-                '<button class="mini" data-op="ren-collection" title="Rename collection">✎</button>' +
-                '<button class="mini" data-op="dup-collection" title="Duplicate collection">⧉</button>' +
-                '<button class="mini" data-op="del-collection" title="Delete collection">🗑</button>' +
+                '<button class="mini" data-op="add-task" data-tooltip="New task">+task</button>' +
+                '<button class="mini" data-op="ren-collection" data-tooltip="Rename collection">✎</button>' +
+                '<button class="mini" data-op="dup-collection" data-tooltip="Duplicate collection">⧉</button>' +
+                '<button class="mini" data-op="del-collection" data-tooltip="Delete collection">🗑</button>' +
                 '</span></div>';
             if (open) {
                 (c.tasks || []).forEach(function (t) {
@@ -141,9 +155,10 @@
                         '<span class="twist">' + (tOpen ? '▾' : '▸') + '</span>' +
                         '<span class="name">' + esc(t.name) + '</span>' +
                         '<span class="node-btns">' +
-                        '<button class="mini" data-op="add-step" title="Add step">+step</button>' +
-                        '<button class="mini" data-op="ren-task" title="Rename task">✎</button>' +
-                        '<button class="mini" data-op="dup-task" title="Duplicate task">⧉</button>' +
+                        '<button class="mini" data-op="add-step" data-tooltip="Add step">+step</button>' +
+                        '<button class="mini" data-op="ren-task" data-tooltip="Rename task">✎</button>' +
+                        '<button class="mini" data-op="dup-task" data-tooltip="Duplicate task">⧉</button>' +
+                        '<button class="mini" data-op="del-task" data-tooltip="Delete task">🗑</button>' +
                         '</span></div>';
                     if (tOpen) html += renderSteps(t, t.steps || [], 0);
                 });
@@ -153,22 +168,34 @@
         wireTree();
     }
 
-    function renderSteps(task, steps, depth) {
+    function renderSteps(task, steps, depth, parentId) {
         var html = '';
-        steps.forEach(function (s) {
+        var pid = parentId || '';
+        steps.forEach(function (s, i) {
+            html += insertZone(task.id, pid, i, depth);
             var status = state.stepStatus[s.id] || '';
             var sel = state.sel.stepId === s.id ? ' selected' : '';
-            var flags = (s.isCommitPoint ? ' <span class="flag commit" title="Commit point — Dry Run stops here">◆</span>' : '') +
-                        (s.pauseForUser ? ' <span class="flag pause" title="Pauses for user">⏸</span>' : '');
+            var flags = (s.isCommitPoint ? ' <span class="flag commit" data-tooltip="Commits a permanent write (submit/save/purchase)">◆</span>' : '') +
+                        (s.pauseForUser ? ' <span class="flag pause" data-tooltip="Pauses for user">⏸</span>' : '');
             html += '<div class="node step' + sel + (status ? ' st-' + status : '') +
                 '" draggable="true" data-step="' + s.id + '" data-task="' + task.id +
                 '" style="padding-left:' + (34 + depth * 14) + 'px">' +
                 '<span class="status">' + (STATUS_GLYPH[status] || '') + '</span>' +
                 '<span class="name">' + esc(s.label || s.action) + '</span>' + flags +
+                '<span class="node-btns"><button class="mini" data-op="del-step" data-tooltip="Delete step">🗑</button></span>' +
                 '</div>';
-            html += renderSteps(task, s.children || [], depth + 1);
+            html += renderSteps(task, s.children || [], depth + 1, s.id);
         });
+        if (steps.length) html += insertZone(task.id, pid, steps.length, depth);
         return html;
+    }
+
+    // The clickable sliver between two step rows — hover reveals it, clicking opens the
+    // action picker and inserts the new step exactly there.
+    function insertZone(taskId, parentId, index, depth) {
+        return '<div class="insert-zone" data-task="' + taskId + '" data-parent="' + parentId +
+            '" data-index="' + index + '" style="padding-left:' + (34 + depth * 14) + 'px">' +
+            '<span>＋ add step here</span></div>';
     }
 
     function wireTree() {
@@ -185,7 +212,14 @@
                     return;
                 }
                 if (op === 'dup-collection') { post('duplicateCollection', { id: cid }); return; }
-                if (op === 'del-collection') { post('deleteCollection', { id: cid }); return; }
+                if (op === 'del-collection') {
+                    var delCol = findCollection(cid);
+                    openConfirmModal('Delete collection',
+                        'Are you sure you want to delete "' + (delCol ? delCol.name : 'this collection') +
+                        '" and all of its tasks?', 'Delete',
+                        function () { post('deleteCollection', { id: cid }); });
+                    return;
+                }
                 if (e.target.classList.contains('twist')) {
                     state.expanded[cid] = state.expanded[cid] === false;
                     render(); return;
@@ -217,6 +251,14 @@
                     return;
                 }
                 if (op === 'dup-task') { post('duplicateTask', { id: tid }); return; }
+                if (op === 'del-task') {
+                    var delTask = findTask(tid);
+                    openConfirmModal('Delete task',
+                        'Are you sure you want to delete "' + (delTask ? delTask.name : 'this task') + '"?',
+                        'Delete',
+                        function () { post('deleteTask', { id: tid }); });
+                    return;
+                }
                 if (e.target.classList.contains('twist')) {
                     state.expanded[tid] = state.expanded[tid] !== true;
                     render(); return;
@@ -232,10 +274,24 @@
 
         treeEl.querySelectorAll('.node.step').forEach(function (el) {
             var sid = el.getAttribute('data-step'), tid = el.getAttribute('data-task');
-            el.addEventListener('click', function () {
-                var task = findTask(tid);
+            el.addEventListener('click', function (e) {
+                if (e.target.getAttribute && e.target.getAttribute('data-op') === 'del-step') {
+                    var task = findTask(tid);
+                    var step = task && findStep(task.steps, sid);
+                    openConfirmModal('Delete step',
+                        'Are you sure you want to delete "' + (step ? (step.label || step.action) : 'this step') + '"?',
+                        'Delete',
+                        function () {
+                            if (!task) return;
+                            removeStep(task.steps, sid);
+                            if (state.sel.stepId === sid) state.sel.stepId = null;
+                            saveTask(task);
+                        });
+                    return;
+                }
+                var selTask = findTask(tid);
                 state.sel = { collectionId: state.sel.collectionId, taskId: tid, stepId: sid };
-                if (task) state.expanded[tid] = true;
+                if (selTask) state.expanded[tid] = true;
                 render();
             });
             el.addEventListener('dragstart', function () { dragCtx = { type: 'step', id: sid, taskId: tid }; });
@@ -266,24 +322,58 @@
                 saveTask(task);
             });
         });
+
+        treeEl.querySelectorAll('.insert-zone').forEach(function (el) {
+            el.addEventListener('click', function () {
+                var tid = el.getAttribute('data-task');
+                var pid = el.getAttribute('data-parent') || null;
+                var idx = parseInt(el.getAttribute('data-index'), 10) || 0;
+                openActionPicker(function (action) { createStepAt(tid, pid, idx, action); });
+            });
+        });
     }
 
-    // ---- modal (rename + info modes) -------------------------------------------------------
+    function createStepAt(taskId, parentStepId, index, action) {
+        var task = findTask(taskId);
+        if (!task) return;
+        var step = { id: newId(), action: action, label: 'New ' + action + ' step', children: [] };
+        var list = task.steps = task.steps || [];
+        if (parentStepId) {
+            var parent = findStep(task.steps, parentStepId);
+            if (!parent) return;
+            list = parent.children = parent.children || [];
+        }
+        list.splice(Math.max(0, Math.min(index, list.length)), 0, step);
+        state.sel = { collectionId: state.sel.collectionId, taskId: taskId, stepId: step.id };
+        state.expanded[taskId] = true;
+        saveTask(task);
+    }
+
+    // ---- modal (rename / info / confirm / action-picker modes) ------------------------------
 
     var modalCommit = null;
-    var modalIsInfo = false;
+    var modalMode = null;   // 'rename' | 'info' | 'confirm' | 'picker'
 
-    function openRenameModal(title, currentName, onCommit) {
-        modalIsInfo = false;
+    // Reset to a clean base state; each open* then shows only what its mode needs.
+    function prepareModal(mode, title) {
+        modalMode = mode;
+        modalCommit = null;
         $('modal-title').textContent = title;
         $('modal-msg').classList.add('hidden');
+        $('modal-input').classList.add('hidden');
+        $('modal-list').classList.add('hidden');
+        $('modal-ok').classList.remove('hidden', 'danger');
+        $('modal-cancel').classList.remove('hidden');
+        $('modal').classList.remove('hidden');
+    }
+
+    function openRenameModal(title, currentName, onCommit) {
+        prepareModal('rename', title);
         var input = $('modal-input');
         input.classList.remove('hidden');
-        $('modal-cancel').classList.remove('hidden');
         $('modal-ok').textContent = 'Rename';
         input.value = currentName;
         modalCommit = onCommit;
-        $('modal').classList.remove('hidden');
         input.focus();
         input.select();
     }
@@ -291,34 +381,67 @@
     // Message + single OK button — used by the first-run tutorial. Dismissing any other way
     // (Escape, backdrop) counts as OK so a stray click can never strand the tutorial mid-flow.
     function openInfoModal(title, message, onOk) {
-        modalIsInfo = true;
-        $('modal-title').textContent = title;
+        prepareModal('info', title);
         $('modal-msg').textContent = message;
         $('modal-msg').classList.remove('hidden');
-        $('modal-input').classList.add('hidden');
         $('modal-cancel').classList.add('hidden');
         $('modal-ok').textContent = 'OK';
         modalCommit = onOk;
-        $('modal').classList.remove('hidden');
         $('modal-ok').focus();
+    }
+
+    // Reusable destructive-action gate: every delete in the app goes through this.
+    // Escape/backdrop CANCELS (the opposite of info mode) — destruction needs an explicit click.
+    function openConfirmModal(title, message, confirmText, onConfirm) {
+        prepareModal('confirm', title);
+        $('modal-msg').textContent = message;
+        $('modal-msg').classList.remove('hidden');
+        $('modal-ok').textContent = confirmText || 'Delete';
+        $('modal-ok').classList.add('danger');
+        modalCommit = onConfirm;
+        $('modal-cancel').focus();   // the safe choice gets the keyboard
+    }
+
+    // List of step actions; picking one commits immediately (no OK button).
+    function openActionPicker(onPick) {
+        prepareModal('picker', 'New step');
+        $('modal-msg').textContent = 'Choose the action this step performs:';
+        $('modal-msg').classList.remove('hidden');
+        $('modal-ok').classList.add('hidden');
+        var list = $('modal-list');
+        list.classList.remove('hidden');
+        list.innerHTML = ACTIONS.map(function (a) {
+            return '<button class="action-pick" data-action="' + a + '"><b>' + a + '</b><span>' +
+                esc(ACTION_INFO[a] || '') + '</span></button>';
+        }).join('');
+        list.querySelectorAll('.action-pick').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var action = btn.getAttribute('data-action');
+                closeModal();
+                onPick(action);
+            });
+        });
     }
 
     function closeModal() {
         $('modal').classList.add('hidden');
+        modalMode = null;
         modalCommit = null;
     }
 
     function commitModal() {
-        var isInfo = modalIsInfo;
+        var mode = modalMode;
         var name = $('modal-input').value.trim();
         var commit = modalCommit;
         closeModal();
-        if (commit && (isInfo || name)) commit(isInfo ? null : name);
+        if (!commit) return;
+        if (mode === 'rename') { if (name) commit(name); }
+        else commit(null);
     }
 
     function dismissModal() {
-        if (modalIsInfo) commitModal();   // tutorial popups always advance
-        else closeModal();
+        if (modalMode === 'info') commitModal();   // tutorial popups always advance
+        else closeModal();                          // rename/confirm/picker: dismissal = cancel
     }
 
     $('modal-ok').addEventListener('click', commitModal);
@@ -461,9 +584,13 @@
         });
         $('ed-add-sub').addEventListener('click', function () { addStep(task.id, step.id); });
         $('ed-delete').addEventListener('click', function () {
-            removeStep(task.steps, step.id);
-            state.sel.stepId = null;
-            saveTask(task);
+            openConfirmModal('Delete step',
+                'Are you sure you want to delete "' + (step.label || step.action) + '"?', 'Delete',
+                function () {
+                    removeStep(task.steps, step.id);
+                    state.sel.stepId = null;
+                    saveTask(task);
+                });
         });
     }
 
@@ -487,10 +614,12 @@
                 }, children: [],
             },
             {
-                id: newId(), action: 'click', label: "Click 'Google Search'", isCommitPoint: true,
+                // Pressing Enter beats clicking the search button — Google's suggestion overlay
+                // makes the button unreliable, which is true of most search boxes.
+                id: newId(), action: 'pressEnter', label: 'Press Enter to search',
                 target: {
-                    tag: 'input', typeAttr: 'submit', nameAttr: 'btnK', visibleText: 'Google Search',
-                    ariaLabel: 'Google Search', cssSelector: 'input[name="btnK"]', classList: [],
+                    tag: 'textarea', nameAttr: 'q', ariaRole: 'combobox', ariaLabel: 'Search',
+                    cssSelector: 'textarea[name="q"]', classList: [],
                 }, children: [],
             },
             {
@@ -556,9 +685,8 @@
             tutorialStage = 0;
             render();
             openInfoModal('Run it',
-                "Click Run to execute a Task's Steps. Dry Run stops before the ◆ commit-point " +
-                "step, and Validate just highlights each element without doing anything. " +
-                "Click any Step to edit it, or press ● Record to capture your own.",
+                "Click Run to execute a Task's Steps. Click any Step to edit it, hover between " +
+                "steps to insert a new one, or press ● Record to capture your own.",
                 null);
         }
     }
@@ -619,6 +747,15 @@
         onRecordedSteps: function (steps) {
             renderRecPreview(steps);
         },
+        onSettings: function (s) {
+            var radius = (s && s.borderRadius != null) ? s.borderRadius : 5;
+            document.documentElement.style.setProperty('--radius', radius + 'px');
+            $('set-radius').value = radius;
+            $('set-radius-value').textContent = radius + 'px';
+            $('set-key-status').textContent = s && s.anthropicKeySet
+                ? 'BYO-key active (' + (s.anthropicKeyHint || '') + ')'
+                : 'no override — using default credentials';
+        },
     };
 
     // ---- toolbar wiring ------------------------------------------------------------------------
@@ -631,12 +768,9 @@
     $('btn-stop').addEventListener('click', function () {
         post('stopRecord', { collectionId: state.sel.collectionId || '' });
     });
-    function runSelected(mode) {
-        post('runTask', { taskId: state.sel.taskId, mode: mode, allowRepair: $('allow-repair').checked });
-    }
-    $('btn-run').addEventListener('click', function () { runSelected('run'); });
-    $('btn-dryrun').addEventListener('click', function () { runSelected('dryRun'); });
-    $('btn-validate').addEventListener('click', function () { runSelected('validate'); });
+    $('btn-run').addEventListener('click', function () {
+        post('runTask', { taskId: state.sel.taskId, allowRepair: $('allow-repair').checked });
+    });
     $('btn-continue').addEventListener('click', function () { post('continueRun'); });
     $('btn-cancel-run').addEventListener('click', function () { post('cancelRun'); });
     $('btn-import').addEventListener('click', function () { post('import'); });
@@ -647,21 +781,21 @@
     $('btn-new-collection').addEventListener('click', function () { post('createCollection', { name: 'New collection' }); });
     $('btn-folder').addEventListener('click', function () { post('openCollections'); });
 
-    // Trash: drop a task or step to delete it.
-    var trash = $('trash');
-    trash.addEventListener('dragover', function (e) { if (dragCtx) { e.preventDefault(); trash.classList.add('hot'); } });
-    trash.addEventListener('dragleave', function () { trash.classList.remove('hot'); });
-    trash.addEventListener('drop', function (e) {
-        e.preventDefault();
-        trash.classList.remove('hot');
-        if (!dragCtx) return;
-        if (dragCtx.type === 'task') {
-            post('deleteTask', { id: dragCtx.id });
-        } else if (dragCtx.type === 'step') {
-            var task = findTask(dragCtx.taskId);
-            if (task) { removeStep(task.steps, dragCtx.id); saveTask(task); }
-        }
-        dragCtx = null;
+    // Settings: BYO Anthropic key + border radius.
+    $('set-key-save').addEventListener('click', function () {
+        post('saveSettings', { anthropicKey: $('set-anthropic-key').value.trim() });
+        $('set-anthropic-key').value = '';
+    });
+    $('set-key-clear').addEventListener('click', function () {
+        post('saveSettings', { anthropicKey: '' });
+    });
+    $('set-radius').addEventListener('input', function () {
+        var radius = parseInt($('set-radius').value, 10) || 0;
+        document.documentElement.style.setProperty('--radius', radius + 'px');
+        $('set-radius-value').textContent = radius + 'px';
+    });
+    $('set-radius').addEventListener('change', function () {
+        post('saveSettings', { borderRadius: parseInt($('set-radius').value, 10) || 0 });
     });
 
     // Advanced free-text LLM path (unchanged host protocol).
@@ -673,5 +807,6 @@
 
     post('ready');
     post('getState');
+    post('getSettings');
     render();
 })();

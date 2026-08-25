@@ -51,8 +51,13 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
         return new ToolTurnResult(FromAnthropicContent(turn.Content));
     }
 
-    private static string? ResolveApiKey() =>
+    /// <summary>Default credential chain: Claude Code Team OAuth session, then the shared
+    /// MindAttic credential store. Public so DI can compose it behind a user-supplied
+    /// BYO-key override.</summary>
+    public static string? DefaultResolveApiKey() =>
         LegionClient.GetClaudeTeamOAuthToken() ?? MindAtticCredentialStore.GetKey("claude-api");
+
+    private static string? ResolveApiKey() => DefaultResolveApiKey();
 
     private static JsonArray ToAnthropicTools(IReadOnlyList<ToolDefinition> tools)
     {

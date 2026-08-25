@@ -1,19 +1,5 @@
 namespace Automata.Core.Automation.Replay;
 
-public enum ReplayMode
-{
-    /// <summary>Execute every step for real.</summary>
-    Run,
-
-    /// <summary>Execute for real but stop BEFORE the first step flagged isCommitPoint — tests
-    /// the flow without committing any permanent submission/write.</summary>
-    DryRun,
-
-    /// <summary>Resolve and highlight every step's element, mutating nothing. Navigate steps
-    /// still execute so multi-page tasks can be validated end-to-end.</summary>
-    Validate,
-}
-
 /// <summary>
 /// The pauseForUser gate: the engine parks on <see cref="WaitAsync"/> when a step is flagged;
 /// the sidebar's Continue button calls <see cref="Continue"/>.
@@ -35,8 +21,6 @@ public sealed class ReplayControl
 
 public sealed class ReplayOptions
 {
-    public ReplayMode Mode { get; init; } = ReplayMode.Run;
-
     /// <summary>Write a refreshed fingerprint back into a step that only resolved via a fallback
     /// strategy, so the next run starts from the healed identity.</summary>
     public bool SelfHeal { get; init; } = true;

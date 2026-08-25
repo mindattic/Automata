@@ -24,6 +24,7 @@ public sealed class AutomationController
     private readonly CollectionStore store;
     private readonly ArchiveService archive;
     private readonly ReplayEngine engine;
+    private readonly AutomataSettingsStore settingsStore;
     private readonly Func<IBrowserSurface?> targetSurface;
     private readonly Func<CoreWebView2?> targetCore;
     private readonly Func<string, Task> execPanelScript;
@@ -38,6 +39,7 @@ public sealed class AutomationController
         CollectionStore store,
         ArchiveService archive,
         ReplayEngine engine,
+        AutomataSettingsStore settingsStore,
         Func<IBrowserSurface?> targetSurface,
         Func<CoreWebView2?> targetCore,
         Func<string, Task> execPanelScript,
@@ -46,6 +48,7 @@ public sealed class AutomationController
         this.store = store;
         this.archive = archive;
         this.engine = engine;
+        this.settingsStore = settingsStore;
         this.targetSurface = targetSurface;
         this.targetCore = targetCore;
         this.execPanelScript = execPanelScript;
@@ -152,9 +155,31 @@ public sealed class AutomationController
                 return true;
 
             case "runTask":
-                _ = RunReplayAsync(Str(msg, "taskId") ?? "", Str(msg, "mode") ?? "run",
-                    msg["allowRepair"]?.GetValue<bool>() ?? false);
+                _ = RunReplayAsync(Str(msg, "taskId") ?? "", msg["allowRepair"]?.GetValue<bool>() ?? false);
                 return true;
+
+            case "getSettings":
+                await PushSettingsAsync();
+                return true;
+
+            case "saveSettings":
+            {
+                var settings = settingsStore.Load();
+                if (msg["anthropicKey"] != null)
+                {
+                    var hadKey = settings.AnthropicApiKey != null;
+                    settings.AnthropicApiKey = Str(msg, "anthropicKey") is { Length: > 0 } key ? key : null;
+                    if (hadKey || settings.AnthropicApiKey != null)
+                        await logAsync(settings.AnthropicApiKey == null
+                            ? "Anthropic key override cleared — using the default credential chain."
+                            : "Anthropic key override saved (BYO-key) — used for the next AI run.");
+                }
+                if (msg["borderRadius"] != null)
+                    settings.BorderRadius = Math.Clamp(msg["borderRadius"]!.GetValue<int>(), 0, 10);
+                settingsStore.Save(settings);
+                await PushSettingsAsync();
+                return true;
+            }
 
             case "continueRun":
                 replayControl?.Continue();
@@ -289,7 +314,7 @@ public sealed class AutomationController
 
     // ---- replay --------------------------------------------------------------------------------
 
-    private async Task RunReplayAsync(string taskId, string modeStr, bool allowRepair = false)
+    private async Task RunReplayAsync(string taskId, bool allowRepair = false)
     {
         var surface = targetSurface();
         if (surface == null)
@@ -304,20 +329,14 @@ public sealed class AutomationController
             return;
         }
 
-        var mode = modeStr switch
-        {
-            "dryRun" => ReplayMode.DryRun,
-            "validate" => ReplayMode.Validate,
-            _ => ReplayMode.Run,
-        };
         replayCts = new CancellationTokenSource();
         replayControl = new ReplayControl();
-        var options = new ReplayOptions { Mode = mode, Control = replayControl, AllowLlmRepair = allowRepair };
+        var options = new ReplayOptions { Control = replayControl, AllowLlmRepair = allowRepair };
         var runLog = new RunLogWriter(task.Name);
         var healed = false;
 
         await execPanelScript("window.ssPanel.onRunState(true)");
-        await logAsync($"▶ {mode} '{task.Name}' — log: {runLog.FilePath}");
+        await logAsync($"▶ Run '{task.Name}' — log: {runLog.FilePath}");
         try
         {
             await foreach (var evt in engine.RunAsync(task, options, surface, replayCts.Token))
@@ -363,7 +382,7 @@ public sealed class AutomationController
 
     private static string FormatStepEvent(StepEvent evt) => evt switch
     {
-        StepEvent.RunStarted r => $"Run started: '{r.TaskName}' ({r.Mode})",
+        StepEvent.RunStarted r => $"Run started: '{r.TaskName}'",
         StepEvent.StepStarted s => $"→ {s.Label}",
         StepEvent.StepCompleted c => $"{StatusGlyph(c.Status)} {c.StepId}: {c.Message ?? c.Status.ToString()}" +
                                      (c.ExtractedText != null ? $" ⇒ \"{c.ExtractedText}\"" : ""),
@@ -456,6 +475,19 @@ public sealed class AutomationController
         var steps = RecorderSessionBuilder.Build(recorded);
         var json = JsonSerializer.Serialize(steps, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onRecordedSteps({json})");
+    }
+
+    /// <summary>Settings for the panel — the key itself never crosses the bridge, only a hint.</summary>
+    public Task PushSettingsAsync()
+    {
+        var settings = settingsStore.Load();
+        var json = JsonSerializer.Serialize(new
+        {
+            anthropicKeySet = !string.IsNullOrEmpty(settings.AnthropicApiKey),
+            anthropicKeyHint = settings.AnthropicApiKey is { Length: >= 4 } k ? "…" + k[^4..] : null,
+            borderRadius = settings.BorderRadius,
+        }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onSettings({json})");
     }
 
     private Task PushStepStatusAsync(string stepId, string status, string? message)

@@ -1,0 +1,60 @@
+/* Tooltip — ported from MindAttic.UiUx Components/Tooltip, themed for Automata.
+ * Namespaced under .ma-tooltip* so it can't bleed into app styles. */
+
+:root {
+  --ma-tooltip-bg: #10151d;
+  --ma-tooltip-fg: #dbe4f0;
+  --ma-tooltip-border: #3c82ff;
+  --ma-tooltip-radius: var(--radius, 5px);
+  --ma-tooltip-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --ma-tooltip-maxw: 260px;
+}
+
+.ma-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2147483000;
+  max-width: var(--ma-tooltip-maxw);
+  padding: 6px 10px;
+  background: var(--ma-tooltip-bg);
+  color: var(--ma-tooltip-fg);
+  border: 1px solid var(--ma-tooltip-border);
+  border-radius: var(--ma-tooltip-radius);
+  box-shadow: var(--ma-tooltip-shadow);
+  font-family: Segoe UI, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px) scale(0.98);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.ma-tooltip.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.ma-tooltip__body { display: block; }
+
+.ma-tooltip__arrow {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--ma-tooltip-bg);
+  border: 1px solid var(--ma-tooltip-border);
+  transform: rotate(45deg);
+}
+
+/* Arrow sits on the edge facing the trigger; cross-axis offset set by JS. */
+.ma-tooltip[data-pos="top"]    .ma-tooltip__arrow { bottom: -5px; border-top: 0;    border-left: 0;  }
+.ma-tooltip[data-pos="bottom"] .ma-tooltip__arrow { top: -5px;    border-bottom: 0; border-right: 0; }
+.ma-tooltip[data-pos="left"]   .ma-tooltip__arrow { right: -5px;  border-bottom: 0; border-left: 0;  }
+.ma-tooltip[data-pos="right"]  .ma-tooltip__arrow { left: -5px;   border-top: 0;    border-right: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ma-tooltip { transition: none; transform: none; }
+}

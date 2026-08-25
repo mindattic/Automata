@@ -11,8 +11,7 @@ namespace Automata.Core.Automation.Replay;
 /// Executes a task's step tree sequentially: resolve fingerprint (cascade) → perform action
 /// (shared <see cref="BrowserActions"/> mechanics) → verify post-condition → settle-wait →
 /// recurse into substeps. Streams <see cref="StepEvent"/>s the same way the LLM loop streams
-/// OperatorEvents. A failed step aborts the run; DryRun stops before the first commit point;
-/// Validate resolves and highlights without mutating.
+/// OperatorEvents. A failed step aborts the run.
 /// </summary>
 public class ReplayEngine
 {
@@ -34,7 +33,6 @@ public class ReplayEngine
     {
         public bool Stop;
         public bool Failed;
-        public bool DryRunStopped;
         public int Passed;
         public int Healed;
     }
@@ -45,7 +43,7 @@ public class ReplayEngine
         IBrowserSurface browser,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        yield return new StepEvent.RunStarted(task.Id, task.Name, options.Mode);
+        yield return new StepEvent.RunStarted(task.Id, task.Name);
         var state = new RunState();
 
         if (!string.IsNullOrWhiteSpace(task.StartUrl))
@@ -69,7 +67,6 @@ public class ReplayEngine
         var success = !state.Failed;
         var summary =
             state.Failed ? $"Failed after {state.Passed} passed step(s)." :
-            state.DryRunStopped ? $"Dry run: {state.Passed} step(s) passed, stopped at commit point." :
             state.Healed > 0 ? $"{state.Passed} step(s) passed, {state.Healed} self-healed — task should be re-saved." :
             $"{state.Passed} step(s) passed.";
         yield return new StepEvent.RunCompleted(success, summary);
@@ -88,15 +85,6 @@ public class ReplayEngine
         {
             yield return new StepEvent.StepPaused(step.Id, step.Label);
             await options.Control.WaitAsync(ct);
-        }
-
-        if (options.Mode == ReplayMode.DryRun && step.IsCommitPoint)
-        {
-            yield return new StepEvent.StepCompleted(step.Id, StepStatus.Skipped,
-                "commit point — dry run stopped here");
-            state.Stop = true;
-            state.DryRunStopped = true;
-            yield break;
         }
 
         yield return new StepEvent.StepStarted(step.Id, step.Label);
@@ -134,11 +122,20 @@ public class ReplayEngine
         {
             if (string.IsNullOrWhiteSpace(step.Url))
                 return (StepStatus.Failed, "navigate step has no URL", null);
-            // Validate mode still navigates — multi-page tasks can't be validated otherwise.
             var navError = await TryNavigateAsync(browser, step.Url!, ct);
             if (navError != null) return (StepStatus.Failed, navError, null);
             await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
             return (StepStatus.Passed, null, null);
+        }
+
+        // Targetless PressEnter goes to whatever already has focus (typically the field the
+        // previous TypeText step just typed into).
+        if (step.Action == StepAction.PressEnter && step.Target == null)
+        {
+            await browser.PressEnterAsync(ct);
+            await Task.Delay(300, ct);
+            await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
+            return (StepStatus.Passed, "pressed Enter", null);
         }
 
         if (step.Target == null)
@@ -152,10 +149,8 @@ public class ReplayEngine
                 ? $"element ambiguous ({resolved.CandidateCount} near-tie candidates)"
                 : "element not found by any strategy";
 
-            // Last resort: hand this one step's intent to the LLM tool loop. Only in full Run
-            // mode — the LLM can't be trusted to honor dry-run's no-commit guarantee.
-            if (options.AllowLlmRepair && options.Mode == ReplayMode.Run
-                && repairService != null && IsRepairable(step.Action))
+            // Last resort: hand this one step's intent to the LLM tool loop.
+            if (options.AllowLlmRepair && repairService != null && IsRepairable(step.Action))
             {
                 log.LogInformation("Step '{Label}' unresolvable ({Reason}) — attempting LLM repair", step.Label, reason);
                 if (await TryLlmRepairAsync(step, browser, ct))
@@ -175,7 +170,6 @@ public class ReplayEngine
         var passStatus = healed ? StepStatus.Healed : StepStatus.Passed;
         var healNote = healed ? $" (healed via {resolved.Strategy})" : "";
 
-        // Non-mutating actions run in every mode; mutations are skipped by Validate.
         switch (step.Action)
         {
             case StepAction.WaitForElement:
@@ -202,9 +196,6 @@ public class ReplayEngine
             }
         }
 
-        if (options.Mode == ReplayMode.Validate)
-            return (passStatus, $"resolved via {resolved.Strategy} (validate — not performed)", null);
-
         switch (step.Action)
         {
             case StepAction.Click:
@@ -212,6 +203,14 @@ public class ReplayEngine
                 await Task.Delay(300, ct);
                 await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
                 return (passStatus, $"clicked{healNote}", null);
+
+            case StepAction.PressEnter:
+                await browser.ClickAtPointAsync(resolved.CenterX, resolved.CenterY, ct); // focus the field
+                await Task.Delay(150, ct);
+                await browser.PressEnterAsync(ct);
+                await Task.Delay(300, ct);
+                await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
+                return (passStatus, $"pressed Enter{healNote}", null);
 
             case StepAction.TypeText:
             {

@@ -1,5 +1,8 @@
 * { box-sizing: border-box; }
 
+/* Set live from the Border Radius setting (0–10px, default 5). */
+:root { --radius: 5px; }
+
 body {
   margin: 0;
   padding: 12px;
@@ -27,7 +30,7 @@ label {
   margin-bottom: 4px;
 }
 
-input[type=text], input[type=number], textarea, select {
+input[type=text], input[type=number], input[type=password], textarea, select {
   width: 100%;
   background: #2a2a2a;
   border: 1px solid #444;
@@ -36,6 +39,7 @@ input[type=text], input[type=number], textarea, select {
   font-family: inherit;
   font-size: 13px;
   resize: vertical;
+  border-radius: var(--radius);
 }
 
 .row {
@@ -51,7 +55,10 @@ button {
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
+  border-radius: var(--radius);
 }
+
+button.danger { background: #b03a3a; }
 
 button:disabled {
   background: #555;
@@ -69,14 +76,15 @@ button.mini:hover { background: #4a4a4a; color: #fff; }
 
 /* ---- toolbar ---- */
 
+/* Equal-width cells: every button spans the widest one's width and rows align to a grid. */
 .toolbar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 5px;
   margin-bottom: 8px;
 }
 
-.toolbar button { padding: 5px 9px; font-size: 12px; }
+.toolbar button { padding: 5px 4px; font-size: 12px; width: 100%; }
 
 #btn-record { background: #b03a3a; }
 #btn-record:disabled { background: #555; }
@@ -143,18 +151,30 @@ input.rename {
   font-size: 12px;
 }
 
-#trash {
-  margin-top: 6px;
-  padding: 6px;
-  text-align: center;
-  font-size: 11px;
-  color: #777;
-  border: 1px dashed #444;
+.empty { padding: 8px; color: #777; font-size: 12px; }
+
+/* ---- insert-between-steps zones ---- */
+
+.insert-zone {
+  height: 6px;
+  cursor: pointer;
+  overflow: hidden;
 }
 
-#trash.hot { border-color: #e05c5c; color: #e05c5c; background: #2a1a1a; }
+.insert-zone span {
+  display: none;
+  font-size: 10px;
+  color: #7fa6e8;
+  line-height: 18px;
+}
 
-.empty { padding: 8px; color: #777; font-size: 12px; }
+.insert-zone:hover {
+  height: 18px;
+  background: #1d2836;
+  box-shadow: inset 0 0 0 1px #2c4a75;
+}
+
+.insert-zone:hover span { display: block; }
 
 /* ---- step editor ---- */
 
@@ -263,7 +283,41 @@ details[open] > summary { margin-bottom: 6px; }
   padding: 14px;
   width: 300px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius);
 }
+
+#modal-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+button.action-pick {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #2e2e2e;
+  color: #ddd;
+  padding: 6px 8px;
+  margin-bottom: 3px;
+}
+
+button.action-pick:hover { background: #26354e; }
+button.action-pick b { color: #9db8e0; margin-right: 8px; }
+button.action-pick span { font-size: 11px; color: #999; }
+
+/* ---- settings ---- */
+
+.settings-row { align-items: center; margin-bottom: 8px; }
+
+.key-status {
+  flex: 1;
+  font-size: 11px;
+  color: #8a9;
+  align-self: center;
+}
+
+input[type=range] { width: 100%; accent-color: #3c82ff; }
 
 .modal-box .row { justify-content: flex-end; margin-top: 10px; }
 

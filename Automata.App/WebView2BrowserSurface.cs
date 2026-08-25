@@ -88,6 +88,35 @@ public class WebView2BrowserSurface : IBrowserSurface
     /// <see cref="ClickAtPointAsync"/>, applied to the keyboard. Targets whatever element
     /// currently has focus — the caller must focus the field first.
     /// </summary>
+    /// <summary>
+    /// A full Enter press with the virtual key code populated — pages listening for
+    /// keydown keyCode 13 (search boxes, Enter-to-submit forms) only react to this shape,
+    /// not to a bare text-carrying key event.
+    /// </summary>
+    public async Task PressEnterAsync(CancellationToken ct)
+    {
+        var down = JsonSerializer.Serialize(new
+        {
+            type = "keyDown",
+            windowsVirtualKeyCode = 13,
+            nativeVirtualKeyCode = 13,
+            key = "Enter",
+            code = "Enter",
+            text = "\r",
+            unmodifiedText = "\r",
+        });
+        await WithTimeout(core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", down), "CallDevToolsProtocolMethodAsync(Enter keyDown)", ct);
+        var up = JsonSerializer.Serialize(new
+        {
+            type = "keyUp",
+            windowsVirtualKeyCode = 13,
+            nativeVirtualKeyCode = 13,
+            key = "Enter",
+            code = "Enter",
+        });
+        await WithTimeout(core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", up), "CallDevToolsProtocolMethodAsync(Enter keyUp)", ct);
+    }
+
     public async Task TypeTextAsync(string text, CancellationToken ct)
     {
         foreach (var c in text)

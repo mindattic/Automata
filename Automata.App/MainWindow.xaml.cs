@@ -27,6 +27,7 @@ public partial class MainWindow : Window
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.CollectionStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.ArchiveService>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Replay.ReplayEngine>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>(),
             () => targetBrowser,
             () => TargetBrowser.CoreWebView2,
             script => ControlPanel.CoreWebView2 == null
