@@ -7,28 +7,32 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Automata.Core.Automation.Storage;
 
 /// <summary>
-/// File-backed store for collections and tasks:
+/// File-backed store for collections and tasks, laid out for humans browsing it in Explorer:
 /// <code>
-/// &lt;root&gt;\&lt;collectionId&gt;\collection.json
-/// &lt;root&gt;\&lt;collectionId&gt;\tasks\&lt;taskId&gt;.json
+/// %USERPROFILE%\Documents\Automata\Collections\&lt;Collection Name&gt;\collection.json
+/// %USERPROFILE%\Documents\Automata\Collections\&lt;Collection Name&gt;\&lt;Task Name&gt;.json
 /// </code>
-/// Id-named paths keep renames and duplicate display names safe; the JSON content carries the
-/// human-readable names. The store heals drift on load (a task file whose collectionId disagrees
-/// with its folder gets the folder's id; a task folder missing collection.json gets a "Recovered"
-/// one) so hand-copied files still show up instead of silently vanishing.
+/// Folder and file names mirror the display names (sanitized for the filesystem); the ids inside
+/// the JSON remain the stable identity, so renames are just folder/file moves. The store heals
+/// hand-edits on load: a folder or file renamed in Explorer wins (the JSON name is updated to
+/// match), a copy-pasted folder/file with a duplicate id gets a fresh id, a task folder missing
+/// collection.json gets one recovered from the folder name — files never silently vanish.
 /// </summary>
 public sealed class CollectionStore
 {
     public const string DefaultCollectionName = "Default";
+    private const string ManifestFileName = "collection.json";
 
     private readonly ILogger<CollectionStore> log;
+
+    public static string DefaultRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Collections");
 
     public string RootPath { get; }
 
     public CollectionStore(string? rootPath = null, ILogger<CollectionStore>? log = null)
     {
-        RootPath = rootPath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Automata", "collections");
+        RootPath = rootPath ?? DefaultRoot;
         this.log = log ?? NullLogger<CollectionStore>.Instance;
     }
 
@@ -38,20 +42,20 @@ public sealed class CollectionStore
     {
         if (!Directory.Exists(RootPath)) return [];
 
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var collections = new List<Collection>();
         foreach (var dir in Directory.EnumerateDirectories(RootPath))
         {
-            var collection = LoadCollectionFromDir(dir);
-            if (collection != null) collections.Add(collection);
+            var collection = LoadCollectionFromDir(dir, seenIds);
+            if (collection == null) continue;
+            seenIds.Add(collection.Id);
+            collections.Add(collection);
         }
         return collections.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public Collection? GetCollection(string id)
-    {
-        var dir = Path.Combine(RootPath, id);
-        return Directory.Exists(dir) ? LoadCollectionFromDir(dir) : null;
-    }
+    public Collection? GetCollection(string id) =>
+        LoadCollections().FirstOrDefault(c => c.Id == id);
 
     public Collection CreateCollection(string name)
     {
@@ -68,15 +72,32 @@ public sealed class CollectionStore
     public void SaveCollection(Collection collection)
     {
         collection.ModifiedUtc = DateTimeOffset.UtcNow;
-        var dir = Path.Combine(RootPath, collection.Id);
-        Directory.CreateDirectory(dir);
-        WriteJson(Path.Combine(dir, "collection.json"), collection);
+
+        var existingDir = FindCollectionDirById(collection.Id);
+        var targetDir = Path.Combine(RootPath, SafeName(collection.Name));
+
+        // Renaming onto another collection's folder: keep both, suffix this one.
+        if (Directory.Exists(targetDir) && !PathsEqual(existingDir, targetDir))
+        {
+            var occupant = ReadJson<Collection>(Path.Combine(targetDir, ManifestFileName));
+            if (occupant != null && occupant.Id != collection.Id)
+            {
+                collection.Name = StoreUtil.UniqueName(collection.Name,
+                    LoadCollections().Where(c => c.Id != collection.Id).Select(c => c.Name));
+                targetDir = Path.Combine(RootPath, SafeName(collection.Name));
+            }
+        }
+
+        if (existingDir != null && !PathsEqual(existingDir, targetDir))
+            Directory.Move(existingDir, targetDir);
+        Directory.CreateDirectory(targetDir);
+        WriteJson(Path.Combine(targetDir, ManifestFileName), collection);
     }
 
     public void DeleteCollection(string id)
     {
-        var dir = Path.Combine(RootPath, id);
-        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        var dir = FindCollectionDirById(id);
+        if (dir != null) Directory.Delete(dir, recursive: true);
     }
 
     public Collection DuplicateCollection(string id)
@@ -128,11 +149,14 @@ public sealed class CollectionStore
     /// <summary>Tasks of one collection, ordered by its TaskOrder; unlisted tasks sort last by name.</summary>
     public IReadOnlyList<TaskDefinition> LoadTasks(string collectionId)
     {
-        var tasksDir = Path.Combine(RootPath, collectionId, "tasks");
-        if (!Directory.Exists(tasksDir)) return [];
+        var dir = FindCollectionDirById(collectionId);
+        if (dir == null) return [];
+        var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName));
+        if (collection == null) return [];
 
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var tasks = new List<TaskDefinition>();
-        foreach (var file in Directory.EnumerateFiles(tasksDir, "*.json"))
+        foreach (var file in TaskFiles(dir))
         {
             var task = ReadJson<TaskDefinition>(file);
             if (task == null)
@@ -140,17 +164,30 @@ public sealed class CollectionStore
                 log.LogWarning("Skipping unreadable task file {File}", file);
                 continue;
             }
-            if (task.Id != Path.GetFileNameWithoutExtension(file))
-                task.Id = Path.GetFileNameWithoutExtension(file); // file name is authoritative
-            if (task.CollectionId != collectionId)
+
+            var changed = false;
+            if (!seenIds.Add(task.Id))
             {
-                task.CollectionId = collectionId; // folder is authoritative — heal the file
-                WriteJson(file, task);
+                task.Id = StoreUtil.NewId(); // Explorer copy-paste duplicate — give it its own identity
+                seenIds.Add(task.Id);
+                changed = true;
             }
+            var fileName = Path.GetFileNameWithoutExtension(file);
+            if (!string.Equals(SafeName(task.Name), fileName, StringComparison.OrdinalIgnoreCase))
+            {
+                task.Name = fileName; // renamed in Explorer — the file name wins
+                changed = true;
+            }
+            if (task.CollectionId != collection.Id)
+            {
+                task.CollectionId = collection.Id; // moved between folders by hand — the folder wins
+                changed = true;
+            }
+            if (changed) WriteJson(file, task);
             tasks.Add(task);
         }
 
-        var order = GetCollection(collectionId)?.TaskOrder ?? [];
+        var order = collection.TaskOrder;
         return tasks
             .OrderBy(t => { var i = order.IndexOf(t.Id); return i < 0 ? int.MaxValue : i; })
             .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
@@ -159,39 +196,51 @@ public sealed class CollectionStore
 
     public TaskDefinition? GetTask(string taskId)
     {
-        if (!Directory.Exists(RootPath)) return null;
-        foreach (var dir in Directory.EnumerateDirectories(RootPath))
+        foreach (var collection in LoadCollections())
         {
-            var file = Path.Combine(dir, "tasks", taskId + ".json");
-            if (File.Exists(file))
-            {
-                var task = ReadJson<TaskDefinition>(file);
-                if (task != null && task.CollectionId != Path.GetFileName(dir))
-                    task.CollectionId = Path.GetFileName(dir);
-                return task;
-            }
+            var task = LoadTasks(collection.Id).FirstOrDefault(t => t.Id == taskId);
+            if (task != null) return task;
         }
         return null;
     }
 
     /// <summary>
     /// Persist a task. An empty CollectionId gets the default collection assigned — a task never
-    /// exists without a parent collection.
+    /// exists without a parent collection. A renamed task's file moves with it.
     /// </summary>
     public void SaveTask(TaskDefinition task)
     {
         if (string.IsNullOrWhiteSpace(task.CollectionId))
             task.CollectionId = EnsureDefaultCollection().Id;
 
-        var collection = GetCollection(task.CollectionId)
+        var dir = FindCollectionDirById(task.CollectionId)
             ?? throw new InvalidOperationException($"Collection '{task.CollectionId}' not found.");
+        var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName))!;
 
         if (task.CreatedUtc == default) task.CreatedUtc = DateTimeOffset.UtcNow;
         task.ModifiedUtc = DateTimeOffset.UtcNow;
 
-        var tasksDir = Path.Combine(RootPath, task.CollectionId, "tasks");
-        Directory.CreateDirectory(tasksDir);
-        WriteJson(Path.Combine(tasksDir, task.Id + ".json"), task);
+        var existingFile = FindTaskFileById(dir, task.Id);
+        var target = Path.Combine(dir, SafeName(task.Name) + ".json");
+
+        // Renaming onto a sibling task's file: keep both, suffix this one.
+        if (File.Exists(target) && !PathsEqual(existingFile, target))
+        {
+            var occupant = ReadJson<TaskDefinition>(target);
+            if (occupant != null && occupant.Id != task.Id)
+            {
+                var siblingNames = TaskFiles(dir)
+                    .Where(f => !PathsEqual(f, existingFile))
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(n => n != null)!;
+                task.Name = StoreUtil.UniqueName(task.Name, siblingNames!);
+                target = Path.Combine(dir, SafeName(task.Name) + ".json");
+            }
+        }
+
+        if (existingFile != null && !PathsEqual(existingFile, target))
+            File.Move(existingFile, target);
+        WriteJson(target, task);
 
         if (!collection.TaskOrder.Contains(task.Id))
         {
@@ -202,14 +251,17 @@ public sealed class CollectionStore
 
     public void DeleteTask(string taskId)
     {
-        var task = GetTask(taskId);
-        if (task == null) return;
+        foreach (var dir in CollectionDirs())
+        {
+            var file = FindTaskFileById(dir, taskId);
+            if (file == null) continue;
 
-        File.Delete(Path.Combine(RootPath, task.CollectionId, "tasks", taskId + ".json"));
-
-        var collection = GetCollection(task.CollectionId);
-        if (collection != null && collection.TaskOrder.Remove(taskId))
-            SaveCollection(collection);
+            File.Delete(file);
+            var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName));
+            if (collection != null && collection.TaskOrder.Remove(taskId))
+                SaveCollection(collection);
+            return;
+        }
     }
 
     public TaskDefinition MoveTask(string taskId, string toCollectionId)
@@ -243,20 +295,48 @@ public sealed class CollectionStore
 
     // ---- plumbing ----------------------------------------------------------------------------
 
-    private Collection? LoadCollectionFromDir(string dir)
+    private IEnumerable<string> CollectionDirs() =>
+        Directory.Exists(RootPath) ? Directory.EnumerateDirectories(RootPath) : [];
+
+    private static IEnumerable<string> TaskFiles(string dir) =>
+        Directory.Exists(dir)
+            ? Directory.EnumerateFiles(dir, "*.json").Where(f =>
+                !string.Equals(Path.GetFileName(f), ManifestFileName, StringComparison.OrdinalIgnoreCase))
+            : [];
+
+    private string? FindCollectionDirById(string id)
     {
-        var file = Path.Combine(dir, "collection.json");
-        var folderId = Path.GetFileName(dir);
+        foreach (var dir in CollectionDirs())
+        {
+            if (ReadJson<Collection>(Path.Combine(dir, ManifestFileName))?.Id == id)
+                return dir;
+        }
+        return null;
+    }
+
+    private static string? FindTaskFileById(string dir, string taskId)
+    {
+        foreach (var file in TaskFiles(dir))
+        {
+            if (ReadJson<TaskDefinition>(file)?.Id == taskId)
+                return file;
+        }
+        return null;
+    }
+
+    private Collection? LoadCollectionFromDir(string dir, HashSet<string> seenIds)
+    {
+        var folderName = Path.GetFileName(dir);
+        var file = Path.Combine(dir, ManifestFileName);
 
         if (!File.Exists(file))
         {
-            // A bare task folder someone hand-copied in: give it a manifest so its tasks surface.
-            if (!Directory.Exists(Path.Combine(dir, "tasks"))) return null;
+            // A folder of task files someone hand-copied in: give it a manifest so they surface.
+            if (!TaskFiles(dir).Any()) return null;
             log.LogWarning("Collection folder {Dir} has no collection.json — recovering", dir);
             var recovered = new Collection
             {
-                Id = folderId,
-                Name = StoreUtil.UniqueName("Recovered", LoadCollectionNamesExcept(folderId)),
+                Name = folderName,
                 CreatedUtc = DateTimeOffset.UtcNow,
                 ModifiedUtc = DateTimeOffset.UtcNow,
             };
@@ -270,26 +350,54 @@ public sealed class CollectionStore
             log.LogWarning("Skipping unreadable collection file {File}", file);
             return null;
         }
-        if (collection.Id != folderId)
+
+        var changed = false;
+        if (seenIds.Contains(collection.Id))
         {
-            collection.Id = folderId; // folder is authoritative
-            WriteJson(file, collection);
+            collection.Id = StoreUtil.NewId(); // Explorer copy-paste duplicate
+            changed = true;
         }
+        if (!string.Equals(SafeName(collection.Name), folderName, StringComparison.OrdinalIgnoreCase))
+        {
+            collection.Name = folderName; // renamed in Explorer — the folder wins
+            changed = true;
+        }
+        if (changed) WriteJson(file, collection);
         return collection;
     }
 
-    private IEnumerable<string> LoadCollectionNamesExcept(string excludeId)
+    // Names Windows refuses (device names) plus "collection", which would collide with the
+    // manifest file if a task were named that.
+    private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        if (!Directory.Exists(RootPath)) yield break;
-        foreach (var dir in Directory.EnumerateDirectories(RootPath))
-        {
-            if (Path.GetFileName(dir) == excludeId) continue;
-            var file = Path.Combine(dir, "collection.json");
-            if (!File.Exists(file)) continue;
-            var name = ReadJson<Collection>(file)?.Name;
-            if (name != null) yield return name;
-        }
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "collection",
+    };
+
+    /// <summary>
+    /// Display name → Windows-safe folder/file name, kept human-readable. LOSSLESS by design:
+    /// the JSON keeps the original name verbatim (illegal characters intact), the disk name is
+    /// only a sanitized projection of it — parsing back means reading the JSON. The disk-name-
+    /// wins healing in LoadTasks/LoadCollectionFromDir therefore compares against SafeName(json
+    /// name), so a sanitization difference never counts as a rename and never clobbers the
+    /// original.
+    /// </summary>
+    private static string SafeName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray())
+            .Trim().TrimEnd('.', ' ');
+        if (cleaned.Length == 0) cleaned = "Unnamed";
+        if (cleaned.Length > 100) cleaned = cleaned[..100].TrimEnd('.', ' ');
+        if (ReservedNames.Contains(cleaned)) cleaned = "_" + cleaned;
+        return cleaned;
     }
+
+    private static bool PathsEqual(string? a, string? b) =>
+        a != null && b != null &&
+        string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 
     private static void WriteJson<T>(string path, T value) =>
         File.WriteAllText(path, JsonSerializer.Serialize(value, AutomataJson.Options));
@@ -297,6 +405,6 @@ public sealed class CollectionStore
     private static T? ReadJson<T>(string path) where T : class
     {
         try { return JsonSerializer.Deserialize<T>(File.ReadAllText(path), AutomataJson.Options); }
-        catch (JsonException) { return null; }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
     }
 }

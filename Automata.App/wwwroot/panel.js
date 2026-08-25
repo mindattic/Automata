@@ -645,6 +645,7 @@
         else if (state.sel.collectionId) post('export', { collectionId: state.sel.collectionId });
     });
     $('btn-new-collection').addEventListener('click', function () { post('createCollection', { name: 'New collection' }); });
+    $('btn-folder').addEventListener('click', function () { post('openCollections'); });
 
     // Trash: drop a task or step to delete it.
     var trash = $('trash');

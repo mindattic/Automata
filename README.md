@@ -15,13 +15,32 @@ dotnet test Automata.Tests
 ## Run
 
 ```
-dotnet run --project Automata.App
+launch.bat
 ```
 
-Launches a two-pane window: the **sidebar** (collections/tasks/steps tree, step editor, record
-and replay controls) and the live **browser pane** the automation acts on. The browser pane uses
-its own persistent WebView2 profile, so a site login survives app restarts without touching your
+`launch.bat` (repo root) stops any running instance, clean-rebuilds, publishes to
+`C:\Apps\Automata\`, and opens that deployed copy — so a double-click always runs current
+source, never a stale build. (`dotnet run --project Automata.App` works too for a quick dev run.)
+
+The window has two panes: the **sidebar** (collections/tasks/steps tree, step editor, record and
+replay controls) and the live **browser pane** the automation acts on. The browser pane uses its
+own persistent WebView2 profile, so a site login survives app restarts without touching your
 regular browser.
+
+## First run — the built-in tour
+
+On first open with an empty store, Automata teaches itself: a short OK-gated walkthrough builds a
+real example in front of you —
+
+1. *"A Collection is a group of Tasks"* → OK creates the **Google Searches** collection.
+2. *"A Task is a member of a Collection; a Task is a group of Steps that run in order"* → OK
+   creates the **Wolf Tshirts** task.
+3. The sample steps appear (navigate to Google, type *wolf tshirts*, click Search — flagged ◆ as
+   a commit point — then verify/extract the first result), and a final popup says to click
+   **Run**.
+
+Run it, watch the steps light up, then poke at everything else — the rest of the app works the
+way that example looks.
 
 ## Concepts
 
@@ -69,6 +88,15 @@ Notes:
 - File uploads record the file *name* only (browsers hide local paths from JS) — set a real
   local path on the step before replaying.
 
+## Editing
+
+- **Tree**: hover a collection or task row for its buttons — **+task/+step**, **✎ rename**
+  (opens a modal), **⧉ duplicate**, **🗑 delete**. Double-click a name for quick inline rename.
+- **Step editor**: click any step — typed action dropdown, label, value/URL, editable target
+  fingerprint fields, `pause for user` / `commit point` flags, timeout, add-substep/delete.
+- **Drag & drop**: drag steps to reorder (drop on a row's middle to nest as a substep); drag a
+  task onto another collection to move it; drag anything to the trash zone to delete.
+
 ## Replaying
 
 Select a task, then:
@@ -80,7 +108,7 @@ Select a task, then:
   (`navigate` steps still execute so multi-page tasks validate end-to-end).
 
 Step rows light up live (running / passed / failed / healed / paused). Every run also writes a
-log file to `~\Automata\logs\<timestamp>-<task>.log`.
+log file to `Documents\Automata\Logs\<timestamp>-<task>.log`.
 
 ### Self-healing element resolution
 
@@ -100,43 +128,55 @@ saved back into the task (**self-heal**) — the tree shows `✓♻`.
 As an opt-in last resort (checkbox under *AI task (advanced)*), an unresolvable step's intent can
 be handed to the LLM tool-calling loop to complete just that one step (Run mode only).
 
-## Storage, import & export
+## Storage — human-readable, Explorer-friendly
 
-Everything is human-readable JSON under your profile:
+Everything lives under your Documents folder, named the way you named it:
 
 ```
-~\Automata\
-  collections\<collectionId>\collection.json
-  collections\<collectionId>\tasks\<taskId>.json
-  logs\<timestamp>-<task-slug>.log
+Documents\Automata\
+  Collections\
+    Google Searches\
+      collection.json          ← collection metadata + task order
+      Wolf Tshirts.json        ← one task per file: metadata + full step tree
+  Logs\
+    20260825-141005-wolf-tshirts.log
 ```
 
-A task file is fully self-contained and shareable as-is. In the sidebar you can create, rename,
-duplicate, and delete collections and tasks; **drag a task onto another collection** to move it;
-**drag steps** to reorder them (drop on a row's middle to nest as a substep); drag anything to
-the trash zone to delete.
+The **📁 button** in the sidebar toolbar opens the Collections folder in File Explorer.
+
+- **A task is one file** — copy `Wolf Tshirts.json` to share that task; copy a collection folder
+  to share the set.
+- **Names round-trip losslessly.** Folder/file names are sanitized projections of the display
+  name (illegal characters → `_`, Windows-reserved names like `CON` prefixed, overlong names
+  truncated); the JSON inside keeps the original name **with illegal characters intact**, so a
+  task called `Wolf: Tshirts?` shows exactly that in the app while living in
+  `Wolf_ Tshirts_.json` on disk.
+- **Hand-edits heal, not break.** Rename a file/folder in Explorer → the app adopts the new
+  name. Copy-paste a task file → the duplicate gets a fresh identity. Drop task files into a
+  folder with no `collection.json` → a collection is recovered from the folder name. A task
+  saved without a parent lands in an auto-created **Default** collection.
 
 **⇩ Export** writes the selected collection (or single task) as a `*.automata.zip`;
 **⇪ Import** reads one back. Imports never overwrite: colliding ids are regenerated, colliding
 names get ` (2)` suffixes, and a task imported without its collection lands in an auto-created
-**Imported** collection. A task saved without any parent gets a **Default** collection — a task
-never exists without a collection.
+**Imported** collection.
 
 ## Free-text AI mode (advanced)
 
-The original plain-English path is still there, folded under *AI task (advanced)*: type an
-instruction and an LLM drives the pane through generic DOM tools (click, set field, type,
-select, check, upload, page status). Recording + the WYSIWYG editor are the primary workflow —
-free text is for one-offs and exploration. Providers (Anthropic first, OpenAI fallback) read
-credentials from MindAttic.Vault.
+The original plain-English path is folded under *AI task (advanced)*: type an instruction and an
+LLM drives the pane through generic DOM tools (click, set field, type, select, check, upload,
+page status). Recording + the WYSIWYG editor are the primary workflow — free text is for
+one-offs and exploration. Providers (Anthropic first, OpenAI fallback) read credentials from
+MindAttic.Vault.
 
 ## Architecture
 
 ```
 Automata.App    WPF host: two WebView2 panes, postMessage bridge, AutomationController
-Automata.Core   engine: model, store, zip archive, fingerprint/resolver JS (embedded),
+Automata.Core   engine: model, name-based store, zip archive, fingerprint/resolver JS (embedded),
                 replay engine, recorder coalescer, LLM tool loop — WebView2-free (IBrowserSurface)
-Automata.Tests  NUnit 4 — 64 tests over model, store, archive, resolver, replay, recorder, logs
+Automata.Tests  NUnit 4 — 75 tests over model, store (incl. name round-trip, healing, migration),
+                archive, resolver, replay, recorder, logs
 ```
 
 Known limitations (v2): top-document, light-DOM only (no cross-origin iframes / shadow roots);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -169,6 +170,12 @@ public sealed class AutomationController
 
             case "import":
                 await ImportAsync();
+                return true;
+
+            case "openCollections":
+                Directory.CreateDirectory(store.RootPath);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{store.RootPath}\"") { UseShellExecute = true });
+                await logAsync($"Opened {store.RootPath}");
                 return true;
 
             default:

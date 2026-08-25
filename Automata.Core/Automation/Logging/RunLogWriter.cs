@@ -4,13 +4,14 @@ using Automata.Core.Automation.Storage;
 namespace Automata.Core.Automation.Logging;
 
 /// <summary>
-/// Per-run log file at <c>%USERPROFILE%\Automata\logs\&lt;yyyyMMdd-HHmmss&gt;-&lt;task-slug&gt;.log</c> —
-/// one fixed, easy-to-find place, one file per run.
+/// Per-run log file at
+/// <c>%USERPROFILE%\Documents\Automata\Logs\&lt;yyyyMMdd-HHmmss&gt;-&lt;task-slug&gt;.log</c> —
+/// beside the Collections folder, one fixed easy-to-find place, one file per run.
 /// </summary>
 public sealed class RunLogWriter
 {
     public static string DefaultRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Automata", "logs");
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Logs");
 
     public string FilePath { get; }
 
