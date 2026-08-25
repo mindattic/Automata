@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,8 +8,8 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>Automata.App</RootNamespace>
     <AssemblyName>Automata.App</AssemblyName>
-    <!-- Whole-number versioning: major-only bumps (1.0.0 → 2.0.0 → 3.0.0). Minor/patch stay 0. -->
-    <Version>1.0.0</Version>
+    <!-- Whole-number versioning: major-only bumps (1.0.0 â†’ 2.0.0 â†’ 3.0.0). Minor/patch stay 0. -->
+    <Version>2.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

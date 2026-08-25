@@ -7,7 +7,7 @@
     <RootNamespace>Automata.Core</RootNamespace>
     <AssemblyName>Automata.Core</AssemblyName>
     <!-- Whole-number versioning: major-only bumps (1.0.0 → 2.0.0 → 3.0.0). Minor/patch stay 0. -->
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
