@@ -245,4 +245,29 @@ details[open] > summary { margin-bottom: 6px; }
 
 .log-line { margin-bottom: 2px; }
 
+/* ---- modal ---- */
+
+#modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-box {
+  background: #242424;
+  border: 1px solid #555;
+  padding: 14px;
+  width: 300px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+.modal-box .row { justify-content: flex-end; margin-top: 10px; }
+
+button.secondary { background: #3a3a3a; color: #ccc; }
+button.secondary:hover { background: #4a4a4a; }
+
 .hidden { display: none !important; }

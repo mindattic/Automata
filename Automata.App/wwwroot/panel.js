@@ -128,6 +128,7 @@
                 '<span class="name">' + esc(c.name) + '</span>' +
                 '<span class="node-btns">' +
                 '<button class="mini" data-op="add-task" title="New task">+task</button>' +
+                '<button class="mini" data-op="ren-collection" title="Rename collection">✎</button>' +
                 '<button class="mini" data-op="dup-collection" title="Duplicate collection">⧉</button>' +
                 '<button class="mini" data-op="del-collection" title="Delete collection">🗑</button>' +
                 '</span></div>';
@@ -141,6 +142,7 @@
                         '<span class="name">' + esc(t.name) + '</span>' +
                         '<span class="node-btns">' +
                         '<button class="mini" data-op="add-step" title="Add step">+step</button>' +
+                        '<button class="mini" data-op="ren-task" title="Rename task">✎</button>' +
                         '<button class="mini" data-op="dup-task" title="Duplicate task">⧉</button>' +
                         '</span></div>';
                     if (tOpen) html += renderSteps(t, t.steps || [], 0);
@@ -175,6 +177,13 @@
             el.addEventListener('click', function (e) {
                 var op = e.target.getAttribute && e.target.getAttribute('data-op');
                 if (op === 'add-task') { post('createTask', { collectionId: cid, name: 'New task' }); return; }
+                if (op === 'ren-collection') {
+                    var col = findCollection(cid);
+                    openRenameModal('Rename collection', col ? col.name : '', function (name) {
+                        post('renameCollection', { id: cid, name: name });
+                    });
+                    return;
+                }
                 if (op === 'dup-collection') { post('duplicateCollection', { id: cid }); return; }
                 if (op === 'del-collection') { post('deleteCollection', { id: cid }); return; }
                 if (e.target.classList.contains('twist')) {
@@ -200,6 +209,13 @@
             el.addEventListener('click', function (e) {
                 var op = e.target.getAttribute && e.target.getAttribute('data-op');
                 if (op === 'add-step') { addStep(tid, null); return; }
+                if (op === 'ren-task') {
+                    var task = findTask(tid);
+                    openRenameModal('Rename task', task ? task.name : '', function (name) {
+                        post('renameTask', { id: tid, name: name });
+                    });
+                    return;
+                }
                 if (op === 'dup-task') { post('duplicateTask', { id: tid }); return; }
                 if (e.target.classList.contains('twist')) {
                     state.expanded[tid] = state.expanded[tid] !== true;
@@ -251,6 +267,42 @@
             });
         });
     }
+
+    // ---- rename modal ----------------------------------------------------------------------
+
+    var modalCommit = null;
+
+    function openRenameModal(title, currentName, onCommit) {
+        $('modal-title').textContent = title;
+        var input = $('modal-input');
+        input.value = currentName;
+        modalCommit = onCommit;
+        $('modal').classList.remove('hidden');
+        input.focus();
+        input.select();
+    }
+
+    function closeModal() {
+        $('modal').classList.add('hidden');
+        modalCommit = null;
+    }
+
+    function commitModal() {
+        var name = $('modal-input').value.trim();
+        var commit = modalCommit;
+        closeModal();
+        if (name && commit) commit(name);
+    }
+
+    $('modal-ok').addEventListener('click', commitModal);
+    $('modal-cancel').addEventListener('click', closeModal);
+    $('modal-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') commitModal();
+        if (e.key === 'Escape') closeModal();
+    });
+    $('modal').addEventListener('mousedown', function (e) {
+        if (e.target === $('modal')) closeModal();   // click on the backdrop cancels
+    });
 
     function inlineRename(nodeEl, action, id) {
         var nameEl = nodeEl.querySelector('.name');
