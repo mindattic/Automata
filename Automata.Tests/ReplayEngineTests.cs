@@ -225,6 +225,65 @@ public class ReplayEngineTests
         Assert.That(failed.Message, Does.Contain("ambiguous"));
     }
 
+    /// <summary>Scripted provider: one tool call (log_note), then a final text turn.</summary>
+    private sealed class FakeToolCallingLlm : Core.Operator.IToolCallingLlm
+    {
+        private int turn;
+        public string Name => "Fake";
+        public Task<bool> IsConfiguredAsync() => Task.FromResult(true);
+
+        public Task<Core.Operator.ToolTurnResult> CreateTurnAsync(
+            string systemPrompt,
+            IReadOnlyList<Core.Operator.ToolLoopMessage> history,
+            IReadOnlyList<Core.Operator.ToolDefinition> tools,
+            int maxTokens,
+            CancellationToken ct)
+        {
+            turn++;
+            return Task.FromResult(new Core.Operator.ToolTurnResult(turn == 1
+                ? [new Core.Operator.AssistantPart.ToolCall("t1", "log_note", """{ "message": "repaired" }""")]
+                : [new Core.Operator.AssistantPart.Text("done")]));
+        }
+    }
+
+    [Test]
+    public async Task UnresolvableStep_WithLlmRepairAllowed_PassesViaRepair()
+    {
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = script =>
+                script.Contains("__automataResolve(")
+                    ? """{ "found": false, "ambiguous": false, "candidateCount": 0 }"""
+                    : DefaultResponder(script),
+        };
+        var repair = new Core.Operator.BrowserOperatorService(
+            [new FakeToolCallingLlm()],
+            new Core.Operator.BrowserToolRegistry([new Core.Operator.Tools.LogNoteTool()]),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Core.Operator.BrowserOperatorService>.Instance);
+        var engine = new ReplayEngine(new FingerprintResolver { PollIntervalMs = 10 }, repair);
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "s1", Action = StepAction.Click, Label = "Click 'Search'", Target = Target() }],
+        };
+        var options = new ReplayOptions
+        {
+            Mode = ReplayMode.Run,
+            AllowLlmRepair = true,
+            DefaultStepTimeoutMs = 50,
+            SettlePollMs = 1,
+            Control = new ReplayControl(),
+        };
+
+        var events = new List<StepEvent>();
+        await foreach (var evt in engine.RunAsync(task, options, browser)) events.Add(evt);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(completed.Status, Is.EqualTo(StepStatus.Passed));
+        Assert.That(completed.Message, Does.Contain("LLM repair"));
+        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+    }
+
     [Test]
     public async Task SelfHeal_WritesRefreshedFingerprintBackIntoStep_AndReportsHealed()
     {

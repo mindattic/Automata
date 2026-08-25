@@ -151,7 +151,8 @@ public sealed class AutomationController
                 return true;
 
             case "runTask":
-                _ = RunReplayAsync(Str(msg, "taskId") ?? "", Str(msg, "mode") ?? "run");
+                _ = RunReplayAsync(Str(msg, "taskId") ?? "", Str(msg, "mode") ?? "run",
+                    msg["allowRepair"]?.GetValue<bool>() ?? false);
                 return true;
 
             case "continueRun":
@@ -281,7 +282,7 @@ public sealed class AutomationController
 
     // ---- replay --------------------------------------------------------------------------------
 
-    private async Task RunReplayAsync(string taskId, string modeStr)
+    private async Task RunReplayAsync(string taskId, string modeStr, bool allowRepair = false)
     {
         var surface = targetSurface();
         if (surface == null)
@@ -304,7 +305,7 @@ public sealed class AutomationController
         };
         replayCts = new CancellationTokenSource();
         replayControl = new ReplayControl();
-        var options = new ReplayOptions { Mode = mode, Control = replayControl };
+        var options = new ReplayOptions { Mode = mode, Control = replayControl, AllowLlmRepair = allowRepair };
         var runLog = new RunLogWriter(task.Name);
         var healed = false;
 

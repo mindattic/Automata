@@ -451,9 +451,12 @@
     $('btn-stop').addEventListener('click', function () {
         post('stopRecord', { collectionId: state.sel.collectionId || '' });
     });
-    $('btn-run').addEventListener('click', function () { post('runTask', { taskId: state.sel.taskId, mode: 'run' }); });
-    $('btn-dryrun').addEventListener('click', function () { post('runTask', { taskId: state.sel.taskId, mode: 'dryRun' }); });
-    $('btn-validate').addEventListener('click', function () { post('runTask', { taskId: state.sel.taskId, mode: 'validate' }); });
+    function runSelected(mode) {
+        post('runTask', { taskId: state.sel.taskId, mode: mode, allowRepair: $('allow-repair').checked });
+    }
+    $('btn-run').addEventListener('click', function () { runSelected('run'); });
+    $('btn-dryrun').addEventListener('click', function () { runSelected('dryRun'); });
+    $('btn-validate').addEventListener('click', function () { runSelected('validate'); });
     $('btn-continue').addEventListener('click', function () { post('continueRun'); });
     $('btn-cancel-run').addEventListener('click', function () { post('cancelRun'); });
     $('btn-import').addEventListener('click', function () { post('import'); });

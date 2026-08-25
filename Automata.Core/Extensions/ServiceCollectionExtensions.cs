@@ -46,7 +46,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp =>
             new FingerprintResolver(sp.GetRequiredService<ILogger<FingerprintResolver>>()));
         services.AddSingleton(sp => new ReplayEngine(
-            sp.GetRequiredService<FingerprintResolver>(), sp.GetRequiredService<ILogger<ReplayEngine>>()));
+            sp.GetRequiredService<FingerprintResolver>(),
+            sp.GetRequiredService<BrowserOperatorService>(),   // last-resort LLM repair path
+            sp.GetRequiredService<ILogger<ReplayEngine>>()));
 
         return services;
     }

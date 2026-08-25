@@ -17,11 +17,16 @@ namespace Automata.Core.Automation.Replay;
 public class ReplayEngine
 {
     private readonly FingerprintResolver resolver;
+    private readonly BrowserOperatorService? repairService;
     private readonly ILogger<ReplayEngine> log;
 
-    public ReplayEngine(FingerprintResolver resolver, ILogger<ReplayEngine>? log = null)
+    public ReplayEngine(
+        FingerprintResolver resolver,
+        BrowserOperatorService? repairService = null,
+        ILogger<ReplayEngine>? log = null)
     {
         this.resolver = resolver;
+        this.repairService = repairService;
         this.log = log ?? NullLogger<ReplayEngine>.Instance;
     }
 
@@ -146,6 +151,18 @@ public class ReplayEngine
             var reason = resolved.Ambiguous
                 ? $"element ambiguous ({resolved.CandidateCount} near-tie candidates)"
                 : "element not found by any strategy";
+
+            // Last resort: hand this one step's intent to the LLM tool loop. Only in full Run
+            // mode — the LLM can't be trusted to honor dry-run's no-commit guarantee.
+            if (options.AllowLlmRepair && options.Mode == ReplayMode.Run
+                && repairService != null && IsRepairable(step.Action))
+            {
+                log.LogInformation("Step '{Label}' unresolvable ({Reason}) — attempting LLM repair", step.Label, reason);
+                if (await TryLlmRepairAsync(step, browser, ct))
+                    return (StepStatus.Passed,
+                        $"{reason} — completed via LLM repair; consider re-recording this step", null);
+                return (StepStatus.Failed, $"{reason}; LLM repair also failed", null);
+            }
             return (StepStatus.Failed, reason, null);
         }
 
@@ -258,6 +275,64 @@ public class ReplayEngine
             default:
                 return (StepStatus.Failed, $"unsupported action {step.Action}", null);
         }
+    }
+
+    private static bool IsRepairable(StepAction action) => action is
+        StepAction.Click or StepAction.TypeText or StepAction.SetValue or
+        StepAction.Check or StepAction.Uncheck or StepAction.SelectRadio or
+        StepAction.SelectOption or StepAction.UploadFile;
+
+    private const string RepairSystemPrompt = """
+        You are repairing ONE step of a recorded browser automation whose element could not be
+        located by its saved selectors — the page's markup likely changed. Perform exactly that
+        one step and NOTHING else: no extra navigation, no other clicks, no exploring. Use
+        get_page_status first if you need orientation. When the step is done (or truly
+        impossible), reply with a one-line summary and stop.
+        """;
+
+    /// <summary>True when the LLM loop performed at least one successful tool action and
+    /// reported no errors — the closest verifiable proxy for "the step got done".</summary>
+    private async Task<bool> TryLlmRepairAsync(Step step, IBrowserSurface browser, CancellationToken ct)
+    {
+        var hints = new List<string>();
+        if (step.Target?.NearbyLabelText != null) hints.Add($"its label reads \"{step.Target.NearbyLabelText}\"");
+        if (step.Target?.VisibleText != null) hints.Add($"its visible text was \"{step.Target.VisibleText}\"");
+        if (step.Target?.AriaLabel != null) hints.Add($"its aria-label was \"{step.Target.AriaLabel}\"");
+        if (step.Target?.Placeholder != null) hints.Add($"its placeholder was \"{step.Target.Placeholder}\"");
+
+        var instruction =
+            $"The step to perform: {step.Action} — \"{step.Label}\"." +
+            (string.IsNullOrEmpty(step.Value) ? "" : $" The value involved: \"{step.Value}\".") +
+            (hints.Count > 0 ? $" The original element: {string.Join("; ", hints)}." : "");
+
+        var ctx = new BrowserOperatorContext { Browser = browser };
+        var anyToolSucceeded = false;
+        var fatalError = false;
+        try
+        {
+            await foreach (var evt in repairService!.RunAsync(RepairSystemPrompt, instruction, ctx, maxIterations: 6, ct))
+            {
+                switch (evt)
+                {
+                    case OperatorEvent.ToolCompleted c when !c.IsError:
+                        anyToolSucceeded = true;
+                        break;
+                    case OperatorEvent.Error e:
+                        fatalError = true;
+                        log.LogWarning("LLM repair error: {Message}", e.Message);
+                        break;
+                    case OperatorEvent.AssistantText t:
+                        log.LogInformation("LLM repair: {Text}", t.Text);
+                        break;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "LLM repair threw");
+            return false;
+        }
+        return anyToolSucceeded && !fatalError;
     }
 
     private static async Task<string?> TryNavigateAsync(IBrowserSurface browser, string url, CancellationToken ct)
