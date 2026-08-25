@@ -45,6 +45,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<CollectionStore>(), sp.GetRequiredService<ILogger<ArchiveService>>()));
         services.AddSingleton(sp =>
             new FingerprintResolver(sp.GetRequiredService<ILogger<FingerprintResolver>>()));
+        services.AddSingleton(sp => new ReplayEngine(
+            sp.GetRequiredService<FingerprintResolver>(), sp.GetRequiredService<ILogger<ReplayEngine>>()));
 
         return services;
     }
