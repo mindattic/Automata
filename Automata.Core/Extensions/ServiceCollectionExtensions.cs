@@ -1,6 +1,8 @@
+using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Automata.Core.Operator.Tools;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Automata.Core.Extensions;
 
@@ -35,6 +37,9 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<BrowserToolRegistry>();
         services.AddSingleton<BrowserOperatorService>();
+
+        services.AddSingleton(sp =>
+            new CollectionStore(rootPath: null, sp.GetRequiredService<ILogger<CollectionStore>>()));
 
         return services;
     }
