@@ -6,68 +6,55 @@
 <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-  <h1>Automata</h1>
-
-  <section>
-    <label for="url">Navigate</label>
+  <header>
+    <h1>Automata</h1>
+    <div class="toolbar">
+      <button id="btn-record" title="Record your actions in the browser pane into steps">● Record</button>
+      <button id="btn-stop" disabled title="Stop recording and save the captured steps">■ Stop</button>
+      <button id="btn-run" disabled title="Run the selected task for real">▶ Run</button>
+      <button id="btn-dryrun" disabled title="Execute but stop before the first commit-point step">Dry Run</button>
+      <button id="btn-validate" disabled title="Resolve + highlight every element, change nothing">Validate</button>
+      <button id="btn-continue" disabled title="Resume a run paused by a wait-for-user step">➤ Continue</button>
+      <button id="btn-cancel-run" disabled title="Cancel the current run">✕</button>
+      <button id="btn-import" title="Import a collection or task from a zip">⇪ Import</button>
+      <button id="btn-export" disabled title="Export the selected collection or task as a zip">⇩ Export</button>
+    </div>
     <div class="row">
       <input id="url" type="text" placeholder="https://www.google.com" />
       <button id="go">Go</button>
     </div>
+  </header>
+
+  <section id="rec-preview" class="hidden">
+    <label>Recording — live preview</label>
+    <div id="rec-steps"></div>
   </section>
 
-  <section>
-    <label for="task">Task</label>
-    <textarea id="task" rows="4" placeholder="e.g. search for 'cats' and report the first 5 result titles"></textarea>
+  <nav id="tree-section">
+    <div class="section-head">
+      <label>Collections</label>
+      <button id="btn-new-collection" class="mini">+ collection</button>
+    </div>
+    <div id="tree"></div>
+    <div id="trash">🗑 drag a task or step here to delete it</div>
+  </nav>
+
+  <section id="editor" class="hidden"></section>
+
+  <details id="advanced">
+    <summary>AI task (advanced — free-text, interpreted by an LLM)</summary>
+    <textarea id="task" rows="3" placeholder="e.g. search for 'cats' and report the first 5 result titles"></textarea>
     <div class="row">
-      <button id="run">Run</button>
+      <button id="run">Run AI task</button>
       <button id="cancel" disabled>Cancel</button>
     </div>
-  </section>
+  </details>
 
   <section class="log-section">
     <label>Log</label>
     <div id="log"></div>
   </section>
 
-<script>
-  (function () {
-    var logEl = document.getElementById('log');
-    var runBtn = document.getElementById('run');
-    var cancelBtn = document.getElementById('cancel');
-
-    function post(action, data) {
-      window.chrome.webview.postMessage(Object.assign({ action: action }, data || {}));
-    }
-
-    document.getElementById('go').addEventListener('click', function () {
-      var url = document.getElementById('url').value.trim();
-      if (url) post('navigate', { url: url });
-    });
-
-    runBtn.addEventListener('click', function () {
-      var task = document.getElementById('task').value.trim();
-      if (task) post('run', { task: task });
-    });
-
-    cancelBtn.addEventListener('click', function () { post('cancel'); });
-
-    window.ssPanel = {
-      onLog: function (line) {
-        var div = document.createElement('div');
-        div.className = 'log-line';
-        div.textContent = line;
-        logEl.appendChild(div);
-        logEl.scrollTop = logEl.scrollHeight;
-      },
-      onRunState: function (running) {
-        runBtn.disabled = running;
-        cancelBtn.disabled = !running;
-      },
-    };
-
-    post('ready');
-  })();
-</script>
+<script src="panel.js"></script>
 </body>
 </html>
