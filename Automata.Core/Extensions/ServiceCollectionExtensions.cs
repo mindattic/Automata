@@ -1,3 +1,4 @@
+using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Automata.Core.Operator.Tools;
@@ -42,6 +43,8 @@ public static class ServiceCollectionExtensions
             new CollectionStore(rootPath: null, sp.GetRequiredService<ILogger<CollectionStore>>()));
         services.AddSingleton(sp => new ArchiveService(
             sp.GetRequiredService<CollectionStore>(), sp.GetRequiredService<ILogger<ArchiveService>>()));
+        services.AddSingleton(sp =>
+            new FingerprintResolver(sp.GetRequiredService<ILogger<FingerprintResolver>>()));
 
         return services;
     }
