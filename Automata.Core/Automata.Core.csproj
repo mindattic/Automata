@@ -18,4 +18,8 @@
     <EmbeddedResource Include="Automation\Scripts\*.js" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Automata.Tests" />
+  </ItemGroup>
+
 </Project>

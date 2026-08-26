@@ -749,9 +749,13 @@
             document.documentElement.style.setProperty('--radius', radius + 'px');
             $('set-radius').value = radius;
             $('set-radius-value').textContent = radius + 'px';
-            $('set-key-status').textContent = s && s.anthropicKeySet
-                ? 'BYO-key active (' + (s.anthropicKeyHint || '') + ')'
-                : 'no override — using default credentials';
+
+            LLM_PROVIDERS.forEach(function (p) {
+                $('llm-' + p).checked = (s && s.provider) === p;
+                var info = s && s.keys && s.keys[p];
+                // The key never crosses the bridge — the input's placeholder shows the status.
+                $('key-' + p).placeholder = info ? info.hint : '';
+            });
         },
     };
 
@@ -778,13 +782,26 @@
     $('btn-new-collection').addEventListener('click', function () { post('createCollection', { name: 'New collection' }); });
     $('btn-folder').addEventListener('click', function () { post('openCollections'); });
 
-    // Settings: BYO Anthropic key + border radius.
-    $('set-key-save').addEventListener('click', function () {
-        post('saveSettings', { anthropicKey: $('set-anthropic-key').value.trim() });
-        $('set-anthropic-key').value = '';
+    // Settings: LLM provider radios, per-provider BYO keys, border radius.
+    var LLM_PROVIDERS = ['claude', 'openai', 'gemini', 'kimi'];
+
+    LLM_PROVIDERS.forEach(function (p) {
+        $('llm-' + p).addEventListener('change', function () {
+            if ($('llm-' + p).checked) post('saveSettings', { provider: p });
+        });
     });
-    $('set-key-clear').addEventListener('click', function () {
-        post('saveSettings', { anthropicKey: '' });
+    $('set-key-save').addEventListener('click', function () {
+        var payload = {};
+        LLM_PROVIDERS.forEach(function (p) {
+            var value = $('key-' + p).value.trim();
+            if (value) { payload[p + 'Key'] = value; $('key-' + p).value = ''; }
+        });
+        if (Object.keys(payload).length) post('saveSettings', payload);
+    });
+    document.querySelectorAll('[data-clear]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            post('saveSettings', { clearKey: btn.getAttribute('data-clear') });
+        });
     });
     $('set-radius').addEventListener('input', function () {
         var radius = parseInt($('set-radius').value, 10) || 0;

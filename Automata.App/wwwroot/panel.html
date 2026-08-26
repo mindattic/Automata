@@ -42,14 +42,34 @@
 
   <details id="settings">
     <summary>⚙ Settings</summary>
-    <div class="field">
-      <span>Anthropic key</span>
-      <input type="password" id="set-anthropic-key" placeholder="BYO-key: overrides the default credentials" />
+    <label>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</label>
+    <div class="llm-row">
+      <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
+      <span class="llm-name">Claude</span>
+      <input type="password" id="key-claude" />
+      <button class="mini" data-clear="claude" data-tooltip="Clear the saved Claude key">✕</button>
+    </div>
+    <div class="llm-row">
+      <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
+      <span class="llm-name">OpenAI</span>
+      <input type="password" id="key-openai" />
+      <button class="mini" data-clear="openai" data-tooltip="Clear the saved OpenAI key">✕</button>
+    </div>
+    <div class="llm-row">
+      <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
+      <span class="llm-name">Gemini</span>
+      <input type="password" id="key-gemini" />
+      <button class="mini" data-clear="gemini" data-tooltip="Clear the saved Gemini key">✕</button>
+    </div>
+    <div class="llm-row">
+      <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
+      <span class="llm-name">Kimi</span>
+      <input type="password" id="key-kimi" />
+      <button class="mini" data-clear="kimi" data-tooltip="Clear the saved Kimi key">✕</button>
     </div>
     <div class="row settings-row">
-      <span id="set-key-status" class="key-status">no override — using default credentials</span>
-      <button id="set-key-save" class="mini">Save key</button>
-      <button id="set-key-clear" class="mini">Clear</button>
+      <span class="key-status">selected provider runs first; others are fallbacks</span>
+      <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
     </div>
     <div class="field">
       <span>Border radius</span>

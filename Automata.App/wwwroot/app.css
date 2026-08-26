@@ -308,6 +308,18 @@ button.action-pick span { font-size: 11px; color: #999; }
 
 /* ---- settings ---- */
 
+.llm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.llm-row input[type=radio] { width: auto; accent-color: #3c82ff; flex: none; }
+.llm-row .llm-name { width: 52px; flex: none; font-size: 12px; color: #ccc; }
+.llm-row input[type=password] { flex: 1; font-size: 11px; }
+.llm-row button { flex: none; }
+
 .settings-row { align-items: center; margin-bottom: 8px; }
 
 .key-status {

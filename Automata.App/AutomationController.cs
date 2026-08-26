@@ -165,17 +165,39 @@ public sealed class AutomationController
             case "saveSettings":
             {
                 var settings = settingsStore.Load();
-                if (msg["anthropicKey"] != null)
+
+                if (Str(msg, "provider") is { } provider
+                    && provider is "claude" or "openai" or "gemini" or "kimi")
                 {
-                    var hadKey = settings.AnthropicApiKey != null;
-                    settings.AnthropicApiKey = Str(msg, "anthropicKey") is { Length: > 0 } key ? key : null;
-                    if (hadKey || settings.AnthropicApiKey != null)
-                        await logAsync(settings.AnthropicApiKey == null
-                            ? "Anthropic key override cleared — using the default credential chain."
-                            : "Anthropic key override saved (BYO-key) — used for the next AI run.");
+                    settings.Provider = provider;
+                    await logAsync($"LLM provider set to {provider} — used for the next AI run.");
                 }
+
+                foreach (var (field, apply) in KeyFields())
+                {
+                    if (Str(msg, field) is { Length: > 0 } key)
+                    {
+                        apply(settings, key);
+                        await logAsync($"{field} saved (BYO-key) — used for the next AI run.");
+                    }
+                }
+                if (Str(msg, "clearKey") is { } clear)
+                {
+                    var cleared = clear switch
+                    {
+                        "claude" => (Action)(() => settings.AnthropicApiKey = null),
+                        "openai" => () => settings.OpenAiApiKey = null,
+                        "gemini" => () => settings.GeminiApiKey = null,
+                        "kimi" => () => settings.KimiApiKey = null,
+                        _ => () => { },
+                    };
+                    cleared();
+                    await logAsync($"{clear} key override cleared — falling back to Vault/default credentials.");
+                }
+
                 if (msg["borderRadius"] != null)
                     settings.BorderRadius = Math.Clamp(msg["borderRadius"]!.GetValue<int>(), 0, 10);
+
                 settingsStore.Save(settings);
                 await PushSettingsAsync();
                 return true;
@@ -477,15 +499,34 @@ public sealed class AutomationController
         return execPanelScript($"window.ssPanel.onRecordedSteps({json})");
     }
 
-    /// <summary>Settings for the panel — the key itself never crosses the bridge, only a hint.</summary>
+    private static IEnumerable<(string Field, Action<AutomataSettings, string> Apply)> KeyFields() =>
+    [
+        ("claudeKey", (s, v) => s.AnthropicApiKey = v),
+        ("openaiKey", (s, v) => s.OpenAiApiKey = v),
+        ("geminiKey", (s, v) => s.GeminiApiKey = v),
+        ("kimiKey", (s, v) => s.KimiApiKey = v),
+    ];
+
+    /// <summary>Settings for the panel — keys themselves never cross the bridge, only hints.</summary>
     public Task PushSettingsAsync()
     {
         var settings = settingsStore.Load();
+        static object Hint(string? key, string fallbackLabel) => new
+        {
+            set = !string.IsNullOrEmpty(key),
+            hint = key is { Length: >= 4 } k ? "BYO …" + k[^4..] : fallbackLabel,
+        };
         var json = JsonSerializer.Serialize(new
         {
-            anthropicKeySet = !string.IsNullOrEmpty(settings.AnthropicApiKey),
-            anthropicKeyHint = settings.AnthropicApiKey is { Length: >= 4 } k ? "…" + k[^4..] : null,
+            provider = settings.Provider,
             borderRadius = settings.BorderRadius,
+            keys = new
+            {
+                claude = Hint(settings.AnthropicApiKey, "OAuth/Vault default"),
+                openai = Hint(settings.OpenAiApiKey, "Vault 'openai'"),
+                gemini = Hint(settings.GeminiApiKey, "Vault 'gemini'"),
+                kimi = Hint(settings.KimiApiKey, "Vault 'kimi'"),
+            },
         }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onSettings({json})");
     }

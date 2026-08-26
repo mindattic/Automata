@@ -34,11 +34,29 @@ public class AutomataSettingsStoreTests
     {
         var store = new AutomataSettingsStore(path);
 
-        store.Save(new AutomataSettings { AnthropicApiKey = "sk-ant-test123", BorderRadius = 8 });
+        store.Save(new AutomataSettings
+        {
+            Provider = "gemini",
+            AnthropicApiKey = "sk-ant-test123",
+            OpenAiApiKey = "sk-oai",
+            GeminiApiKey = "AIza-g",
+            KimiApiKey = "sk-kimi",
+            BorderRadius = 8,
+        });
         var back = store.Load();
 
+        Assert.That(back.Provider, Is.EqualTo("gemini"));
         Assert.That(back.AnthropicApiKey, Is.EqualTo("sk-ant-test123"));
+        Assert.That(back.OpenAiApiKey, Is.EqualTo("sk-oai"));
+        Assert.That(back.GeminiApiKey, Is.EqualTo("AIza-g"));
+        Assert.That(back.KimiApiKey, Is.EqualTo("sk-kimi"));
         Assert.That(back.BorderRadius, Is.EqualTo(8));
+    }
+
+    [Test]
+    public void Provider_DefaultsToClaude()
+    {
+        Assert.That(new AutomataSettingsStore(path).Load().Provider, Is.EqualTo("claude"));
     }
 
     [Test]

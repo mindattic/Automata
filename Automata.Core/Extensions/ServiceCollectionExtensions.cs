@@ -4,6 +4,7 @@ using Automata.Core.Operator;
 using Automata.Core.Operator.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using MindAttic.Legion;
 
 namespace Automata.Core.Extensions;
 
@@ -17,25 +18,51 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<AutomataSettingsStore>();
 
+        services.AddHttpClient();                    // generic factory for the LLM adapters
         services.AddHttpClient<AnthropicToolClient>();
-        // BYO-key: a key saved in the sidebar's Settings overrides the default credential chain
-        // (Claude Code OAuth → shared credential store). Resolved live per call, so saving a key
-        // takes effect without a restart.
-        services.AddSingleton(sp => new AnthropicToolCallingLlm(
-            sp.GetRequiredService<AnthropicToolClient>(),
+
+        // BYO-key: a key saved in the sidebar's Settings overrides that provider's default
+        // credential chain (Claude: OAuth → credential store; others: the Vault key named
+        // below). Resolvers run live per call, so saving a key needs no restart.
+        static Func<string?> KeyResolver(
+            AutomataSettingsStore store, Func<AutomataSettings, string?> byo, Func<string?> fallback) =>
             () =>
             {
-                var byoKey = sp.GetRequiredService<AutomataSettingsStore>().Load().AnthropicApiKey;
-                return !string.IsNullOrWhiteSpace(byoKey) ? byoKey : AnthropicToolCallingLlm.DefaultResolveApiKey();
-            }));
+                var key = byo(store.Load());
+                return !string.IsNullOrWhiteSpace(key) ? key : fallback();
+            };
 
-        services.AddHttpClient<OpenAiToolCallingLlm>();
+        services.AddSingleton(sp => new AnthropicToolCallingLlm(
+            sp.GetRequiredService<AnthropicToolClient>(),
+            KeyResolver(sp.GetRequiredService<AutomataSettingsStore>(),
+                s => s.AnthropicApiKey, AnthropicToolCallingLlm.DefaultResolveApiKey)));
 
-        // Multi-LLM Master Switch-Over: tried in preference order, first configured provider wins.
-        services.AddSingleton<IReadOnlyList<IToolCallingLlm>>(sp => new List<IToolCallingLlm>
+        // Multi-LLM Master Switch-Over: the roster orders the user's selected provider first
+        // (live, per run) with the rest as fallbacks — first provider with credentials wins.
+        // Kimi (Moonshot) is OpenAI-wire-compatible and reuses that adapter; Gemini needs its
+        // own pathway (different function-calling format).
+        services.AddSingleton<IReadOnlyList<IToolCallingLlm>>(sp =>
         {
-            sp.GetRequiredService<AnthropicToolCallingLlm>(),
-            sp.GetRequiredService<OpenAiToolCallingLlm>(),
+            var settings = sp.GetRequiredService<AutomataSettingsStore>();
+            var httpFactory = sp.GetRequiredService<System.Net.Http.IHttpClientFactory>();
+            var openAiLog = sp.GetRequiredService<ILogger<OpenAiToolCallingLlm>>();
+
+            var openAi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
+                KeyResolver(settings, s => s.OpenAiApiKey, () => MindAtticCredentialStore.GetKey("openai")));
+            var kimi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
+                KeyResolver(settings, s => s.KimiApiKey, () => MindAtticCredentialStore.GetKey("kimi")),
+                model: "kimi-latest", name: "Kimi", endpoint: "https://api.moonshot.ai/v1/chat/completions");
+            var gemini = new GeminiToolCallingLlm(httpFactory.CreateClient("llm"),
+                sp.GetRequiredService<ILogger<GeminiToolCallingLlm>>(),
+                KeyResolver(settings, s => s.GeminiApiKey, () => MindAtticCredentialStore.GetKey("gemini")));
+
+            return new ProviderRoster(
+            [
+                ("claude", sp.GetRequiredService<AnthropicToolCallingLlm>()),
+                ("openai", openAi),
+                ("gemini", gemini),
+                ("kimi", kimi),
+            ], () => settings.Load().Provider);
         });
 
         services.AddSingleton<IBrowserTool, ClickButtonTool>();

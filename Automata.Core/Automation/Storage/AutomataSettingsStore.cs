@@ -7,13 +7,26 @@ namespace Automata.Core.Automation.Storage;
 /// <summary>App-level user settings, editable from the sidebar's Settings section.</summary>
 public sealed class AutomataSettings
 {
+    /// <summary>Which LLM drives the AI task / LLM-repair paths:
+    /// "claude" | "openai" | "gemini" | "kimi". The others remain fallbacks in case the
+    /// selected one has no usable credentials.</summary>
+    public string Provider { get; set; } = "claude";
+
     /// <summary>
     /// BYO-key: an Anthropic API key that OVERRIDES the default credential chain (Claude Code
-    /// OAuth session → shared MindAttic credential store) for the AI task / LLM-repair paths —
-    /// the escape hatch when the OAuth session is rate-limited or out of quota.
-    /// Null/empty = use the default chain.
+    /// OAuth session → shared MindAttic credential store) — the escape hatch when the OAuth
+    /// session is rate-limited or out of quota. Null/empty = use the default chain.
     /// </summary>
     public string? AnthropicApiKey { get; set; }
+
+    /// <summary>BYO OpenAI key; null/empty falls back to the Vault's "openai" key.</summary>
+    public string? OpenAiApiKey { get; set; }
+
+    /// <summary>BYO Gemini key; null/empty falls back to the Vault's "gemini" key.</summary>
+    public string? GeminiApiKey { get; set; }
+
+    /// <summary>BYO Kimi (Moonshot) key; null/empty falls back to the Vault's "kimi" key.</summary>
+    public string? KimiApiKey { get; set; }
 
     /// <summary>Corner rounding (px, 0–10) applied to the sidebar's buttons and inputs.</summary>
     public int BorderRadius { get; set; } = 5;

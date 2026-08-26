@@ -10,21 +10,24 @@ namespace Automata.Core.Operator;
 /// <summary>
 /// <see cref="IToolCallingLlm"/> adapter speaking OpenAI's Chat Completions function-calling wire
 /// shape directly (Legion is chat-text-only and has no tool-calling concept — same reason
-/// <see cref="AnthropicToolClient"/> bypasses it). This is the fallback tier when no Claude
-/// credentials are configured. Ported verbatim from Prose.KdpPublish/Prose.Core.
+/// <see cref="AnthropicToolClient"/> bypasses it). Also serves any OpenAI-COMPATIBLE provider —
+/// Kimi (Moonshot) uses this same adapter with its own name/endpoint/model, because Moonshot's
+/// API is wire-identical (tool_calls and all). Ported from Prose.KdpPublish/Prose.Core.
 /// </summary>
 public class OpenAiToolCallingLlm : IToolCallingLlm
 {
+    public const string OpenAiEndpoint = "https://api.openai.com/v1/chat/completions";
+
     private readonly HttpClient http;
     private readonly ILogger<OpenAiToolCallingLlm> log;
     private readonly string model;
     private readonly Func<string?> resolveApiKey;
-    private const string Endpoint = "https://api.openai.com/v1/chat/completions";
+    private readonly string endpoint;
     private const int MaxRetries = 5;
     private static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(60);
 
-    public string Name => "OpenAI";
+    public string Name { get; }
 
     // Both public ctors start (HttpClient, ILogger, …), which makes the typed-client factory's
     // constructor selection ambiguous — ActivatorUtilities throws at resolve time without this
@@ -32,21 +35,24 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
     // BrowserOperatorService eagerly).
     [ActivatorUtilitiesConstructor]
     public OpenAiToolCallingLlm(HttpClient http, ILogger<OpenAiToolCallingLlm> log)
-    {
-        this.http = http;
-        this.log = log;
-        this.resolveApiKey = () => MindAtticCredentialStore.GetKey("openai");
-        this.model = "gpt-4.1";
-    }
+        : this(http, log, () => MindAtticCredentialStore.GetKey("openai")) { }
 
-    /// <summary>Test-friendly constructor — injects the API-key resolver instead of reading the
-    /// real shared credential store.</summary>
-    public OpenAiToolCallingLlm(HttpClient http, ILogger<OpenAiToolCallingLlm> log, Func<string?> resolveApiKey, string model = "gpt-4.1")
+    /// <summary>Full-control constructor: injected key resolver, and optional name/endpoint so
+    /// OpenAI-compatible providers (Kimi/Moonshot) reuse the exact same wire logic.</summary>
+    public OpenAiToolCallingLlm(
+        HttpClient http,
+        ILogger<OpenAiToolCallingLlm> log,
+        Func<string?> resolveApiKey,
+        string model = "gpt-4.1",
+        string name = "OpenAI",
+        string endpoint = OpenAiEndpoint)
     {
         this.http = http;
         this.log = log;
         this.resolveApiKey = resolveApiKey;
         this.model = model;
+        Name = name;
+        this.endpoint = endpoint;
     }
 
     public Task<bool> IsConfiguredAsync() =>
@@ -61,7 +67,7 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
     {
         var apiKey = resolveApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException("No OpenAI API key configured ('openai' provider key in the credential store).");
+            throw new InvalidOperationException($"No {Name} API key configured — set one in Settings or the credential store.");
 
         var messages = ToOpenAiMessages(systemPrompt, history);
         var toolsArray = ToOpenAiTools(tools);
@@ -76,7 +82,7 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
 
         for (int attempt = 0; ; attempt++)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Post, Endpoint)
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
                 Content = JsonContent.Create(JsonNode.Parse(body.ToJsonString())),
             };
@@ -91,18 +97,18 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
                 if (retryable && attempt < MaxRetries)
                 {
                     var delay = ResolveRetryDelay(resp, attempt);
-                    log.LogWarning("OpenAI {Status} (attempt {Attempt}/{Max}) — retrying in {Delay}s",
-                        (int)resp.StatusCode, attempt + 1, MaxRetries, delay.TotalSeconds);
+                    log.LogWarning("{Provider} {Status} (attempt {Attempt}/{Max}) — retrying in {Delay}s",
+                        Name, (int)resp.StatusCode, attempt + 1, MaxRetries, delay.TotalSeconds);
                     await Task.Delay(delay, ct);
                     continue;
                 }
-                log.LogWarning("OpenAI {Status}: {Body}", (int)resp.StatusCode, Truncate(raw, 500));
-                throw new InvalidOperationException($"OpenAI API {(int)resp.StatusCode}: {Truncate(raw, 500)}");
+                log.LogWarning("{Provider} {Status}: {Body}", Name, (int)resp.StatusCode, Truncate(raw, 500));
+                throw new InvalidOperationException($"{Name} API {(int)resp.StatusCode}: {Truncate(raw, 500)}");
             }
 
-            var doc = JsonNode.Parse(raw) ?? throw new InvalidOperationException("OpenAI response was null JSON");
+            var doc = JsonNode.Parse(raw) ?? throw new InvalidOperationException($"{Name} response was null JSON");
             var message = doc["choices"]?[0]?["message"]
-                ?? throw new InvalidOperationException("OpenAI response had no choices[0].message");
+                ?? throw new InvalidOperationException($"{Name} response had no choices[0].message");
             return new ToolTurnResult(FromOpenAiMessage(message));
         }
     }
