@@ -12,3 +12,5 @@ obj/
 ## OS
 Thumbs.db
 .DS_Store
+
+.claude/checkpoint.md
