@@ -30,9 +30,10 @@ plumbing, provider-neutral LLM tool-calling engine, and generic DOM tools from P
    scoring (near-ties fail as ambiguous), overlay highlight, self-heal re-fingerprinting.
 5. **IBrowserSurface.NavigateAsync** + `BrowserActions` (shared perform-mechanics factored from
    the LLM tools) + surface-based page-busy overload.
-6. **ReplayEngine** — StepEvent stream, pauseForUser gate (`ReplayControl`), Dry Run stops
-   before first commit point, Validate resolves without mutating, per-action post-condition
-   auto-confirm, settle-wait, self-heal write-back. `RunLogWriter` → `~\Automata\logs\`.
+6. **ReplayEngine** — StepEvent stream, pauseForUser gate (`ReplayControl`), per-action
+   post-condition auto-confirm, settle-wait, self-heal write-back. `RunLogWriter` →
+   `Documents\Automata\Logs\`. (Dry Run/Validate modes were later removed by design — one Run
+   button; `isCommitPoint` survives as an informational ◆ marker only.)
 7. **RecorderSessionBuilder** — pure event→step coalescer (burst/focus-click/toggle/dropdown
    collapsing, navigate dedupe, commit auto-flag, masked passwords, generated labels).
 8. **App recorder wiring** — recorder.js injected dormant on every document, target-pane
@@ -60,5 +61,9 @@ until Legion grows tool-calling support.
 - **Orchestration (old Phase 4)**: multiple concurrent panes/instances with separate
   userDataFolders running the same task with different parameter bindings; templated parameters
   (`{{query}}`) in step values.
-- **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing;
-  `submitWithEnter` flag on typeText for Enter-only forms; file locking for multi-instance.
+- **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing; file locking
+  for multi-instance.
+- **Known perf cleanup** (fine at current scale, flagged by code review): every panel mutation
+  re-scans the whole store (`PushStateAsync` → `LoadCollections` + per-collection `LoadTasks`,
+  each id lookup re-enumerating directories). Fix when stores get large: an id→path index
+  invalidated on write, and pushing only the affected subtree.

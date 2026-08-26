@@ -32,7 +32,12 @@ public class WebView2BrowserSurface : IBrowserSurface
             core.Navigate(url);
             var winner = await Task.WhenAny(tcs.Task, Task.Delay(NavigationTimeout, ct));
             if (winner != tcs.Task)
+            {
+                // A fired cancellation token also makes the delay win — report THAT truthfully
+                // rather than misdiagnosing a user cancel as a page timeout.
+                ct.ThrowIfCancellationRequested();
                 throw new TimeoutException($"Navigation to {url} did not complete within {NavigationTimeout.TotalSeconds}s.");
+            }
             await tcs.Task;
         }
         finally
@@ -61,7 +66,12 @@ public class WebView2BrowserSurface : IBrowserSurface
     {
         var winner = await Task.WhenAny(task, Task.Delay(CallTimeout, ct));
         if (winner != task)
+        {
+            // A fired cancellation token also makes the delay win — surface the cancel as a
+            // cancel, not as a fake "page is unresponsive" timeout.
+            ct.ThrowIfCancellationRequested();
             throw new TimeoutException($"{what} did not respond within {CallTimeout.TotalSeconds}s — the page may be showing a blocking dialog or is otherwise unresponsive.");
+        }
         return await task;
     }
 

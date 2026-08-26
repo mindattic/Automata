@@ -76,14 +76,16 @@ public sealed class CollectionStore
         var existingDir = FindCollectionDirById(collection.Id);
         var targetDir = Path.Combine(RootPath, SafeName(collection.Name));
 
-        // Renaming onto another collection's folder: keep both, suffix this one.
+        // Renaming onto an occupied folder: keep both, suffix this one. An occupant whose
+        // manifest is missing or unreadable is treated as foreign too — the read path recovers
+        // corrupt files with a warning, so the write path must never silently clobber them.
         if (Directory.Exists(targetDir) && !PathsEqual(existingDir, targetDir))
         {
             var occupant = ReadJson<Collection>(Path.Combine(targetDir, ManifestFileName));
-            if (occupant != null && occupant.Id != collection.Id)
+            if (occupant == null || occupant.Id != collection.Id)
             {
-                collection.Name = StoreUtil.UniqueName(collection.Name,
-                    LoadCollections().Where(c => c.Id != collection.Id).Select(c => c.Name));
+                collection.Name = UniqueBySafeName(collection.Name,
+                    Directory.EnumerateDirectories(RootPath).Select(Path.GetFileName));
                 targetDir = Path.Combine(RootPath, SafeName(collection.Name));
             }
         }
@@ -223,17 +225,17 @@ public sealed class CollectionStore
         var existingFile = FindTaskFileById(dir, task.Id);
         var target = Path.Combine(dir, SafeName(task.Name) + ".json");
 
-        // Renaming onto a sibling task's file: keep both, suffix this one.
+        // Renaming onto a sibling task's file: keep both, suffix this one. An UNREADABLE
+        // occupant is foreign by definition — never silently overwrite a file that might still
+        // be recoverable by hand.
         if (File.Exists(target) && !PathsEqual(existingFile, target))
         {
             var occupant = ReadJson<TaskDefinition>(target);
-            if (occupant != null && occupant.Id != task.Id)
+            if (occupant == null || occupant.Id != task.Id)
             {
-                var siblingNames = TaskFiles(dir)
+                task.Name = UniqueBySafeName(task.Name, TaskFiles(dir)
                     .Where(f => !PathsEqual(f, existingFile))
-                    .Select(Path.GetFileNameWithoutExtension)
-                    .Where(n => n != null)!;
-                task.Name = StoreUtil.UniqueName(task.Name, siblingNames!);
+                    .Select(Path.GetFileNameWithoutExtension));
                 target = Path.Combine(dir, SafeName(task.Name) + ".json");
             }
         }
@@ -393,6 +395,16 @@ public sealed class CollectionStore
         if (cleaned.Length > 100) cleaned = cleaned[..100].TrimEnd('.', ' ');
         if (ReservedNames.Contains(cleaned)) cleaned = "_" + cleaned;
         return cleaned;
+    }
+
+    /// <summary>"Name (2)", "Name (3)", … until the SANITIZED form is free — disk collisions
+    /// happen on safe names, so that's the form that must be unique.</summary>
+    private static string UniqueBySafeName(string desired, IEnumerable<string?> takenSafeNames)
+    {
+        var taken = new HashSet<string>(takenSafeNames.Where(n => n != null)!, StringComparer.OrdinalIgnoreCase);
+        var name = desired;
+        for (var n = 2; taken.Contains(SafeName(name)); n++) name = $"{desired} ({n})";
+        return name;
     }
 
     private static bool PathsEqual(string? a, string? b) =>

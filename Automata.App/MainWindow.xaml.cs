@@ -144,7 +144,10 @@ public partial class MainWindow : Window
                     _ = RunTaskAsync(task);
                     break;
                 case "cancel":
+                    // Cancels whichever run is live: the AI free-text loop (runCts here) and/or
+                    // a task replay (the controller's own CTS) — the panel shares one Cancel.
                     runCts?.Cancel();
+                    await controller.TryHandlePanelMessageAsync("cancelRun", msg!);
                     break;
                 default:
                     if (action != null && msg != null)

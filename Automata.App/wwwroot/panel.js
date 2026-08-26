@@ -565,15 +565,21 @@
             step.timeoutMs = isNaN(ms) ? null : ms;
             var tgtInputs = editorEl.querySelectorAll('[data-tgt]');
             if (tgtInputs.length) {
-                step.target = step.target || {};
+                var tgt = {};
+                var hasAny = false;
                 tgtInputs.forEach(function (inp) {
                     var key = inp.getAttribute('data-tgt');
                     if (key === 'classList') {
-                        step.target.classList = inp.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+                        tgt.classList = inp.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+                        if (tgt.classList.length) hasAny = true;
                     } else {
-                        step.target[key] = inp.value || null;
+                        tgt[key] = inp.value || null;
+                        if (inp.value) hasAny = true;
                     }
                 });
+                // An all-empty fingerprint stays null so the engine reports "step has no target
+                // fingerprint" instead of a misleading resolve-timeout on a blank identity.
+                step.target = hasAny ? tgt : null;
             }
             saveTask(task);
         }
@@ -767,7 +773,11 @@
     });
     $('btn-record').addEventListener('click', function () { post('record'); });
     $('btn-stop').addEventListener('click', function () {
-        post('stopRecord', { collectionId: state.sel.collectionId || '' });
+        // With a task selected, the recording appends to it; otherwise a new task is created.
+        post('stopRecord', {
+            collectionId: state.sel.collectionId || '',
+            taskId: state.sel.taskId || null,
+        });
     });
     $('btn-run').addEventListener('click', function () {
         post('runTask', { taskId: state.sel.taskId, allowRepair: $('allow-repair').checked });

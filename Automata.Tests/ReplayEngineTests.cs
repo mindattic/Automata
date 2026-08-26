@@ -123,6 +123,18 @@ public class ReplayEngineTests
     }
 
     [Test]
+    public async Task Continue_FiredBeforeWaitAsync_IsLatchedNotLost()
+    {
+        var control = new ReplayControl();
+
+        control.Continue();   // UI wins the race: Continue lands before the engine parks
+
+        var wait = control.WaitAsync(CancellationToken.None);
+        var finished = await Task.WhenAny(wait, Task.Delay(2000));
+        Assert.That(finished, Is.EqualTo(wait), "a pre-fired Continue must release the next WaitAsync");
+    }
+
+    [Test]
     public async Task PauseForUser_ParksUntilContinue()
     {
         var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };

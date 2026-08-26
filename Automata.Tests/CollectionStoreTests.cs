@@ -296,6 +296,24 @@ public class CollectionStoreTests
     }
 
     [Test]
+    public void RenameOntoAnUnreadableFile_SuffixesInsteadOfClobbering()
+    {
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id, "Mine");
+        store.SaveTask(task);
+        // A corrupt sibling occupies the name this task is being renamed to.
+        File.WriteAllText(Path.Combine(root, "C", "Broken.json"), "{ not json at all");
+
+        task.Name = "Broken";
+        store.SaveTask(task);
+
+        Assert.That(task.Name, Is.EqualTo("Broken (2)"));
+        Assert.That(File.ReadAllText(Path.Combine(root, "C", "Broken.json")),
+            Is.EqualTo("{ not json at all")); // the corrupt file survives untouched
+        Assert.That(File.Exists(Path.Combine(root, "C", "Broken (2).json")), Is.True);
+    }
+
+    [Test]
     public void RenameOntoASiblingTasksName_SuffixesInsteadOfClobbering()
     {
         var collection = store.CreateCollection("C");

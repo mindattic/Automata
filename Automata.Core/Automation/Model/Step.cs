@@ -81,8 +81,10 @@ public sealed class Step
     public bool PauseForUser { get; set; }
 
     /// <summary>
-    /// Marks a permanent-write boundary (submit/save/purchase…). Dry Run stops BEFORE executing
-    /// this step. Auto-flagged at record time for submit-ish clicks; user-toggleable.
+    /// INFORMATIONAL marker (◆ in the tree) for a step that commits a permanent write
+    /// (submit/save/purchase…). Auto-flagged at record time for submit-ish clicks;
+    /// user-toggleable. The replay engine does NOT gate on it — Run executes every step
+    /// (the old Dry Run mode that stopped here was removed by design).
     /// </summary>
     public bool IsCommitPoint { get; set; }
 

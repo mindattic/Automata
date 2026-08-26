@@ -97,11 +97,22 @@
             ['aria', function () {
                 if (!fp.ariaLabel) return [];
                 var want = lower(fp.ariaLabel);
+                // Union of explicit-role matches and tag matches: a native <button> has the
+                // implicit role and never matches [role=button], so the tag half catches it.
                 var sel = fp.ariaRole ? '[role="' + fp.ariaRole + '"], ' + (fp.tag || '*') : (fp.tag || '*');
                 var all = document.querySelectorAll(sel);
                 var out = [];
                 for (var i = 0; i < all.length; i++) {
                     if (isVisible(all[i]) && lower(accessibleName(all[i])) === want) out.push(all[i]);
+                }
+                // A wrapper (div role=button) and its inner control often share the accessible
+                // name — when several match, prefer the ones with the RECORDED tag so a still-
+                // unchanged page resolves uniquely instead of failing as ambiguous. When none
+                // match the tag (markup changed button→div), keep the full set.
+                if (out.length > 1 && fp.tag) {
+                    var exactTag = [];
+                    for (var j = 0; j < out.length; j++) if (tagOk(out[j], fp)) exactTag.push(out[j]);
+                    if (exactTag.length) out = exactTag;
                 }
                 return out;
             }],

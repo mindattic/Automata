@@ -2,21 +2,48 @@ namespace Automata.Core.Automation.Replay;
 
 /// <summary>
 /// The pauseForUser gate: the engine parks on <see cref="WaitAsync"/> when a step is flagged;
-/// the sidebar's Continue button calls <see cref="Continue"/>.
+/// the sidebar's Continue button calls <see cref="Continue"/>. A Continue that lands BEFORE the
+/// engine reaches WaitAsync (the StepPaused event is yielded first, so the UI can win that race)
+/// is latched rather than lost — otherwise the run would hang on a fresh, never-completed gate.
 /// </summary>
 public sealed class ReplayControl
 {
-    private volatile TaskCompletionSource? gate;
+    private readonly object sync = new();
+    private TaskCompletionSource? gate;
+    private bool pendingContinue;
 
     public async Task WaitAsync(CancellationToken ct)
     {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        gate = tcs;
+        TaskCompletionSource tcs;
+        lock (sync)
+        {
+            if (pendingContinue)
+            {
+                pendingContinue = false;
+                return;
+            }
+            tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            gate = tcs;
+        }
         using var registration = ct.Register(() => tcs.TrySetCanceled(ct));
         await tcs.Task;
     }
 
-    public void Continue() => gate?.TrySetResult();
+    public void Continue()
+    {
+        lock (sync)
+        {
+            if (gate != null)
+            {
+                gate.TrySetResult();
+                gate = null;
+            }
+            else
+            {
+                pendingContinue = true;
+            }
+        }
+    }
 }
 
 public sealed class ReplayOptions
