@@ -1,4 +1,4 @@
-## .NET
+﻿## .NET
 bin/
 obj/
 *.user
@@ -13,4 +13,4 @@ obj/
 Thumbs.db
 .DS_Store
 
-.claude/checkpoint.md
+.claude/quicksave.md
