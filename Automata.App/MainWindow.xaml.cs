@@ -47,14 +47,34 @@ public partial class MainWindow : Window
         _ = InitializeTargetBrowserAsync();
     }
 
+    /// <summary>Opt-in remote-debugging hook for tools/verify-ui.mjs. Null (today's exact
+    /// behavior) unless the named env var holds a valid port number.</summary>
+    private static CoreWebView2EnvironmentOptions? DebugOptions(string envVar)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrWhiteSpace(raw) || !int.TryParse(raw, out var port) || port <= 0)
+            return null;
+        return new CoreWebView2EnvironmentOptions(additionalBrowserArguments: $"--remote-debugging-port={port}");
+    }
+
+    /// <summary>Opt-in profile-directory override so the verification harness never touches the
+    /// real profile under %LocalAppData%. Returns today's exact hardcoded path when unset.</summary>
+    private static string ProfileDir(string envVar, string defaultLeaf)
+    {
+        var overridePath = Environment.GetEnvironmentVariable(envVar);
+        return !string.IsNullOrWhiteSpace(overridePath)
+            ? overridePath
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MindAttic", "Automata", defaultLeaf);
+    }
+
     private async Task InitializeControlPanelAsync()
     {
-        var userDataFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MindAttic", "Automata", "ControlPanelWebView2");
+        var userDataFolder = ProfileDir("AUTOMATA_PANEL_PROFILE_DIR", "ControlPanelWebView2");
         Directory.CreateDirectory(userDataFolder);
 
-        var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+        var env = await CoreWebView2Environment.CreateAsync(
+            userDataFolder: userDataFolder, options: DebugOptions("AUTOMATA_PANEL_CDP_PORT"));
         await ControlPanel.EnsureCoreWebView2Async(env);
 
         var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -71,12 +91,11 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task InitializeTargetBrowserAsync()
     {
-        var userDataFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MindAttic", "Automata", "WebView2");
+        var userDataFolder = ProfileDir("AUTOMATA_TARGET_PROFILE_DIR", "WebView2");
         Directory.CreateDirectory(userDataFolder);
 
-        var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+        var env = await CoreWebView2Environment.CreateAsync(
+            userDataFolder: userDataFolder, options: DebugOptions("AUTOMATA_TARGET_CDP_PORT"));
         await TargetBrowser.EnsureCoreWebView2Async(env);
 
         // Any "open in new window" request (target="_blank", window.open(), etc.) redirects

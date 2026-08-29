@@ -24,9 +24,21 @@ public class WebView2BrowserSurface : IBrowserSurface
     public async Task NavigateAsync(string url, CancellationToken ct)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Handler(object? sender, CoreWebView2NavigationCompletedEventArgs e) => tcs.TrySetResult();
+        ulong? navigationId = null;
 
-        core.NavigationCompleted += Handler;
+        // A previous navigation (e.g. a redirect the last step's action triggered) can still be
+        // in flight when this call subscribes — without matching NavigationId, its eventual
+        // NavigationCompleted would resolve `tcs` for the WRONG navigation, letting the caller
+        // proceed while THIS url is still loading. NavigationStarting fires synchronously from
+        // Navigate() below, so it's always seen before any NavigationCompleted for this call.
+        void StartingHandler(object? sender, CoreWebView2NavigationStartingEventArgs e) => navigationId ??= e.NavigationId;
+        void CompletedHandler(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (navigationId == e.NavigationId) tcs.TrySetResult();
+        }
+
+        core.NavigationStarting += StartingHandler;
+        core.NavigationCompleted += CompletedHandler;
         try
         {
             core.Navigate(url);
@@ -42,7 +54,8 @@ public class WebView2BrowserSurface : IBrowserSurface
         }
         finally
         {
-            core.NavigationCompleted -= Handler;
+            core.NavigationStarting -= StartingHandler;
+            core.NavigationCompleted -= CompletedHandler;
         }
     }
 

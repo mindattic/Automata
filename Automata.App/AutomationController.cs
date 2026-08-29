@@ -34,6 +34,16 @@ public sealed class AutomationController
     private readonly List<RecorderEvent> recorded = [];
     private CancellationTokenSource? replayCts;
     private ReplayControl? replayControl;
+    private bool runActive;
+
+    /// <summary>Set while a "record at this gap" run is armed and waiting for Stop — where the
+    /// captured step(s) should be spliced once recording stops, and whether the underlying run is
+    /// still genuinely suspended (mid-tree, parked on <see cref="ReplayControl.WaitAsync"/> and
+    /// resumable via Continue) versus already finished (the gap was the last slot — RunCompleted
+    /// already fired, so nothing is left running to resume or cancel).</summary>
+    private (string TaskId, string? ParentStepId, int Index, bool RunStillSuspended)? pendingGapInsert;
+
+    private readonly record struct GapTarget(string? ParentStepId, int Index, string? PauseBeforeStepId);
 
     public AutomationController(
         CollectionStore store,
@@ -158,6 +168,10 @@ public sealed class AutomationController
                 _ = RunReplayAsync(Str(msg, "taskId") ?? "", msg["allowRepair"]?.GetValue<bool>() ?? false);
                 return true;
 
+            case "recordAtGap":
+                _ = RecordAtGapAsync(msg);
+                return true;
+
             case "getSettings":
                 await PushSettingsAsync();
                 return true;
@@ -209,6 +223,10 @@ public sealed class AutomationController
 
             case "cancelRun":
                 replayCts?.Cancel();
+                // Only tear down recording when it's the gap-recording session tied to THIS run —
+                // an ordinary whole-task recording (started via the ● Record button, no run behind
+                // it) must survive a Cancel meant for an unrelated AI run or replay.
+                if (recording && pendingGapInsert != null) _ = CancelGapRecordingAsync();
                 return true;
 
             case "export":
@@ -242,16 +260,61 @@ public sealed class AutomationController
             await logAsync("⚠ Target browser isn't ready yet — can't record.");
             return;
         }
+        await ArmRecordingCoreAsync(core, "● Recording — perform the actions to capture, then press Stop.", seedNavigate: true);
+    }
+
+    /// <summary>Arms the JS recorder on the given pane. Shared by whole-task recording and
+    /// record-at-gap (called once a bounded run has parked at the insertion point).</summary>
+    private async Task ArmRecordingCoreAsync(CoreWebView2 core, string note, bool seedNavigate)
+    {
         recorded.Clear();
         recording = true;
-        // Seed with where the user is starting from, so the replay begins on the same page.
-        if (!string.IsNullOrEmpty(core.Source) && core.Source != "about:blank")
+        // Whole-task recording starts a brand-new task, so it seeds where the user is starting
+        // from, or replaying it later would begin on the wrong page. Record-at-gap has no such
+        // need — the preceding bounded replay already left the pane on the right page, and a
+        // seeded Navigate step here would splice in as a bogus mid-task step.
+        if (seedNavigate && !string.IsNullOrEmpty(core.Source) && core.Source != "about:blank")
             recorded.Add(new RecorderEvent { Kind = "navigate", Url = core.Source, Ts = NowMs() });
 
         await core.ExecuteScriptAsync("window.__automataRecorder && window.__automataRecorder.enable()");
         await execPanelScript("window.ssPanel.onRecordingState(true)");
         await PushRecordedPreviewAsync();
-        await logAsync("● Recording — perform the actions to capture, then press Stop.");
+        await logAsync(note);
+    }
+
+    private async Task ArmRecordingForInsertAsync(string taskId, string? parentStepId, int index, bool runStillSuspended)
+    {
+        var core = targetCore();
+        if (core == null)
+        {
+            await logAsync("⚠ Target browser isn't ready yet — can't record.");
+            return;
+        }
+        await ArmRecordingCoreAsync(core, "● Recording at the insertion point — perform the action(s), then press Stop.", seedNavigate: false);
+        pendingGapInsert = (taskId, parentStepId, index, runStillSuspended);
+    }
+
+    private async Task CancelGapRecordingAsync()
+    {
+        recording = false;
+        var wasRunStillSuspended = pendingGapInsert?.RunStillSuspended ?? false;
+        pendingGapInsert = null;
+
+        if (!wasRunStillSuspended)
+        {
+            // End-of-tree/append: RunEngineAsync already returned (RunCompleted was its terminal
+            // event), so nothing else is left to clear the guard/running state — do it here.
+            runActive = false;
+            await execPanelScript("window.ssPanel.onRunState(false)");
+        }
+        // Mid-tree: the caller (cancelRun) already cancelled replayCts, which unblocks the still-
+        // suspended RunEngineAsync — its own tail finalizes runActive/running once it resumes.
+
+        var core = targetCore();
+        if (core != null)
+            await core.ExecuteScriptAsync("window.__automataRecorder && window.__automataRecorder.disable()");
+        recorded.Clear();
+        await execPanelScript("window.ssPanel.onRecordingState(false)");
     }
 
     private async Task StopRecordingAsync(JsonNode msg)
@@ -262,33 +325,68 @@ public sealed class AutomationController
             await core.ExecuteScriptAsync("window.__automataRecorder && window.__automataRecorder.disable()");
 
         var steps = RecorderSessionBuilder.Build(recorded);
-        var appendTaskId = Str(msg, "taskId");
+        var runConcluded = true;
 
-        if (steps.Count == 0)
+        if (pendingGapInsert is { } gap)
         {
-            await logAsync("Recording stopped — nothing was captured.");
-        }
-        else if (appendTaskId != null && store.GetTask(appendTaskId) is { } existing)
-        {
-            existing.Steps.AddRange(steps);
-            store.SaveTask(existing);
-            await logAsync($"Recording stopped — {steps.Count} step(s) appended to '{existing.Name}'.");
+            pendingGapInsert = null;
+            if (steps.Count == 0)
+                await logAsync("Recording stopped — nothing was captured; nothing inserted.");
+            else
+                await PushGapRecordedAsync(gap.TaskId, gap.ParentStepId, gap.Index, steps);
+
+            if (gap.RunStillSuspended)
+            {
+                // Mid-tree: the underlying replay run is still genuinely parked on its pause gate
+                // (see ReplayControl.WaitAsync) — leave it there. Continue lets the user keep
+                // playing the rest of the (now-updated) task from here, exactly like a persisted
+                // PauseForUser step; Cancel aborts it. Nothing to finalize here — running/
+                // pausedStepId must stay as they are until the user picks one of those, and
+                // RunEngineAsync's own tail concludes things once it resumes.
+                runConcluded = false;
+            }
+            else
+            {
+                // End-of-tree/append: RunCompleted already fired and RunEngineAsync already
+                // returned, so this is the only code left to finalize the guard/running state.
+                runActive = false;
+            }
         }
         else
         {
-            var collectionId = Str(msg, "collectionId") ?? "";
-            var task = new TaskDefinition
+            var appendTaskId = Str(msg, "taskId");
+            if (steps.Count == 0)
             {
-                CollectionId = collectionId,
-                Name = Str(msg, "name") ?? "Recorded task",
-                Steps = steps,
-            };
-            store.SaveTask(task);
-            await logAsync($"Recording stopped — saved '{task.Name}' with {steps.Count} step(s). Refine it in the editor.");
+                await logAsync("Recording stopped — nothing was captured.");
+            }
+            else if (appendTaskId != null && store.GetTask(appendTaskId) is { } existing)
+            {
+                existing.Steps.AddRange(steps);
+                store.SaveTask(existing);
+                await logAsync($"Recording stopped — {steps.Count} step(s) appended to '{existing.Name}'.");
+            }
+            else
+            {
+                var collectionId = Str(msg, "collectionId") ?? "";
+                var task = new TaskDefinition
+                {
+                    CollectionId = collectionId,
+                    Name = Str(msg, "name") ?? "Recorded task",
+                    Steps = steps,
+                };
+                store.SaveTask(task);
+                await logAsync($"Recording stopped — saved '{task.Name}' with {steps.Count} step(s). Refine it in the editor.");
+            }
         }
 
         recorded.Clear();
         await execPanelScript("window.ssPanel.onRecordingState(false)");
+        // A gap-recording session kept "running" true (see RunEngineAsync) so Cancel stayed
+        // available throughout — reset it now that the session is actually over. Idempotent (and
+        // a no-op) for an ordinary whole-task recording, which never touched running state. Skipped
+        // for a still-suspended mid-tree gap recording — the run legitimately isn't over yet.
+        if (runConcluded)
+            await execPanelScript("window.ssPanel.onRunState(false)");
         await PushRecordedPreviewAsync();
         await PushStateAsync();
     }
@@ -336,7 +434,22 @@ public sealed class AutomationController
 
     // ---- replay --------------------------------------------------------------------------------
 
-    private async Task RunReplayAsync(string taskId, bool allowRepair = false)
+    private Task RunReplayAsync(string taskId, bool allowRepair = false) =>
+        RunEngineAsync(taskId, allowRepair, gap: null);
+
+    /// <summary>Runs the task up to (and pausing before) the step occupying an insert-zone gap —
+    /// or, when the gap is the last slot in the whole tree, to completion — then arms recording
+    /// so the next physical action(s) become the new step(s) at that gap.</summary>
+    private async Task RecordAtGapAsync(JsonNode msg)
+    {
+        var taskId = Str(msg, "taskId") ?? "";
+        var parentStepId = Str(msg, "parentStepId");
+        var index = msg["index"]?.GetValue<int>() ?? 0;
+        var nextStepId = Str(msg, "nextStepId");
+        await RunEngineAsync(taskId, allowRepair: false, gap: new GapTarget(parentStepId, index, nextStepId));
+    }
+
+    private async Task RunEngineAsync(string taskId, bool allowRepair, GapTarget? gap)
     {
         var surface = targetSurface();
         if (surface == null)
@@ -350,10 +463,21 @@ public sealed class AutomationController
             await logAsync($"⚠ Task '{taskId}' not found.");
             return;
         }
+        if (runActive)
+        {
+            await logAsync("⚠ A run is already in progress — wait for it to finish or cancel it first.");
+            return;
+        }
+        runActive = true;
 
         replayCts = new CancellationTokenSource();
         replayControl = new ReplayControl();
-        var options = new ReplayOptions { Control = replayControl, AllowLlmRepair = allowRepair };
+        var options = new ReplayOptions
+        {
+            Control = replayControl,
+            AllowLlmRepair = allowRepair,
+            PauseBeforeStepId = gap?.PauseBeforeStepId,
+        };
         var runLog = new RunLogWriter(task.Name);
         var healed = false;
 
@@ -378,6 +502,12 @@ public sealed class AutomationController
                     case StepEvent.StepPaused p:
                         await PushStepStatusAsync(p.StepId, "paused", null);
                         await execPanelScript($"window.ssPanel.onPaused({JsonSerializer.Serialize(p.StepId)})");
+                        if (gap is { PauseBeforeStepId: not null } g && p.StepId == g.PauseBeforeStepId)
+                            await ArmRecordingForInsertAsync(task.Id, g.ParentStepId, g.Index, runStillSuspended: true);
+                        break;
+                    case StepEvent.RunCompleted rc:
+                        if (gap is { PauseBeforeStepId: null } g2 && rc.Success)
+                            await ArmRecordingForInsertAsync(task.Id, g2.ParentStepId, g2.Index, runStillSuspended: false);
                         break;
                 }
             }
@@ -399,7 +529,27 @@ public sealed class AutomationController
             await logAsync("Self-healed fingerprints saved back into the task.");
             await PushStateAsync();
         }
-        await execPanelScript("window.ssPanel.onRunState(false)");
+
+        // Keep runActive/"running" true while a gap-recording session is now armed (mid-tree
+        // pause, or the gap was the last slot and the run just completed) — otherwise a second
+        // Run/record-at-gap could start concurrently and clobber replayCts/replayControl/
+        // pendingGapInsert while the user is still mid-recording. A mid-tree pause keeps this
+        // method itself suspended on the loop above until Stop/Continue, so this only actually
+        // fires immediately for the end-of-tree/append case (RunCompleted is the terminal event,
+        // so the loop exits right after arming) and for the "never armed" case below.
+        // StopRecordingAsync/CancelGapRecordingAsync clear both once the session truly ends.
+        if (!recording)
+        {
+            runActive = false;
+            await execPanelScript("window.ssPanel.onRunState(false)");
+        }
+
+        // A record-at-gap attempt that never reached its pause point (an earlier step failed, or
+        // the run was cancelled first) never armed recording — tell the panel anyway so a stale
+        // "gap-active" insertion-zone highlight (set optimistically when the attempt started)
+        // gets cleared instead of sticking forever.
+        if (gap != null && !recording)
+            await execPanelScript("window.ssPanel.onRecordingState(false)");
     }
 
     private static string FormatStepEvent(StepEvent evt) => evt switch
@@ -499,6 +649,14 @@ public sealed class AutomationController
         return execPanelScript($"window.ssPanel.onRecordedSteps({json})");
     }
 
+    /// <summary>Delivers the step(s) captured by a record-at-gap session to the panel, which
+    /// splices them into the tree via the same insertion path as a manually created step.</summary>
+    private Task PushGapRecordedAsync(string taskId, string? parentStepId, int index, List<Step> steps)
+    {
+        var json = JsonSerializer.Serialize(new { taskId, parentStepId, index, steps }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onGapRecorded({json})");
+    }
+
     private static IEnumerable<(string Field, Action<AutomataSettings, string> Apply)> KeyFields() =>
     [
         ("claudeKey", (s, v) => s.AnthropicApiKey = v),
@@ -514,7 +672,12 @@ public sealed class AutomationController
         static object Hint(string? key, string fallbackLabel) => new
         {
             set = !string.IsNullOrEmpty(key),
-            hint = key is { Length: >= 4 } k ? "BYO …" + k[^4..] : fallbackLabel,
+            // A key too short to safely show a masked suffix still IS a BYO override — showing
+            // the "Vault/default" fallback label for it would contradict `set: true` and read as
+            // if no override were active.
+            hint = string.IsNullOrEmpty(key) ? fallbackLabel
+                : key.Length >= 4 ? "BYO …" + key[^4..]
+                : "BYO key set",
         };
         var json = JsonSerializer.Serialize(new
         {

@@ -12,6 +12,7 @@
         pausedStepId: null,
         stepStatus: {},           // stepId -> running|passed|failed|healed|skipped|paused
         expanded: {},             // collectionId / taskId -> bool
+        gapInsert: null,          // {taskId, parentId, index} while a record-at-gap run is armed/in flight
     };
     var dragCtx = null;           // {type:'step'|'task', id, taskId}
 
@@ -89,6 +90,43 @@
         if (!walk(task.steps)) task.steps.push(step);
     }
 
+    // Finds a step anywhere in the tree and returns where it lives: {parentId, index}.
+    function locateStep(steps, id, parentId) {
+        for (var i = 0; i < (steps || []).length; i++) {
+            if (steps[i].id === id) return { parentId: parentId, index: i };
+            var found = locateStep(steps[i].children, id, steps[i].id);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // The one place that inserts step(s) into a tree at a given (parentId, index) address —
+    // used for both a manually created step and step(s) delivered by record-at-gap.
+    function spliceStepsAt(task, parentStepId, index, newSteps) {
+        var list;
+        if (parentStepId) {
+            var parent = findStep(task.steps, parentStepId);
+            if (!parent) return null;
+            list = parent.children = parent.children || [];
+        } else {
+            list = task.steps = task.steps || [];
+        }
+        var at = Math.max(0, Math.min(index, list.length));
+        Array.prototype.splice.apply(list, [at, 0].concat(newSteps));
+        return list;
+    }
+
+    // The id of the step that would run right after this gap — walking up through parent scopes
+    // when a list is exhausted — or null only when the gap is the very last slot in the whole
+    // tree (nothing left to run after it).
+    function nextStepIdAfterGap(task, parentId, index) {
+        var list = parentId ? ((findStep(task.steps, parentId) || {}).children || []) : (task.steps || []);
+        if (index < list.length) return list[index].id;
+        if (!parentId) return null;
+        var loc = locateStep(task.steps, parentId, null);
+        return loc ? nextStepIdAfterGap(task, loc.parentId, loc.index + 1) : null;
+    }
+
     function saveTask(task) { post('saveTask', { task: task }); }
 
     function selectedTask() { return state.sel.taskId ? findTask(state.sel.taskId) : null; }
@@ -127,7 +165,10 @@
         $('btn-record').disabled = state.recording || state.running;
         $('btn-stop').disabled = !state.recording;
         $('btn-run').disabled = !state.sel.taskId || state.running || state.recording;
-        $('btn-continue').disabled = !state.pausedStepId;
+        // While a gap-recording session is armed, Continue must stay disabled — releasing the
+        // paused replay would dispatch the original next step's real CDP events while the JS
+        // recorder is still capturing, corrupting the in-progress recording.
+        $('btn-continue').disabled = !state.pausedStepId || state.recording;
         $('btn-cancel-run').disabled = !state.running;
         $('btn-export').disabled = !state.sel.taskId && !state.sel.collectionId;
     }
@@ -190,11 +231,15 @@
         return html;
     }
 
-    // The clickable sliver between two step rows — hover reveals it, clicking opens the
-    // action picker and inserts the new step exactly there.
+    // The gap between two step rows — a constant-height strip at all times (no layout shift);
+    // hovering just recolors it to signal "create a new step here". Clicking opens the action
+    // picker and inserts the new step exactly there.
     function insertZone(taskId, parentId, index, depth) {
-        return '<div class="insert-zone" data-task="' + taskId + '" data-parent="' + parentId +
-            '" data-index="' + index + '" style="padding-left:' + (34 + depth * 14) + 'px">' +
+        var active = state.gapInsert && state.gapInsert.taskId === taskId &&
+            (state.gapInsert.parentId || '') === parentId && state.gapInsert.index === index;
+        return '<div class="insert-zone' + (active ? ' gap-active' : '') + '" data-task="' + taskId +
+            '" data-parent="' + parentId + '" data-index="' + index +
+            '" style="padding-left:' + (34 + depth * 14) + 'px">' +
             '<span>＋ add step here</span></div>';
     }
 
@@ -328,7 +373,10 @@
                 var tid = el.getAttribute('data-task');
                 var pid = el.getAttribute('data-parent') || null;
                 var idx = parseInt(el.getAttribute('data-index'), 10) || 0;
-                openActionPicker(function (action) { createStepAt(tid, pid, idx, action); });
+                openActionPicker(function (action) {
+                    if (action === '__record') beginRecordAtGap(tid, pid, idx);
+                    else createStepAt(tid, pid, idx, action);
+                });
             });
         });
     }
@@ -337,16 +385,22 @@
         var task = findTask(taskId);
         if (!task) return;
         var step = { id: newId(), action: action, label: 'New ' + action + ' step', children: [] };
-        var list = task.steps = task.steps || [];
-        if (parentStepId) {
-            var parent = findStep(task.steps, parentStepId);
-            if (!parent) return;
-            list = parent.children = parent.children || [];
-        }
-        list.splice(Math.max(0, Math.min(index, list.length)), 0, step);
+        if (!spliceStepsAt(task, parentStepId, index, [step])) return;
         state.sel = { collectionId: state.sel.collectionId, taskId: taskId, stepId: step.id };
         state.expanded[taskId] = true;
         saveTask(task);
+    }
+
+    // Runs the task up to this gap (pausing right before whatever occupies it, or to completion
+    // if it's the last slot in the whole tree), then arms the recorder — the next physical
+    // action(s) become the new step(s) spliced in via onGapRecorded below.
+    function beginRecordAtGap(taskId, parentId, index) {
+        var task = findTask(taskId);
+        if (!task) return;
+        var nextStepId = nextStepIdAfterGap(task, parentId, index);
+        state.gapInsert = { taskId: taskId, parentId: parentId, index: index };
+        render();
+        post('recordAtGap', { taskId: taskId, parentStepId: parentId, index: index, nextStepId: nextStepId });
     }
 
     // ---- modal (rename / info / confirm / action-picker modes) ------------------------------
@@ -402,18 +456,22 @@
         $('modal-cancel').focus();   // the safe choice gets the keyboard
     }
 
-    // List of step actions; picking one commits immediately (no OK button).
+    // List of step actions, plus "Record"; picking one commits immediately (no OK button).
+    // onPick('__record') signals the caller to record the step live instead of hand-filling it.
     function openActionPicker(onPick) {
         prepareModal('picker', 'New step');
-        $('modal-msg').textContent = 'Choose the action this step performs:';
+        $('modal-msg').textContent = 'Choose the action this step performs, or record it live:';
         $('modal-msg').classList.remove('hidden');
         $('modal-ok').classList.add('hidden');
         var list = $('modal-list');
         list.classList.remove('hidden');
-        list.innerHTML = ACTIONS.map(function (a) {
-            return '<button class="action-pick" data-action="' + a + '"><b>' + a + '</b><span>' +
-                esc(ACTION_INFO[a] || '') + '</span></button>';
-        }).join('');
+        list.innerHTML =
+            '<button class="action-pick record-pick" data-action="__record">🔴 <b>Record</b><span>' +
+            'Perform the action live in the browser pane</span></button>' +
+            ACTIONS.map(function (a) {
+                return '<button class="action-pick" data-action="' + a + '"><b>' + a + '</b><span>' +
+                    esc(ACTION_INFO[a] || '') + '</span></button>';
+            }).join('');
         list.querySelectorAll('.action-pick').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var action = btn.getAttribute('data-action');
@@ -744,11 +802,19 @@
         },
         onRecordingState: function (recording) {
             state.recording = recording;
-            if (!recording) renderRecPreview([]);
+            if (!recording) { renderRecPreview([]); state.gapInsert = null; }
             render();
         },
         onRecordedSteps: function (steps) {
             renderRecPreview(steps);
+        },
+        onGapRecorded: function (payload) {
+            var task = payload && findTask(payload.taskId);
+            if (!task || !payload.steps || !payload.steps.length) return;
+            if (!spliceStepsAt(task, payload.parentStepId, payload.index, payload.steps)) return;
+            state.sel = { collectionId: state.sel.collectionId, taskId: payload.taskId, stepId: payload.steps[0].id };
+            state.expanded[payload.taskId] = true;
+            saveTask(task);
         },
         onSettings: function (s) {
             var radius = (s && s.borderRadius != null) ? s.borderRadius : 5;

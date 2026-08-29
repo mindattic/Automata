@@ -81,7 +81,7 @@ public class ReplayEngine
     {
         ct.ThrowIfCancellationRequested();
 
-        if (step.PauseForUser)
+        if (step.PauseForUser || step.Id == options.PauseBeforeStepId)
         {
             yield return new StepEvent.StepPaused(step.Id, step.Label);
             await options.Control.WaitAsync(ct);

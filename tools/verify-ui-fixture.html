@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Automata verify-ui fixture</title></head>
+<body>
+  <button id="alpha">Alpha</button>
+  <button id="gamma">Gamma</button>
+  <button id="beta">Beta</button>
+  <script>
+    document.querySelectorAll('button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var marker = document.createElement('div');
+        marker.className = 'clicked';
+        marker.setAttribute('data-id', btn.id);
+        marker.textContent = 'clicked: ' + btn.id;
+        document.body.appendChild(marker);
+        document.title = 'clicked:' + btn.id;
+      });
+    });
+  </script>
+</body>
+</html>

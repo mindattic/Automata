@@ -156,7 +156,7 @@ input.rename {
 /* ---- insert-between-steps zones ---- */
 
 .insert-zone {
-  height: 6px;
+  height: 10px;
   cursor: pointer;
   overflow: hidden;
 }
@@ -164,17 +164,26 @@ input.rename {
 .insert-zone span {
   display: none;
   font-size: 10px;
-  color: #7fa6e8;
-  line-height: 18px;
+  line-height: 10px;
+  color: #e08a2e;
 }
 
+/* Constant height in both states — hovering only recolors the strip, spacing never shifts. */
 .insert-zone:hover {
-  height: 18px;
-  background: #1d2836;
-  box-shadow: inset 0 0 0 1px #2c4a75;
+  background: #3a2a12;
+  box-shadow: inset 0 0 0 1px #e08a2e;
 }
 
 .insert-zone:hover span { display: block; }
+
+/* Marks the specific gap currently armed/targeted by an in-progress record-at-gap run —
+   independent of mouse position, so it stays visible while the user performs the action. */
+.insert-zone.gap-active {
+  background: #2c1d36;
+  box-shadow: inset 0 0 0 1px #a583ec;
+}
+
+.insert-zone.gap-active span { display: block; color: #a583ec; }
 
 /* ---- step editor ---- */
 

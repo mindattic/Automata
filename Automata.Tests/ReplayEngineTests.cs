@@ -10,11 +10,12 @@ public class ReplayEngineTests
 {
     private static ReplayEngine Engine() => new(new FingerprintResolver { PollIntervalMs = 10 });
 
-    private static ReplayOptions Options(ReplayControl? control = null) => new()
+    private static ReplayOptions Options(ReplayControl? control = null, string? pauseBeforeStepId = null) => new()
     {
         DefaultStepTimeoutMs = 300,
         SettlePollMs = 1,
         Control = control ?? new ReplayControl(),
+        PauseBeforeStepId = pauseBeforeStepId,
     };
 
     private static ElementFingerprint Target() => new() { Tag = "input", CssSelector = "#field" };
@@ -171,6 +172,107 @@ public class ReplayEngineTests
         Assert.That(finished, Is.EqualTo(run));
         lock (events)
             Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+    }
+
+    [Test]
+    public async Task PauseBeforeStepId_ParksBeforeThatStep_WithoutPersistedFlag()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var control = new ReplayControl();
+        var target = new Step { Id = "gap-target", Action = StepAction.ExtractText, Label = "Target", Target = Target() };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step { Id = "before", Action = StepAction.ExtractText, Label = "Before", Target = Target() },
+                target,
+            ],
+        };
+
+        var events = new List<StepEvent>();
+        var run = Task.Run(async () =>
+        {
+            await foreach (var evt in Engine().RunAsync(task, Options(control, pauseBeforeStepId: "gap-target"), browser))
+                lock (events) events.Add(evt);
+        });
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (events) { if (events.Any(e => e is StepEvent.StepPaused)) break; }
+            await Task.Delay(10);
+        }
+        lock (events)
+        {
+            var paused = events.OfType<StepEvent.StepPaused>().Single();
+            Assert.That(paused.StepId, Is.EqualTo("gap-target"));
+            // "before" must have actually run before the pause — the pause fires right in front
+            // of the gap's target step, not at the start of the whole run.
+            Assert.That(events.OfType<StepEvent.StepCompleted>().Select(e => e.StepId), Does.Contain("before"));
+        }
+        Assert.That(target.PauseForUser, Is.False, "the transient gate must never mutate the persisted flag");
+
+        control.Continue();
+        var finished = await Task.WhenAny(run, Task.Delay(5000));
+        Assert.That(finished, Is.EqualTo(run));
+        lock (events)
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+    }
+
+    [Test]
+    public async Task PauseBeforeStepId_NeverFires_WhenAnEarlierStepFailsFirst()
+    {
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = script =>
+                script.Contains("__automataApplyValue") ? """{ "ok": true, "value": "dogs" }""" : DefaultResponder(script),
+        };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step { Id = "s1", Action = StepAction.SetValue, Label = "Fill", Value = "cats", Target = Target() },
+                new Step { Id = "gap-target", Action = StepAction.ExtractText, Label = "Target", Target = Target() },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(pauseBeforeStepId: "gap-target"), browser);
+
+        Assert.That(events.Any(e => e is StepEvent.StepPaused), Is.False);
+        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.False);
+    }
+
+    [Test]
+    public async Task PauseForUser_AndPauseBeforeStepId_OnSameStep_FiresExactlyOnePause()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var control = new ReplayControl();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "p1", Action = StepAction.ExtractText, Label = "Paused", PauseForUser = true, Target = Target() }],
+        };
+
+        var events = new List<StepEvent>();
+        var run = Task.Run(async () =>
+        {
+            await foreach (var evt in Engine().RunAsync(task, Options(control, pauseBeforeStepId: "p1"), browser))
+                lock (events) events.Add(evt);
+        });
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (events) { if (events.Any(e => e is StepEvent.StepPaused)) break; }
+            await Task.Delay(10);
+        }
+        control.Continue();
+        var finished = await Task.WhenAny(run, Task.Delay(5000));
+        Assert.That(finished, Is.EqualTo(run));
+        lock (events)
+            Assert.That(events.OfType<StepEvent.StepPaused>().Count(), Is.EqualTo(1));
     }
 
     [Test]

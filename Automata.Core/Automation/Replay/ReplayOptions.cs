@@ -61,4 +61,10 @@ public sealed class ReplayOptions
     public int SettlePollMs { get; init; } = 500;
 
     public ReplayControl Control { get; init; } = new();
+
+    /// <summary>Transient, run-scoped: pause before the step with this Id, exactly like
+    /// <see cref="Automata.Core.Automation.Model.Step.PauseForUser"/> but never persisted — a
+    /// fresh ReplayOptions is built per run. Used by the record-at-gap flow to park replay right
+    /// before the step occupying the insertion point.</summary>
+    public string? PauseBeforeStepId { get; init; }
 }
