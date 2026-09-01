@@ -12,12 +12,12 @@
     <div class="toolbar">
       <button id="btn-record" data-tooltip="Record your actions in the browser pane into steps">● Record</button>
       <button id="btn-stop" disabled data-tooltip="Stop recording and save the captured steps">■ Stop</button>
-      <button id="btn-run" disabled data-tooltip="Run the selected task's steps">▶ Run</button>
       <button id="btn-continue" disabled data-tooltip="Resume a run paused by a wait-for-user step">➤ Continue</button>
       <button id="btn-cancel-run" disabled data-tooltip="Cancel the current run">✕ Cancel</button>
       <button id="btn-import" data-tooltip="Import a collection or task from a zip">⇪ Import</button>
       <button id="btn-export" disabled data-tooltip="Export the selected collection or task as a zip">⇩ Export</button>
       <button id="btn-folder" data-tooltip="Open the Collections folder in File Explorer">📁 Files</button>
+      <button id="btn-settings" data-tooltip="LLM provider, API keys, and appearance">⚙ Settings</button>
     </div>
     <div class="row">
       <input id="url" type="text" placeholder="https://www.google.com" />
@@ -40,43 +40,48 @@
 
   <section id="editor" class="hidden"></section>
 
-  <details id="settings">
-    <summary>⚙ Settings</summary>
-    <label>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</label>
-    <div class="llm-row">
-      <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
-      <span class="llm-name">Claude</span>
-      <input type="password" id="key-claude" />
-      <button class="mini" data-clear="claude" data-tooltip="Clear the saved Claude key">✕</button>
+  <div id="settings-modal" class="hidden">
+    <div class="modal-box wide">
+      <div class="section-head">
+        <label>⚙ Settings</label>
+        <button id="settings-modal-close" class="mini">✕</button>
+      </div>
+      <label>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</label>
+      <div class="llm-row">
+        <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
+        <span class="llm-name">Claude</span>
+        <input type="password" id="key-claude" />
+        <button class="mini" data-clear="claude" data-tooltip="Clear the saved Claude key">✕</button>
+      </div>
+      <div class="llm-row">
+        <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
+        <span class="llm-name">OpenAI</span>
+        <input type="password" id="key-openai" />
+        <button class="mini" data-clear="openai" data-tooltip="Clear the saved OpenAI key">✕</button>
+      </div>
+      <div class="llm-row">
+        <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
+        <span class="llm-name">Gemini</span>
+        <input type="password" id="key-gemini" />
+        <button class="mini" data-clear="gemini" data-tooltip="Clear the saved Gemini key">✕</button>
+      </div>
+      <div class="llm-row">
+        <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
+        <span class="llm-name">Kimi</span>
+        <input type="password" id="key-kimi" />
+        <button class="mini" data-clear="kimi" data-tooltip="Clear the saved Kimi key">✕</button>
+      </div>
+      <div class="row settings-row">
+        <span class="key-status">selected provider runs first; others are fallbacks</span>
+        <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
+      </div>
+      <div class="field">
+        <span>Border radius</span>
+        <input type="range" id="set-radius" min="0" max="10" step="1" value="5" />
+        <span id="set-radius-value" class="key-status">5px</span>
+      </div>
     </div>
-    <div class="llm-row">
-      <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
-      <span class="llm-name">OpenAI</span>
-      <input type="password" id="key-openai" />
-      <button class="mini" data-clear="openai" data-tooltip="Clear the saved OpenAI key">✕</button>
-    </div>
-    <div class="llm-row">
-      <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
-      <span class="llm-name">Gemini</span>
-      <input type="password" id="key-gemini" />
-      <button class="mini" data-clear="gemini" data-tooltip="Clear the saved Gemini key">✕</button>
-    </div>
-    <div class="llm-row">
-      <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
-      <span class="llm-name">Kimi</span>
-      <input type="password" id="key-kimi" />
-      <button class="mini" data-clear="kimi" data-tooltip="Clear the saved Kimi key">✕</button>
-    </div>
-    <div class="row settings-row">
-      <span class="key-status">selected provider runs first; others are fallbacks</span>
-      <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
-    </div>
-    <div class="field">
-      <span>Border radius</span>
-      <input type="range" id="set-radius" min="0" max="10" step="1" value="5" />
-      <span id="set-radius-value" class="key-status">5px</span>
-    </div>
-  </details>
+  </div>
 
   <details id="advanced">
     <summary>AI task (advanced — free-text, interpreted by an LLM)</summary>

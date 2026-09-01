@@ -36,6 +36,10 @@ public sealed class AutomationController
     private ReplayControl? replayControl;
     private bool runActive;
 
+    /// <summary>Set by Cancel while a collection run is in progress — checked between tasks so
+    /// Cancel stops the whole collection, not just whichever task happens to be running.</summary>
+    private bool collectionCancelRequested;
+
     /// <summary>Set while a "record at this gap" run is armed and waiting for Stop — where the
     /// captured step(s) should be spliced once recording stops, and whether the underlying run is
     /// still genuinely suspended (mid-tree, parked on <see cref="ReplayControl.WaitAsync"/> and
@@ -168,6 +172,10 @@ public sealed class AutomationController
                 _ = RunReplayAsync(Str(msg, "taskId") ?? "", msg["allowRepair"]?.GetValue<bool>() ?? false);
                 return true;
 
+            case "runCollection":
+                _ = RunCollectionAsync(Str(msg, "collectionId") ?? "", msg["allowRepair"]?.GetValue<bool>() ?? false);
+                return true;
+
             case "recordAtGap":
                 _ = RecordAtGapAsync(msg);
                 return true;
@@ -223,6 +231,7 @@ public sealed class AutomationController
 
             case "cancelRun":
                 replayCts?.Cancel();
+                collectionCancelRequested = true;
                 // Only tear down recording when it's the gap-recording session tied to THIS run —
                 // an ordinary whole-task recording (started via the ● Record button, no run behind
                 // it) must survive a Cancel meant for an unrelated AI run or replay.
@@ -434,8 +443,45 @@ public sealed class AutomationController
 
     // ---- replay --------------------------------------------------------------------------------
 
-    private Task RunReplayAsync(string taskId, bool allowRepair = false) =>
+    private Task<bool> RunReplayAsync(string taskId, bool allowRepair = false) =>
         RunEngineAsync(taskId, allowRepair, gap: null);
+
+    /// <summary>Runs every task in a collection, in <see cref="Collection.TaskOrder"/> sequence,
+    /// continuing to the remaining tasks even if one fails — tasks in a collection are usually
+    /// independent, so one failing shouldn't block the others. Reports a final pass/fail summary.
+    /// Cancel (see <c>collectionCancelRequested</c>) stops the whole collection, not just whichever
+    /// task happens to be running.</summary>
+    private async Task RunCollectionAsync(string collectionId, bool allowRepair)
+    {
+        var collection = store.GetCollection(collectionId);
+        if (collection == null)
+        {
+            await logAsync($"⚠ Collection '{collectionId}' not found.");
+            return;
+        }
+        if (runActive)
+        {
+            await logAsync("⚠ A run is already in progress — wait for it to finish or cancel it first.");
+            return;
+        }
+        runActive = true;
+        collectionCancelRequested = false;
+        await execPanelScript("window.ssPanel.onRunState(true)");
+
+        var tasks = store.LoadTasks(collectionId);
+        var passed = 0;
+        foreach (var task in tasks)
+        {
+            if (collectionCancelRequested) break;
+            await execPanelScript($"window.ssPanel.onTaskStarted({JsonSerializer.Serialize(new { taskId = task.Id, collectionId }, AutomataJson.Options)})");
+            if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false))
+                passed++;
+        }
+
+        await logAsync($"▶ Collection '{collection.Name}': {passed}/{tasks.Count} task(s) passed.");
+        runActive = false;
+        await execPanelScript("window.ssPanel.onRunState(false)");
+    }
 
     /// <summary>Runs the task up to (and pausing before) the step occupying an insert-zone gap —
     /// or, when the gap is the last slot in the whole tree, to completion — then arms recording
@@ -449,26 +495,26 @@ public sealed class AutomationController
         await RunEngineAsync(taskId, allowRepair: false, gap: new GapTarget(parentStepId, index, nextStepId));
     }
 
-    private async Task RunEngineAsync(string taskId, bool allowRepair, GapTarget? gap)
+    private async Task<bool> RunEngineAsync(string taskId, bool allowRepair, GapTarget? gap, bool ownsLifecycle = true)
     {
         var surface = targetSurface();
         if (surface == null)
         {
             await logAsync("⚠ Target browser isn't ready yet.");
-            return;
+            return false;
         }
         var task = store.GetTask(taskId);
         if (task == null)
         {
             await logAsync($"⚠ Task '{taskId}' not found.");
-            return;
+            return false;
         }
-        if (runActive)
+        if (ownsLifecycle && runActive)
         {
             await logAsync("⚠ A run is already in progress — wait for it to finish or cancel it first.");
-            return;
+            return false;
         }
-        runActive = true;
+        if (ownsLifecycle) runActive = true;
 
         replayCts = new CancellationTokenSource();
         replayControl = new ReplayControl();
@@ -480,8 +526,9 @@ public sealed class AutomationController
         };
         var runLog = new RunLogWriter(task.Name);
         var healed = false;
+        var success = false;
 
-        await execPanelScript("window.ssPanel.onRunState(true)");
+        if (ownsLifecycle) await execPanelScript("window.ssPanel.onRunState(true)");
         await logAsync($"▶ Run '{task.Name}' — log: {runLog.FilePath}");
         try
         {
@@ -506,6 +553,7 @@ public sealed class AutomationController
                             await ArmRecordingForInsertAsync(task.Id, g.ParentStepId, g.Index, runStillSuspended: true);
                         break;
                     case StepEvent.RunCompleted rc:
+                        success = rc.Success;
                         if (gap is { PauseBeforeStepId: null } g2 && rc.Success)
                             await ArmRecordingForInsertAsync(task.Id, g2.ParentStepId, g2.Index, runStillSuspended: false);
                         break;
@@ -538,7 +586,7 @@ public sealed class AutomationController
         // fires immediately for the end-of-tree/append case (RunCompleted is the terminal event,
         // so the loop exits right after arming) and for the "never armed" case below.
         // StopRecordingAsync/CancelGapRecordingAsync clear both once the session truly ends.
-        if (!recording)
+        if (ownsLifecycle && !recording)
         {
             runActive = false;
             await execPanelScript("window.ssPanel.onRunState(false)");
@@ -550,6 +598,8 @@ public sealed class AutomationController
         // gets cleared instead of sticking forever.
         if (gap != null && !recording)
             await execPanelScript("window.ssPanel.onRecordingState(false)");
+
+        return success;
     }
 
     private static string FormatStepEvent(StepEvent evt) => evt switch

@@ -75,6 +75,13 @@ async function waitForEnabled(locator, timeoutMs = 10000) {
   return waitFor(async () => !(await locator.isDisabled()), { timeoutMs, label: 'element to become enabled' });
 }
 
+// .node-btns only becomes visible on :hover — Playwright can't click a display:none button
+// directly (it has no box to move the pointer onto), so hover the row first to reveal it.
+async function clickRowOp(rowLocator, op) {
+  await rowLocator.hover();
+  await rowLocator.locator(`[data-op="${op}"]`).click();
+}
+
 function assertEqual(actual, expected, message) {
   if (actual !== expected) throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
@@ -83,13 +90,17 @@ function assertTrue(value, message) {
   if (!value) throw new Error(message);
 }
 
-// ---- fixture: a scratch collection with one task, a deliberate gap between two of its steps ----
+// ---- fixture: a scratch collection with a passing task (a deliberate gap between two of its
+// steps, for the record-at-gap checklist) and a second task engineered to fail its only step (for
+// the run-collection "continues past a failure" checklist) ----------------------------------------
 
 function writeFixture(collectionsRoot, fixtureUrl) {
   const collectionId = newId();
   const taskId = newId();
   const stepAId = newId();
   const stepBId = newId();
+  const failTaskId = newId();
+  const failStepId = newId();
   const now = new Date().toISOString();
 
   const collectionDir = path.join(collectionsRoot, 'Verify');
@@ -99,7 +110,7 @@ function writeFixture(collectionsRoot, fixtureUrl) {
     path.join(collectionDir, 'collection.json'),
     JSON.stringify({
       schemaVersion: 1, id: collectionId, name: 'Verify', description: '',
-      createdUtc: now, modifiedUtc: now, taskOrder: [taskId],
+      createdUtc: now, modifiedUtc: now, taskOrder: [taskId, failTaskId],
     }, null, 2),
   );
 
@@ -118,7 +129,19 @@ function writeFixture(collectionsRoot, fixtureUrl) {
     }, null, 2),
   );
 
-  return { taskId };
+  writeFileSync(
+    path.join(collectionDir, 'Fail Task.json'),
+    JSON.stringify({
+      schemaVersion: 1, id: failTaskId, collectionId, name: 'Fail Task', description: '',
+      startUrl: fixtureUrl,
+      steps: [
+        { id: failStepId, action: 'click', label: "Click 'Missing'", target: target('does-not-exist', 'Missing'), children: [] },
+      ],
+      createdUtc: now, modifiedUtc: now,
+    }, null, 2),
+  );
+
+  return { collectionId, taskId, failTaskId };
 }
 
 // ---- main ---------------------------------------------------------------------------------
@@ -138,7 +161,7 @@ async function main() {
 
   const fixtureHtmlPath = path.join(__dirname, 'verify-ui-fixture.html');
   const fixtureUrl = 'file:///' + fixtureHtmlPath.replace(/\\/g, '/');
-  const { taskId } = writeFixture(collectionsRoot, fixtureUrl);
+  const { collectionId, taskId, failTaskId } = writeFixture(collectionsRoot, fixtureUrl);
 
   console.log(`Scratch dir: ${scratch}`);
   console.log(`Launching Automata.App (panel CDP :${PANEL_PORT}, target CDP :${TARGET_PORT})...`);
@@ -189,14 +212,36 @@ async function main() {
 
     const gap = panelPage.locator('.insert-zone[data-index="1"]');
 
-    await group('hover gap: box-shadow inset, height unchanged', async () => {
+    await group('row icons: collection 🗂️, task 📋, idle step ▫', async () => {
+      const collIcon = await panelPage.locator(`.node.collection[data-collection="${collectionId}"] .icon`).textContent();
+      assertTrue((collIcon ?? '').includes('🗂'), `expected the collection row icon to be 🗂️, got "${collIcon}"`);
+      const taskIcon = await panelPage.locator(`.node.task[data-task="${taskId}"] .icon`).textContent();
+      assertTrue((taskIcon ?? '').includes('📋'), `expected the task row icon to be 📋, got "${taskIcon}"`);
+      const stepStatuses = await panelPage.locator('#tree .node.step .status').allTextContents();
+      assertTrue(stepStatuses.length > 0 && stepStatuses.every((s) => s === '▫'),
+        `expected idle steps to show ▫, got ${JSON.stringify(stepStatuses)}`);
+    });
+
+    await group('per-row Run buttons exist; toolbar Run button is gone', async () => {
+      assertEqual(await panelPage.locator('#btn-run').count(), 0, '#btn-run should no longer exist in the DOM');
+      assertEqual(await panelPage.locator(`.node.collection[data-collection="${collectionId}"] [data-op="run-collection"]`).count(), 1,
+        'expected a run-collection button on the collection row');
+      assertEqual(await panelPage.locator(`.node.task[data-task="${taskId}"] [data-op="run-task"]`).count(), 1,
+        'expected a run-task button on the task row');
+    });
+
+    await group('hover gap: hr-line indicator appears, height unchanged', async () => {
       const before = await gap.boundingBox();
       await gap.hover();
       await sleep(100);
       const after = await gap.boundingBox();
       assertEqual(after.height, before.height, 'insert-zone height changed on hover');
-      const boxShadow = await gap.evaluate((el) => getComputedStyle(el).boxShadow);
-      assertTrue(boxShadow.includes('inset'), `expected an inset box-shadow on hover, got "${boxShadow}"`);
+      // The hover indicator is a plain hr-style line (::after), not a box/border — pseudo-element
+      // styles aren't exposed via getComputedStyle on the element itself, so read them via a
+      // page-side getComputedStyle(el, '::after') call instead.
+      const lineBg = await gap.evaluate((el) => getComputedStyle(el, '::after').backgroundColor);
+      assertTrue(lineBg !== 'rgba(0, 0, 0, 0)' && lineBg !== 'transparent',
+        `expected the ::after line to have a visible background on hover, got "${lineBg}"`);
     });
 
     await group('click gap -> picker opens with Record option', async () => {
@@ -251,8 +296,77 @@ async function main() {
         },
         { timeoutMs: 10000, label: 'the Beta step to actually run and pass after Continue' },
       );
-      await waitFor(() => panelPage.locator('#btn-run').isDisabled().then((d) => !d),
-        { timeoutMs: 10000, label: 'the run to finish (Run button re-enabled)' });
+      await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
+        { timeoutMs: 10000, label: 'the run to finish (Cancel button disabled again)' });
+    });
+
+    await group('run-collection: continues past a failing task, reports a summary', async () => {
+      await clickRowOp(panelPage.locator(`.node.collection[data-collection="${collectionId}"]`), 'run-collection');
+      await waitFor(
+        async () => {
+          if (!(await panelPage.locator(`.node.task[data-task="${failTaskId}"]`).count())) return false;
+          const cls = await panelPage.locator('#tree .node.step').last().getAttribute('class');
+          return /\bst-failed\b/.test(cls ?? '');
+        },
+        { timeoutMs: 15000, label: "Fail Task's step to reach a failed status" },
+      );
+      await waitFor(
+        () => panelPage.locator('#log').locator('div', { hasText: /\d+\/\d+ task\(s\) passed/ }).count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'a "N/M task(s) passed" summary line in the log' },
+      );
+      await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
+        { timeoutMs: 10000, label: 'the collection run to finish' });
+    });
+
+    await group('onTaskStarted auto-expands/selects the active task', async () => {
+      // Fail Task was never manually clicked/expanded anywhere above — only onTaskStarted's
+      // auto-select could have put it in this state, proving the collection run announced it.
+      await waitForClass(panelPage.locator(`.node.task[data-task="${failTaskId}"]`), 'selected', 5000);
+      const stepCount = await panelPage.locator('#tree .node.step').count();
+      assertEqual(stepCount, 4, "expected Fail Task's step to be auto-expanded alongside Insert Fixture's 3 steps");
+    });
+
+    await group('Cancel stops a collection run instead of continuing to the next task', async () => {
+      // RunCollectionAsync always logs a "N/M task(s) passed" summary once the loop exits —
+      // whether it broke early or ran to completion — and since Fail Task fails in an uncancelled
+      // run too, the pass count alone can't distinguish "stopped early" from "ran normally". The
+      // real signal: onTaskStarted only fires for a task the loop actually reaches, so select Task
+      // 1 as a known baseline first, then confirm Task 2 (Fail Task) never becomes selected —
+      // proving the loop never reached it.
+      await panelPage.locator(`.node.task[data-task="${taskId}"] .name`).click();
+      await waitForClass(panelPage.locator(`.node.task[data-task="${taskId}"]`), 'selected', 5000);
+
+      // Fire both clicks in one browser-side tick (native element.click(), not Playwright's own
+      // actionability-waiting click()) so there's no Node/CDP round-trip between them — the
+      // fixture's local tasks run fast enough that even one extra await could let the whole
+      // collection finish before Cancel lands, which would test nothing. #btn-cancel-run starts
+      // disabled (no run yet) and a disabled element's click() doesn't fire, so post the
+      // underlying message directly instead, exactly as its click handler would.
+      await panelPage.evaluate((cid) => {
+        document.querySelector(`.node.collection[data-collection="${cid}"] [data-op="run-collection"]`).click();
+        window.chrome.webview.postMessage({ action: 'cancelRun' });
+      }, collectionId);
+      await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
+        { timeoutMs: 10000, label: 'the cancelled collection run to actually stop' });
+      await sleep(300);
+      assertTrue(!(await hasClass(panelPage.locator(`.node.task[data-task="${failTaskId}"]`), 'selected')),
+        'Fail Task became selected (onTaskStarted fired for it) — Cancel did not stop the collection before task 2 began');
+    });
+
+    await group('Settings modal opens, is interactable, and closes without saving', async () => {
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#llm-claude').waitFor({ state: 'visible', timeout: 5000 });
+      assertTrue(await panelPage.locator('#key-openai').isVisible(), 'expected the OpenAI key input to be visible');
+      assertTrue(await panelPage.locator('#set-radius').isVisible(), 'expected the border-radius slider to be visible');
+      await panelPage.locator('#settings-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'settings modal to close' });
+      await panelPage.locator('#btn-settings').click();
+      await waitFor(async () => !(await hasClass(panelPage.locator('#settings-modal'), 'hidden')),
+        { timeoutMs: 5000, label: 'settings modal to reopen' });
+      await panelPage.keyboard.press('Escape');
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'Escape to close the settings modal' });
     });
   } finally {
     try { await panelBrowser?.close(); } catch { /* CDP-attached browsers may already be gone */ }

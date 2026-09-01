@@ -164,7 +164,6 @@
     function renderToolbar() {
         $('btn-record').disabled = state.recording || state.running;
         $('btn-stop').disabled = !state.recording;
-        $('btn-run').disabled = !state.sel.taskId || state.running || state.recording;
         // While a gap-recording session is armed, Continue must stay disabled — releasing the
         // paused replay would dispatch the original next step's real CDP events while the JS
         // recorder is still capturing, corrupting the in-progress recording.
@@ -180,8 +179,10 @@
             var selCls = state.sel.collectionId === c.id && !state.sel.taskId ? ' selected' : '';
             html += '<div class="node collection' + selCls + '" data-collection="' + c.id + '">' +
                 '<span class="twist">' + (open ? '▾' : '▸') + '</span>' +
+                '<span class="icon">🗂️</span>' +
                 '<span class="name">' + esc(c.name) + '</span>' +
                 '<span class="node-btns">' +
+                '<button class="mini" data-op="run-collection" data-tooltip="Run every task in this collection, in order">▶</button>' +
                 '<button class="mini" data-op="add-task" data-tooltip="New task">+task</button>' +
                 '<button class="mini" data-op="ren-collection" data-tooltip="Rename collection">✎</button>' +
                 '<button class="mini" data-op="dup-collection" data-tooltip="Duplicate collection">⧉</button>' +
@@ -194,8 +195,10 @@
                     html += '<div class="node task' + tSel + '" draggable="true" data-task="' + t.id +
                         '" data-collection="' + c.id + '">' +
                         '<span class="twist">' + (tOpen ? '▾' : '▸') + '</span>' +
+                        '<span class="icon">📋</span>' +
                         '<span class="name">' + esc(t.name) + '</span>' +
                         '<span class="node-btns">' +
+                        '<button class="mini" data-op="run-task" data-tooltip="Run this task\'s steps">▶</button>' +
                         '<button class="mini" data-op="add-step" data-tooltip="Add step">+step</button>' +
                         '<button class="mini" data-op="ren-task" data-tooltip="Rename task">✎</button>' +
                         '<button class="mini" data-op="dup-task" data-tooltip="Duplicate task">⧉</button>' +
@@ -221,7 +224,7 @@
             html += '<div class="node step' + sel + (status ? ' st-' + status : '') +
                 '" draggable="true" data-step="' + s.id + '" data-task="' + task.id +
                 '" style="padding-left:' + (34 + depth * 14) + 'px">' +
-                '<span class="status">' + (STATUS_GLYPH[status] || '') + '</span>' +
+                '<span class="status">' + (STATUS_GLYPH[status] || '▫') + '</span>' +
                 '<span class="name">' + esc(s.label || s.action) + '</span>' + flags +
                 '<span class="node-btns"><button class="mini" data-op="del-step" data-tooltip="Delete step">🗑</button></span>' +
                 '</div>';
@@ -248,6 +251,7 @@
             var cid = el.getAttribute('data-collection');
             el.addEventListener('click', function (e) {
                 var op = e.target.getAttribute && e.target.getAttribute('data-op');
+                if (op === 'run-collection') { state.expanded[cid] = true; post('runCollection', { collectionId: cid }); return; }
                 if (op === 'add-task') { post('createTask', { collectionId: cid, name: 'New task' }); return; }
                 if (op === 'ren-collection') {
                     var col = findCollection(cid);
@@ -287,6 +291,7 @@
             var tid = el.getAttribute('data-task'), cid = el.getAttribute('data-collection');
             el.addEventListener('click', function (e) {
                 var op = e.target.getAttribute && e.target.getAttribute('data-op');
+                if (op === 'run-task') { post('runTask', { taskId: tid, allowRepair: $('allow-repair').checked }); return; }
                 if (op === 'add-step') { addStep(tid, null); return; }
                 if (op === 'ren-task') {
                     var task = findTask(tid);
@@ -746,8 +751,8 @@
             tutorialStage = 0;
             render();
             openInfoModal('Run it',
-                "Click Run to execute a Task's Steps. Click any Step to edit it, hover between " +
-                "steps to insert a new one, or press ● Record to capture your own.",
+                "Click the ▶ button on a Task row to run its Steps. Click any Step to edit it, " +
+                "hover between steps to insert a new one, or press ● Record to capture your own.",
                 null);
         }
     }
@@ -780,6 +785,13 @@
             if (running) state.stepStatus = {};
             $('run').disabled = running;
             $('cancel').disabled = !running;
+            render();
+        },
+        onTaskStarted: function (payload) {
+            var taskId = payload && payload.taskId;
+            if (!taskId) return;
+            state.expanded[taskId] = true;
+            state.sel = { collectionId: (payload.collectionId || state.sel.collectionId), taskId: taskId, stepId: null };
             render();
         },
         onState: function (model) {
@@ -845,9 +857,6 @@
             taskId: state.sel.taskId || null,
         });
     });
-    $('btn-run').addEventListener('click', function () {
-        post('runTask', { taskId: state.sel.taskId, allowRepair: $('allow-repair').checked });
-    });
     $('btn-continue').addEventListener('click', function () { post('continueRun'); });
     $('btn-cancel-run').addEventListener('click', function () { post('cancelRun'); });
     $('btn-import').addEventListener('click', function () { post('import'); });
@@ -857,6 +866,15 @@
     });
     $('btn-new-collection').addEventListener('click', function () { post('createCollection', { name: 'New collection' }); });
     $('btn-folder').addEventListener('click', function () { post('openCollections'); });
+
+    $('btn-settings').addEventListener('click', function () { $('settings-modal').classList.remove('hidden'); });
+    $('settings-modal-close').addEventListener('click', function () { $('settings-modal').classList.add('hidden'); });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !$('settings-modal').classList.contains('hidden')) $('settings-modal').classList.add('hidden');
+    });
+    $('settings-modal').addEventListener('mousedown', function (e) {
+        if (e.target === $('settings-modal')) $('settings-modal').classList.add('hidden');
+    });
 
     // Settings: LLM provider radios, per-provider BYO keys, border radius.
     var LLM_PROVIDERS = ['claude', 'openai', 'gemini', 'kimi'];
