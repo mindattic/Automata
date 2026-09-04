@@ -12,7 +12,7 @@ namespace Automata.Core.Automation.Storage;
 public sealed class ExportManifest
 {
     public string Format { get; set; } = "automata-export";
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = SchemaMigration.CurrentExportVersion;
 
     /// <summary>"collection" or "task".</summary>
     public string Type { get; set; } = "";
@@ -108,7 +108,7 @@ public sealed class ArchiveService
             throw new InvalidDataException($"Not an Automata export: unknown format '{manifest.Format}'.");
 
         var warnings = new List<string>();
-        if (manifest.SchemaVersion > 1)
+        if (manifest.SchemaVersion > SchemaMigration.CurrentExportVersion)
             warnings.Add($"Export was written by a newer Automata (schema {manifest.SchemaVersion}); importing best-effort.");
 
         return manifest.Type switch

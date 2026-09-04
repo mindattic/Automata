@@ -29,13 +29,9 @@ public class ReplayEngine
         this.log = log ?? NullLogger<ReplayEngine>.Instance;
     }
 
-    private sealed class RunState
-    {
-        public bool Stop;
-        public bool Failed;
-        public int Passed;
-        public int Healed;
-    }
+    /// <summary>What a masked step reports instead of its value. Total withholding, not a scrub:
+    /// a partial scrub that misses one interpolation is worse than a generic message.</summary>
+    private const string Redacted = "••••••";
 
     public async IAsyncEnumerable<StepEvent> RunAsync(
         TaskDefinition task,
@@ -44,7 +40,7 @@ public class ReplayEngine
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         yield return new StepEvent.RunStarted(task.Id, task.Name);
-        var state = new RunState();
+        var state = new ReplayRunState();
 
         if (!string.IsNullOrWhiteSpace(task.StartUrl))
         {
@@ -72,35 +68,21 @@ public class ReplayEngine
         yield return new StepEvent.RunCompleted(success, summary);
     }
 
+    /// <summary>
+    /// This step and then its children, which is what a plain task replay needs.
+    /// <see cref="Execution.WorkflowEngine"/> does its own walking instead, because control-flow
+    /// steps decide for themselves whether and how often their children run.
+    /// </summary>
     private async IAsyncEnumerable<StepEvent> ExecuteStepAsync(
         Step step,
         ReplayOptions options,
         IBrowserSurface browser,
-        RunState state,
+        ReplayRunState state,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
-
-        if (step.PauseForUser || step.Id == options.PauseBeforeStepId)
-        {
-            yield return new StepEvent.StepPaused(step.Id, step.Label);
-            await options.Control.WaitAsync(ct);
-        }
-
-        yield return new StepEvent.StepStarted(step.Id, step.Label);
-
-        var (status, message, extracted) = await PerformAsync(step, options, browser, ct);
-        yield return new StepEvent.StepCompleted(step.Id, status, message, extracted);
-
-        if (status == StepStatus.Failed)
-        {
-            log.LogWarning("Step {Label} failed: {Message}", step.Label, message);
-            state.Stop = true;
-            state.Failed = true;
-            yield break;
-        }
-        state.Passed++;
-        if (status == StepStatus.Healed) state.Healed++;
+        await foreach (var evt in ExecuteOneAsync(step, options, browser, state, ct))
+            yield return evt;
+        if (state.Stop || state.LastStatus == StepStatus.Failed) yield break;
 
         foreach (var child in step.Children)
         {
@@ -110,19 +92,126 @@ public class ReplayEngine
         }
     }
 
-    private async Task<(StepStatus Status, string? Message, string? Extracted)> PerformAsync(
-        Step step, ReplayOptions options, IBrowserSurface browser, CancellationToken ct)
+    /// <summary>
+    /// Exactly one step: the pause gate, binding resolution, the retry loop, output publication,
+    /// masking, and the pass/fail bookkeeping. Never touches <see cref="Step.Children"/> — the
+    /// caller decides what to do with those.
+    /// </summary>
+    internal async IAsyncEnumerable<StepEvent> ExecuteOneAsync(
+        Step step,
+        ReplayOptions options,
+        IBrowserSurface browser,
+        ReplayRunState state,
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        var timeoutMs = step.TimeoutMs ?? options.DefaultStepTimeoutMs;
+        ct.ThrowIfCancellationRequested();
+        state.LastStatus = null;
+
+        if (step.PauseForUser || step.Id == options.PauseBeforeStepId)
+        {
+            yield return new StepEvent.StepPaused(step.Id, step.Label);
+            await options.Control.WaitAsync(ct);
+        }
+
+        yield return new StepEvent.StepStarted(step.Id, step.Label);
+
+        var effective = options.EffectiveFor(step);
+        var attempts = Math.Max(1, effective.Retry.MaxAttempts);
+
+        var (value, url, bindingError) = BindingResolver.ResolveValues(step, state);
+        if (bindingError != null)
+        {
+            yield return new StepEvent.StepCompleted(step.Id, StepStatus.Failed, bindingError, null);
+            state.Failed = true;
+            state.LastStatus = StepStatus.Failed;
+            if (!effective.ContinueOnStepError) state.Stop = true;
+            yield break;
+        }
+
+        StepStatus status;
+        string? message;
+        string? extracted;
+        var attempt = 1;
+        while (true)
+        {
+            (status, message, extracted) = await PerformAsync(step, options, effective, (value, url), browser, ct);
+            if (status != StepStatus.Failed || attempt >= attempts) break;
+
+            var delayMs = (int)Math.Round(
+                effective.Retry.DelayMs * Math.Pow(effective.Retry.BackoffMultiplier, attempt - 1));
+            yield return new StepEvent.Log(
+                $"Step '{step.Label}' failed ({message}) — attempt {attempt} of {attempts}, retrying in {delayMs}ms");
+            await Task.Delay(delayMs, ct);
+            attempt++;
+        }
+
+        // Publish before redacting, so a later step can still bind to a masked value even though
+        // nobody watching the run ever sees it.
+        if (status != StepStatus.Failed && extracted != null && step.Outputs is { Count: > 0 })
+        {
+            foreach (var output in step.Outputs)
+                if (!string.IsNullOrWhiteSpace(output.Name))
+                    state.Outputs[ReplayRunState.OutputKey(step.Id, output.Name)] = extracted;
+        }
+
+        if (step.Masked)
+        {
+            if (extracted != null) extracted = Redacted;
+            message = status == StepStatus.Failed
+                ? $"{step.Action} failed — details withheld because this step is masked"
+                : null;
+        }
+
+        yield return new StepEvent.StepCompleted(step.Id, status, message, extracted);
+        state.LastStatus = status;
+
+        if (status == StepStatus.Failed)
+        {
+            log.LogWarning("Step {Label} failed: {Message}", step.Label, message);
+            state.Failed = true;
+            // A failed step's own children never run — its post-condition did not hold, so its
+            // substeps have no footing. ContinueOnStepError only decides whether its SIBLINGS do.
+            if (!effective.ContinueOnStepError) state.Stop = true;
+            yield break;
+        }
+        state.Passed++;
+        if (status == StepStatus.Healed) state.Healed++;
+    }
+
+    private async Task<(StepStatus Status, string? Message, string? Extracted)> PerformAsync(
+        Step step, ReplayOptions options, ResolvedSettings effective,
+        (string? Value, string? Url) values, IBrowserSurface browser, CancellationToken ct)
+    {
+        // Shadow the literals so every action below reads the RESOLVED value, whether it came
+        // from the step itself or from a binding.
+        var value = values.Value;
+        var url = values.Url;
+
+        // A per-step TimeoutMs still beats the resolved scope chain — it is the most specific
+        // statement anyone made about this one step.
+        var timeoutMs = step.TimeoutMs ?? effective.DefaultStepTimeoutMs;
 
         if (step.Action == StepAction.Group)
             return (StepStatus.Passed, "container", null);
 
+        // Orchestrated actions are modelled but not executable here: they need dataset access,
+        // cross-task lookups and a lane pool, none of which a single-task replay has. Rejecting
+        // them explicitly beats a misleading "unsupported action" from the switch default.
+        if (step.Action is StepAction.ForEach or StepAction.If or StepAction.RunTask
+            or StepAction.WriteDataset)
+        {
+            return (StepStatus.Failed,
+                $"{step.Action} is a control-flow step — run this task through the workflow engine", null);
+        }
+
+        if (step.Action == StepAction.Wait)
+            return await PerformWaitAsync(step, options, ct);
+
         if (step.Action == StepAction.Navigate)
         {
-            if (string.IsNullOrWhiteSpace(step.Url))
+            if (string.IsNullOrWhiteSpace(url))
                 return (StepStatus.Failed, "navigate step has no URL", null);
-            var navError = await TryNavigateAsync(browser, step.Url!, ct);
+            var navError = await TryNavigateAsync(browser, url!, ct);
             if (navError != null) return (StepStatus.Failed, navError, null);
             await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
             return (StepStatus.Passed, null, null);
@@ -142,7 +231,7 @@ public class ReplayEngine
             return (StepStatus.Failed, $"{step.Action} step has no target fingerprint", null);
 
         var resolved = await resolver.ResolveAsync(
-            browser, step.Target, highlight: true, refingerprint: options.SelfHeal, timeoutMs, ct);
+            browser, step.Target, highlight: true, refingerprint: effective.SelfHeal, timeoutMs, ct);
         if (!resolved.Found)
         {
             var reason = resolved.Ambiguous
@@ -150,7 +239,7 @@ public class ReplayEngine
                 : "element not found by any strategy";
 
             // Last resort: hand this one step's intent to the LLM tool loop.
-            if (options.AllowLlmRepair && repairService != null && IsRepairable(step.Action))
+            if (effective.AllowLlmRepair && repairService != null && IsRepairable(step.Action))
             {
                 log.LogInformation("Step '{Label}' unresolvable ({Reason}) — attempting LLM repair", step.Label, reason);
                 if (await TryLlmRepairAsync(step, browser, ct))
@@ -162,7 +251,7 @@ public class ReplayEngine
         }
 
         var healed = false;
-        if (options.SelfHeal && resolved.Refreshed != null)
+        if (effective.SelfHeal && resolved.Refreshed != null)
         {
             step.Target = resolved.Refreshed;
             healed = true;
@@ -177,14 +266,14 @@ public class ReplayEngine
 
             case StepAction.AssertElement:
             {
-                if (string.IsNullOrEmpty(step.Value))
+                if (string.IsNullOrEmpty(value))
                     return (passStatus, $"element present{healNote}", null);
                 var actual = await BrowserActions.ReadResolvedTextAsync(browser, ct);
                 if (!actual.Ok)
                     return (StepStatus.Failed, actual.Error, null);
-                return actual.Value?.Contains(step.Value, StringComparison.OrdinalIgnoreCase) == true
-                    ? (passStatus, $"matched '{step.Value}'{healNote}", null)
-                    : (StepStatus.Failed, $"expected text '{step.Value}' but found '{actual.Value}'", null);
+                return actual.Value?.Contains(value, StringComparison.OrdinalIgnoreCase) == true
+                    ? (passStatus, $"matched '{value}'{healNote}", null)
+                    : (StepStatus.Failed, $"expected text '{value}' but found '{actual.Value}'", null);
             }
 
             case StepAction.ExtractText:
@@ -215,17 +304,17 @@ public class ReplayEngine
             case StepAction.TypeText:
             {
                 var typed = await BrowserActions.TypeViaKeystrokesAsync(
-                    browser, resolved.CenterX, resolved.CenterY, step.Value ?? "", ct);
-                return typed == (step.Value ?? "")
+                    browser, resolved.CenterX, resolved.CenterY, value ?? "", ct);
+                return typed == (value ?? "")
                     ? (passStatus, $"typed{healNote}", null)
                     : (StepStatus.Failed, $"typed value read back as '{typed}'", null);
             }
 
             case StepAction.SetValue:
             {
-                var set = await BrowserActions.SetValueOnResolvedAsync(browser, step.Value ?? "", ct);
+                var set = await BrowserActions.SetValueOnResolvedAsync(browser, value ?? "", ct);
                 if (!set.Ok) return (StepStatus.Failed, set.Error, null);
-                return set.Value == (step.Value ?? "")
+                return set.Value == (value ?? "")
                     ? (passStatus, $"value set{healNote}", null)
                     : (StepStatus.Failed, $"value read back as '{set.Value}'", null);
             }
@@ -254,7 +343,7 @@ public class ReplayEngine
 
             case StepAction.SelectOption:
             {
-                var selected = await BrowserActions.SelectOptionOnResolvedAsync(browser, step.Value ?? "", ct);
+                var selected = await BrowserActions.SelectOptionOnResolvedAsync(browser, value ?? "", ct);
                 return selected.Ok
                     ? (passStatus, $"selected '{selected.Value}'{healNote}", null)
                     : (StepStatus.Failed, selected.Error, null);
@@ -262,18 +351,44 @@ public class ReplayEngine
 
             case StepAction.UploadFile:
             {
-                if (string.IsNullOrWhiteSpace(step.Value) || !File.Exists(step.Value))
-                    return (StepStatus.Failed, $"file not found: '{step.Value}' — set a local path on this step", null);
-                await BrowserActions.UploadToResolvedAsync(browser, step.Value!, ct);
+                if (string.IsNullOrWhiteSpace(value) || !File.Exists(value))
+                    return (StepStatus.Failed, $"file not found: '{value}' — set a local path on this step", null);
+                await BrowserActions.UploadToResolvedAsync(browser, value!, ct);
                 var count = await BrowserActions.CountResolvedFilesAsync(browser, ct);
                 return count > 0
-                    ? (passStatus, $"attached {Path.GetFileName(step.Value)}{healNote}", null)
+                    ? (passStatus, $"attached {Path.GetFileName(value)}{healNote}", null)
                     : (StepStatus.Failed, "file input reports no attached file", null);
             }
 
             default:
                 return (StepStatus.Failed, $"unsupported action {step.Action}", null);
         }
+    }
+
+    /// <summary>
+    /// Performs a clock-based wait, holding the browser for its whole length.
+    /// <para>
+    /// A wait long enough to be worth parking never reaches here when parking is available — the
+    /// workflow engine intercepts it, checkpoints the run and releases the lane. So arriving here
+    /// with a long wait means parking was unavailable (a dry run, a wait inside a for-each), and
+    /// the message says the pane stays occupied rather than letting it look like a hang.
+    /// </para>
+    /// </summary>
+    private static async Task<(StepStatus Status, string? Message, string? Extracted)> PerformWaitAsync(
+        Step step, ReplayOptions options, CancellationToken ct)
+    {
+        var spec = step.Wait ?? new WaitSpec();
+        var (plan, error) = WaitPlan.For(spec, options.Clock());
+        if (error != null) return (StepStatus.Failed, error, null);
+        if (plan == null)
+            return (StepStatus.Failed,
+                $"a {spec.Mode} wait needs the workflow engine, which is not wired up yet", null);
+
+        var note = WaitPlan.ShouldPark(spec, plan.Remaining)
+            ? " — the browser stays occupied for the whole wait, because this run cannot park"
+            : "";
+        await Task.Delay(plan.Remaining, ct);
+        return (StepStatus.Passed, $"waited {plan.Description}{note}", null);
     }
 
     private static bool IsRepairable(StepAction action) => action is
@@ -334,7 +449,7 @@ public class ReplayEngine
         return anyToolSucceeded && !fatalError;
     }
 
-    private static async Task<string?> TryNavigateAsync(IBrowserSurface browser, string url, CancellationToken ct)
+    internal static async Task<string?> TryNavigateAsync(IBrowserSurface browser, string url, CancellationToken ct)
     {
         try
         {

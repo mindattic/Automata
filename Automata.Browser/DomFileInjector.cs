@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 
-namespace Automata.App;
+namespace Automata.Browser;
 
 /// <summary>
 /// Attaches a file to a page's <c>&lt;input type="file"&gt;</c> element via Chrome DevTools

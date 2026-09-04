@@ -30,6 +30,20 @@ public sealed class AutomataSettings
 
     /// <summary>Corner rounding (px, 0–10) applied to the sidebar's buttons and inputs.</summary>
     public int BorderRadius { get; set; } = 5;
+
+    /// <summary>
+    /// Width of the sidebar column in device-independent pixels, restored on launch and saved
+    /// when the splitter is released or the window closes. Clamped to the MinWidth/MaxWidth on
+    /// MainWindow's SidebarColumn, so a hand-edited value can never wedge the layout.
+    /// </summary>
+    public double SidebarWidth { get; set; } = 420;
+
+    /// <summary>
+    /// The outermost scope of the engine settings chain (global -> collection -> task -> step).
+    /// Null means every engine setting sits at its floor, which is the behavior the app had
+    /// before scoped settings existed.
+    /// </summary>
+    public EngineSettingsOverride? EngineDefaults { get; set; }
 }
 
 /// <summary>

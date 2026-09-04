@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Gherkin" Version="42.0.1" />
     <PackageReference Include="MindAttic.Legion" Version="22.0.0" />
   </ItemGroup>
 

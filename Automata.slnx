@@ -1,5 +1,7 @@
 <Solution>
   <Project Path="Automata.App/Automata.App.csproj" />
+  <Project Path="Automata.Browser/Automata.Browser.csproj" />
   <Project Path="Automata.Core/Automata.Core.csproj" />
+  <Project Path="Automata.Runner/Automata.Runner.csproj" />
   <Project Path="Automata.Tests/Automata.Tests.csproj" />
 </Solution>

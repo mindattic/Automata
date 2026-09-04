@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Automata.Core\Automata.Core.csproj" />
+    <ProjectReference Include="..\Automata.Browser\Automata.Browser.csproj" />
   </ItemGroup>
 
   <ItemGroup>

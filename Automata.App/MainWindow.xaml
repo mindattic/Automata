@@ -3,10 +3,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Automata" Height="1000" Width="1400"
-        WindowStartupLocation="Manual" Left="0" Top="0">
+        WindowStartupLocation="Manual" Left="0" Top="0"
+        Closing="OnWindowClosing">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="380" />
+            <!-- Width is restored from AutomataSettings.SidebarWidth in the code-behind; 420 is
+                 the fallback for a first run. The sidebar has to hold binding chips, schedule
+                 rows and lane cards, which 380 could not. -->
+            <ColumnDefinition x:Name="SidebarColumn" Width="420" MinWidth="340" MaxWidth="720" />
+            <ColumnDefinition Width="6" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -15,8 +20,18 @@
              unresolved click/interactivity bug in this hosting combination there). -->
         <wv2:WebView2 x:Name="ControlPanel" Grid.Column="0" />
 
+        <!-- GridSplitter is keyboard-operable out of the box (focus it, then arrow keys), which
+             is why the sidebar stays resizable without a custom accessible control. -->
+        <GridSplitter x:Name="SidebarSplitter" Grid.Column="1"
+                      Width="6"
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                      ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                      Background="#333"
+                      AutomationProperties.Name="Sidebar width"
+                      DragCompleted="OnSplitterDragCompleted" />
+
         <!-- The live target-site browser surface. Persistent user-data folder (set in
              code-behind) so a site login only has to happen once. -->
-        <wv2:WebView2 x:Name="TargetBrowser" Grid.Column="1" />
+        <wv2:WebView2 x:Name="TargetBrowser" Grid.Column="2" />
     </Grid>
 </Window>

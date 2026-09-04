@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using Automata.Core.Automation.Model;
 
@@ -30,6 +31,17 @@ internal static class StoreUtil
             .ToArray();
         var slug = string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
         return slug.Length == 0 ? "unnamed" : slug.Length <= 60 ? slug : slug[..60];
+    }
+
+    /// <summary>
+    /// Keeps a name usable as a single file name without slugging it — unlike <see cref="Slug"/>
+    /// this preserves case and the extension, which matters for a dataset called "bought.csv".
+    /// </summary>
+    public static string SafeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
+        return cleaned.Length == 0 ? "unnamed" : cleaned.Length <= 120 ? cleaned : cleaned[..120];
     }
 
     /// <summary>"Work" taken → "Work (2)", then "Work (3)", … Case-insensitive.</summary>

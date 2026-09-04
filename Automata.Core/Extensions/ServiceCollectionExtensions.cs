@@ -1,3 +1,6 @@
+using Automata.Core.Automation.Execution;
+using Automata.Core.Automation.Flow;
+using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
@@ -89,6 +92,28 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<FingerprintResolver>(),
             sp.GetRequiredService<BrowserOperatorService>(),   // last-resort LLM repair path
             sp.GetRequiredService<ILogger<ReplayEngine>>()));
+
+        services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton(_ => new ScheduleStore(
+            filePath: Environment.GetEnvironmentVariable("AUTOMATA_SCHEDULE_PATH")));
+        services.AddSingleton(_ => new DatasetStore(
+            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_DATASETS_ROOT")));
+        services.AddSingleton(_ => new RunStore(
+            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_RUNS_ROOT")));
+        services.AddSingleton(_ => new ParkedRunStore(
+            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_PARKED_ROOT")));
+        services.AddSingleton(_ => new LiveLaneStore(
+            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_LIVE_ROOT")));
+        // The workflow engine wraps the replay engine rather than replacing it: it owns the tree
+        // walk so control-flow steps can decide whether and how often their children run.
+        services.AddSingleton(sp => new FlowAuthoringService(
+            sp.GetRequiredService<IReadOnlyList<IToolCallingLlm>>(),
+            sp.GetRequiredService<ILogger<FlowAuthoringService>>()));
+        services.AddSingleton(sp => new WorkflowEngine(
+            sp.GetRequiredService<ReplayEngine>(),
+            sp.GetRequiredService<CollectionStore>(),
+            sp.GetRequiredService<DatasetStore>(),
+            sp.GetRequiredService<ILogger<WorkflowEngine>>()));
 
         return services;
     }

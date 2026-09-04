@@ -53,6 +53,26 @@ public enum StepAction
 
     /// <summary>No action of its own — a pure container for <see cref="Step.Children"/>.</summary>
     Group,
+
+    // ---- flow control (v3) --------------------------------------------------------------------
+    // Appended, never reordered. The enum serializes as camelCase STRINGS so member order is not
+    // part of the on-disk contract, but keeping additions at the end still keeps diffs honest.
+
+    /// <summary>Pause — for a duration, until a time of day, until a condition, or for a signal.
+    /// See <see cref="Step.Wait"/>.</summary>
+    Wait,
+
+    /// <summary>Run <see cref="Step.Children"/> once per row of a dataset.</summary>
+    ForEach,
+
+    /// <summary>Run <see cref="Step.Children"/> only when <see cref="Step.Condition"/> holds.</summary>
+    If,
+
+    /// <summary>Invoke another task inline.</summary>
+    RunTask,
+
+    /// <summary>Write bound values as a row of a named dataset.</summary>
+    WriteDataset,
 }
 
 /// <summary>
@@ -93,4 +113,45 @@ public sealed class Step
 
     /// <summary>Substeps, executed sequentially after this step's own action confirms.</summary>
     public List<Step> Children { get; set; } = [];
+
+    /// <summary>
+    /// Values this step publishes for later steps to bind to — an ExtractText step's captured
+    /// text, for instance. Declared here at design time rather than discovered at run time, which
+    /// is what lets the binding picker enumerate every valid source without executing anything.
+    /// </summary>
+    public List<OutputField>? Outputs { get; set; }
+
+    /// <summary>
+    /// Picker-built overrides keyed by field name ("Value", "Url"). A field with an entry here
+    /// resolves its binding at run time and ignores the literal beside it — the literal is kept
+    /// rather than cleared, so unbinding restores what was there before.
+    /// </summary>
+    public Dictionary<string, BindingRef>? Bindings { get; set; }
+
+    /// <summary>
+    /// Redact this step's value and extracted text before they reach any log, run artifact or the
+    /// sidebar. Mirrors the recorder's existing password-masking convention.
+    /// </summary>
+    public bool Masked { get; set; }
+
+    /// <summary><see cref="StepAction.Wait"/>.</summary>
+    public WaitSpec? Wait { get; set; }
+
+    /// <summary><see cref="StepAction.ForEach"/>.</summary>
+    public ForEachSpec? ForEach { get; set; }
+
+    /// <summary><see cref="StepAction.If"/>.</summary>
+    public ConditionSpec? Condition { get; set; }
+
+    /// <summary><see cref="StepAction.RunTask"/>: the task to invoke.</summary>
+    public string? RunTaskId { get; set; }
+
+    /// <summary><see cref="StepAction.WriteDataset"/>.</summary>
+    public DatasetWriteSpec? WriteDataset { get; set; }
+
+    /// <summary>
+    /// Engine settings overridden at this scope; null (the usual case) means "inherit everything".
+    /// Resolved through global -> collection -> task -> step by EngineSettingsResolver.
+    /// </summary>
+    public EngineSettingsOverride? Settings { get; set; }
 }

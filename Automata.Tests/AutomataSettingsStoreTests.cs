@@ -27,6 +27,7 @@ public class AutomataSettingsStoreTests
 
         Assert.That(settings.AnthropicApiKey, Is.Null);
         Assert.That(settings.BorderRadius, Is.EqualTo(5));
+        Assert.That(settings.SidebarWidth, Is.EqualTo(420));
     }
 
     [Test]
@@ -42,6 +43,7 @@ public class AutomataSettingsStoreTests
             GeminiApiKey = "AIza-g",
             KimiApiKey = "sk-kimi",
             BorderRadius = 8,
+            SidebarWidth = 512,
         });
         var back = store.Load();
 
@@ -51,6 +53,7 @@ public class AutomataSettingsStoreTests
         Assert.That(back.GeminiApiKey, Is.EqualTo("AIza-g"));
         Assert.That(back.KimiApiKey, Is.EqualTo("sk-kimi"));
         Assert.That(back.BorderRadius, Is.EqualTo(8));
+        Assert.That(back.SidebarWidth, Is.EqualTo(512));
     }
 
     [Test]
@@ -69,6 +72,22 @@ public class AutomataSettingsStoreTests
 
         Assert.That(settings.AnthropicApiKey, Is.Null);
         Assert.That(settings.BorderRadius, Is.EqualTo(5));
+    }
+
+    /// <summary>
+    /// A settings.json written before SidebarWidth existed must still load - the property simply
+    /// falls back to its default rather than deserializing as 0, which would collapse the sidebar.
+    /// </summary>
+    [Test]
+    public void Load_FromAPreSidebarWidthFile_FallsBackToTheDefaultWidth()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{ "provider": "claude", "borderRadius": 3 }""");
+
+        var settings = new AutomataSettingsStore(path).Load();
+
+        Assert.That(settings.BorderRadius, Is.EqualTo(3));
+        Assert.That(settings.SidebarWidth, Is.EqualTo(420));
     }
 
     [Test]

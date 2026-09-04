@@ -6,7 +6,11 @@ using Automata.Core.Automation;
 using Automata.Core.Automation.Logging;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Recording;
+using Automata.Core.Automation.Execution;
+using Automata.Core.Automation.Flow;
 using Automata.Core.Automation.Replay;
+using Automata.Core.Automation.Scheduling;
+using Automata.Core.Automation.Settings;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
@@ -23,8 +27,27 @@ public sealed class AutomationController
 {
     private readonly CollectionStore store;
     private readonly ArchiveService archive;
-    private readonly ReplayEngine engine;
+    private readonly WorkflowEngine engine;
     private readonly AutomataSettingsStore settingsStore;
+    private readonly DatasetStore datasets;
+    private readonly RunStore runs;
+    private readonly ScheduleStore schedule;
+    private readonly ParkedRunStore parkedRuns;
+    private readonly LiveLaneStore liveLanes;
+    private readonly IClock clock;
+
+    /// <summary>
+    /// The run a collection is currently working through, so its tasks land under ONE run record
+    /// rather than one each. Null when a single task is being run on its own.
+    /// </summary>
+    private RunManifest? currentRun;
+    private readonly FlowAuthoringService authoring;
+
+    /// <summary>
+    /// The last drafted feature, held so Insert saves what the user actually reviewed rather than
+    /// asking the model again and getting something subtly different.
+    /// </summary>
+    private FlowDraft? pendingDraft;
     private readonly Func<IBrowserSurface?> targetSurface;
     private readonly Func<CoreWebView2?> targetCore;
     private readonly Func<string, Task> execPanelScript;
@@ -52,8 +75,15 @@ public sealed class AutomationController
     public AutomationController(
         CollectionStore store,
         ArchiveService archive,
-        ReplayEngine engine,
+        WorkflowEngine engine,
         AutomataSettingsStore settingsStore,
+        DatasetStore datasets,
+        RunStore runs,
+        ScheduleStore schedule,
+        ParkedRunStore parkedRuns,
+        LiveLaneStore liveLanes,
+        IClock clock,
+        FlowAuthoringService authoring,
         Func<IBrowserSurface?> targetSurface,
         Func<CoreWebView2?> targetCore,
         Func<string, Task> execPanelScript,
@@ -63,6 +93,13 @@ public sealed class AutomationController
         this.archive = archive;
         this.engine = engine;
         this.settingsStore = settingsStore;
+        this.datasets = datasets;
+        this.runs = runs;
+        this.schedule = schedule;
+        this.parkedRuns = parkedRuns;
+        this.liveLanes = liveLanes;
+        this.clock = clock;
+        this.authoring = authoring;
         this.targetSurface = targetSurface;
         this.targetCore = targetCore;
         this.execPanelScript = execPanelScript;
@@ -101,6 +138,21 @@ public sealed class AutomationController
                 store.DeleteCollection(Str(msg, "id") ?? "");
                 await PushStateAsync();
                 return true;
+
+            case "saveCollectionSettings":
+            {
+                var scopedId = Str(msg, "id") ?? "";
+                var scoped = store.GetCollection(scopedId);
+                if (scoped == null)
+                {
+                    await logAsync($"⚠ Collection '{scopedId}' not found.");
+                    return true;
+                }
+                scoped.Settings = ParseOverride(msg["settings"]);
+                store.SaveCollection(scoped);
+                await PushStateAsync();
+                return true;
+            }
 
             case "duplicateCollection":
                 store.DuplicateCollection(Str(msg, "id") ?? "");
@@ -180,6 +232,80 @@ public sealed class AutomationController
                 _ = RecordAtGapAsync(msg);
                 return true;
 
+            case "draftFlow":
+                _ = DraftFlowAsync(Str(msg, "description") ?? "");
+                return true;
+
+            case "compileFlow":
+                await CompileFlowAsync(Str(msg, "featureText") ?? "");
+                return true;
+
+            case "insertFlow":
+                await InsertDraftAsync();
+                return true;
+
+            case "getFeature":
+                await PushFeatureAsync(Str(msg, "taskId") ?? "");
+                return true;
+
+            case "getRuns":
+                await PushRunsAsync();
+                return true;
+
+            case "getLanes":
+                await PushLanesAsync();
+                return true;
+
+            case "openRuns":
+                Directory.CreateDirectory(runs.RootPath);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{runs.RootPath}\"") { UseShellExecute = true });
+                await logAsync($"Opened {runs.RootPath}");
+                return true;
+
+            case "getSchedule":
+                await PushScheduleAsync();
+                return true;
+
+            case "saveScheduleEntry":
+                await SaveScheduleEntryAsync(msg);
+                return true;
+
+            case "deleteScheduleEntry":
+            {
+                var entryId = Str(msg, "id") ?? "";
+                var doomed = schedule.Get(entryId);
+                if (doomed == null)
+                {
+                    await logAsync($"⚠ No schedule entry '{entryId}' to remove.");
+                }
+                else
+                {
+                    // Anything waiting on this entry would wait forever, so say so rather than
+                    // leaving a chain silently broken.
+                    var orphaned = schedule.Load()
+                        .Where(e => e.Triggers.Any(t => t.AfterEntryId == entryId))
+                        .Select(e => e.Name)
+                        .ToList();
+                    schedule.Remove(entryId);
+                    await logAsync($"Removed schedule '{doomed.Name}'.");
+                    if (orphaned.Count > 0)
+                        await logAsync(
+                            $"⚠ {string.Join(", ", orphaned)} waited for it and will no longer be started by anything.");
+                }
+                await PushScheduleAsync();
+                return true;
+            }
+
+            case "getDatasets":
+                await PushDatasetsAsync();
+                return true;
+
+            case "openDatasets":
+                Directory.CreateDirectory(datasets.RootPath);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{datasets.RootPath}\"") { UseShellExecute = true });
+                await logAsync($"Opened {datasets.RootPath}");
+                return true;
+
             case "getSettings":
                 await PushSettingsAsync();
                 return true;
@@ -219,6 +345,15 @@ public sealed class AutomationController
 
                 if (msg["borderRadius"] != null)
                     settings.BorderRadius = Math.Clamp(msg["borderRadius"]!.GetValue<int>(), 0, 10);
+
+                // The panel always sends a whole override object; ParseOverride collapses one that
+                // overrides nothing back to null, so "reset everything to the floor" needs no
+                // separate message.
+                if (msg["engineDefaults"] is { } engineDefaults)
+                {
+                    settings.EngineDefaults = ParseOverride(engineDefaults);
+                    await logAsync("Global engine defaults updated — applied from the next run.");
+                }
 
                 settingsStore.Save(settings);
                 await PushSettingsAsync();
@@ -468,19 +603,34 @@ public sealed class AutomationController
         collectionCancelRequested = false;
         await execPanelScript("window.ssPanel.onRunState(true)");
 
+        currentRun = runs.CreateRun(RunTargetKind.Collection, collection.Id, collection.Name);
         var tasks = store.LoadTasks(collectionId);
+        // Collection-scope policy: whether one task failing ends the collection. The floor is
+        // true (keep going), which is what this loop has always done.
+        var policy = EngineSettingsResolver.Resolve(settingsStore.Load(), collection.Settings);
         var passed = 0;
         foreach (var task in tasks)
         {
             if (collectionCancelRequested) break;
             await execPanelScript($"window.ssPanel.onTaskStarted({JsonSerializer.Serialize(new { taskId = task.Id, collectionId }, AutomataJson.Options)})");
             if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false))
+            {
                 passed++;
+            }
+            else if (!policy.ContinueOnTaskError)
+            {
+                await logAsync($"⏹ Stopping '{collection.Name}' after '{task.Name}' failed — continue-on-task-error is off for this collection.");
+                break;
+            }
         }
 
-        await logAsync($"▶ Collection '{collection.Name}': {passed}/{tasks.Count} task(s) passed.");
+        var collectionSummary = $"{passed}/{tasks.Count} task(s) passed.";
+        await logAsync($"▶ Collection '{collection.Name}': {collectionSummary}");
+        runs.CompleteRun(currentRun.RunId, passed == tasks.Count, collectionSummary);
+        currentRun = null;
         runActive = false;
         await execPanelScript("window.ssPanel.onRunState(false)");
+        await PushRunsAsync();
     }
 
     /// <summary>Runs the task up to (and pausing before) the step occupying an insert-zone gap —
@@ -518,13 +668,37 @@ public sealed class AutomationController
 
         replayCts = new CancellationTokenSource();
         replayControl = new ReplayControl();
+
+        // Resolve the scope chain once per run and hand the engine a per-step lookup, so a
+        // timeout, retry policy or self-heal flag set on the collection, the task or one
+        // individual step all reach the engine through the same path.
+        var globalSettings = settingsStore.Load();
+        var collectionSettings = store.GetCollection(task.CollectionId)?.Settings;
         var options = new ReplayOptions
         {
             Control = replayControl,
             AllowLlmRepair = allowRepair,
             PauseBeforeStepId = gap?.PauseBeforeStepId,
+            // Parking exists to give a pooled browser lane back during a long wait. This window
+            // has exactly one browser pane, and it is not pooled — releasing it would free nothing
+            // and would make a run the user is watching disappear from under them. So a long wait
+            // here holds the pane and says so; the headless runner is what parks and resumes.
+            AllowParking = false,
+            ResolveForStep = step =>
+            {
+                var resolved = EngineSettingsResolver.Resolve(
+                    globalSettings, collectionSettings, task.Settings, step.Settings);
+                // The sidebar's "allow LLM repair" checkbox is a per-run opt-in that can only
+                // turn repair ON. Leaving it unchecked does not disable repair for a scope that
+                // deliberately enabled it.
+                return allowRepair ? resolved with { AllowLlmRepair = true } : resolved;
+            },
         };
         var runLog = new RunLogWriter(task.Name);
+        // A collection run already opened a record; a lone task opens its own and closes it below.
+        var ownsRun = currentRun == null;
+        var run = currentRun ?? runs.CreateRun(RunTargetKind.Task, task.CollectionId, task.Name);
+        var outputs = new Dictionary<string, Dictionary<string, string>>();
         var healed = false;
         var success = false;
 
@@ -536,6 +710,7 @@ public sealed class AutomationController
             {
                 var line = FormatStepEvent(evt);
                 runLog.WriteLine(line);
+                runs.AppendEvent(run.RunId, task.Id, new { kind = evt.GetType().Name, detail = line });
                 await logAsync(line);
                 switch (evt)
                 {
@@ -544,6 +719,10 @@ public sealed class AutomationController
                         break;
                     case StepEvent.StepCompleted c:
                         if (c.Status == StepStatus.Healed) healed = true;
+                        // Where an extracted value finally lands durably, rather than scrolling
+                        // out of the log.
+                        if (c.ExtractedText != null)
+                            outputs[c.StepId] = new Dictionary<string, string> { ["text"] = c.ExtractedText };
                         await PushStepStatusAsync(c.StepId, c.Status.ToString().ToLowerInvariant(), c.Message);
                         break;
                     case StepEvent.StepPaused p:
@@ -569,6 +748,13 @@ public sealed class AutomationController
         {
             runLog.WriteLine($"Unexpected failure — {ex.Message}");
             await logAsync($"⚠ Unexpected failure — {ex.Message}");
+        }
+
+        if (outputs.Count > 0) runs.SaveOutputs(run.RunId, task.Id, outputs);
+        if (ownsRun)
+        {
+            runs.CompleteRun(run.RunId, success, success ? "Passed." : "Failed.");
+            await PushRunsAsync();
         }
 
         if (healed)
@@ -637,15 +823,31 @@ public sealed class AutomationController
             return;
         }
 
+        // Recorder JSON rides on the existing Export flow as a second file type rather than a
+        // tenth toolbar button: "export as" is already the question being asked.
         var dialog = new SaveFileDialog
         {
             FileName = ArchiveService.SuggestedZipName(display),
-            Filter = "Automata export (*.automata.zip)|*.automata.zip|Zip archive (*.zip)|*.zip",
+            Filter = "Automata export (*.automata.zip)|*.automata.zip|Zip archive (*.zip)|*.zip"
+                   + "|Chrome DevTools Recorder (*.json)|*.json",
         };
         if (dialog.ShowDialog() != true) return;
 
         try
         {
+            if (dialog.FileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                if (taskId == null)
+                {
+                    await logAsync("⚠ Recorder JSON holds one flow — select a task, not a collection.");
+                    return;
+                }
+                var task = store.GetTask(taskId)!;
+                await File.WriteAllTextAsync(dialog.FileName, RecorderFlowIO.Export(task));
+                await logAsync($"Exported '{display}' as a Recorder flow to {dialog.FileName}");
+                return;
+            }
+
             var zip = collectionId != null
                 ? archive.ExportCollection(collectionId, dialog.FileName)
                 : archive.ExportTask(taskId!, dialog.FileName);
@@ -659,11 +861,20 @@ public sealed class AutomationController
 
     private async Task ImportAsync()
     {
-        var dialog = new OpenFileDialog { Filter = "Automata export|*.zip|All files|*.*" };
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Automata export (*.zip)|*.zip|Chrome DevTools Recorder (*.json)|*.json|All files|*.*",
+        };
         if (dialog.ShowDialog() != true) return;
 
         try
         {
+            if (dialog.FileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                await ImportRecorderFlowAsync(dialog.FileName);
+                return;
+            }
+
             var result = archive.Import(dialog.FileName);
             foreach (var warning in result.Warnings)
                 await logAsync($"⚠ {warning}");
@@ -686,6 +897,9 @@ public sealed class AutomationController
             id = c.Id,
             name = c.Name,
             description = c.Description,
+            // The panel needs the collection's own overrides to show what a task or step
+            // inherits, and from which scope. Tasks (and their steps) already carry theirs.
+            settings = c.Settings,
             tasks = store.LoadTasks(c.Id),
         });
         var json = JsonSerializer.Serialize(new { collections = tree }, AutomataJson.Options);
@@ -705,6 +919,17 @@ public sealed class AutomationController
     {
         var json = JsonSerializer.Serialize(new { taskId, parentStepId, index, steps }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onGapRecorded({json})");
+    }
+
+    /// <summary>
+    /// Deserializes a scope's engine overrides, collapsing one that overrides nothing to null so
+    /// an untouched entity never gains an empty settings node on disk.
+    /// </summary>
+    private static EngineSettingsOverride? ParseOverride(JsonNode? node)
+    {
+        if (node == null) return null;
+        var parsed = JsonSerializer.Deserialize<EngineSettingsOverride>(node.ToJsonString(), AutomataJson.Options);
+        return parsed is null || parsed.IsEmpty ? null : parsed;
     }
 
     private static IEnumerable<(string Field, Action<AutomataSettings, string> Apply)> KeyFields() =>
@@ -733,6 +958,10 @@ public sealed class AutomationController
         {
             provider = settings.Provider,
             borderRadius = settings.BorderRadius,
+            // The outermost link of the settings chain, plus the floor beneath it. The floor is
+            // sent rather than mirrored in JS so there is exactly one definition of it.
+            engineDefaults = settings.EngineDefaults,
+            engineFloor = EngineSettingsResolver.Floor(),
             keys = new
             {
                 claude = Hint(settings.AnthropicApiKey, "OAuth/Vault default"),
@@ -742,6 +971,437 @@ public sealed class AutomationController
             },
         }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onSettings({json})");
+    }
+
+    /// <summary>
+    /// Brings in a Chrome DevTools Recorder flow. Anything outside the overlapping subset is
+    /// logged rather than dropped quietly, so the user knows what did not survive the crossing.
+    /// </summary>
+    private async Task ImportRecorderFlowAsync(string path)
+    {
+        var json = await File.ReadAllTextAsync(path);
+        var result = RecorderFlowIO.Import(json, Path.GetFileNameWithoutExtension(path));
+        foreach (var warning in result.Warnings) await logAsync($"⚠ {warning}");
+
+        if (result.Task.Steps.Count == 0)
+        {
+            await logAsync("⚠ Nothing importable in that recording.");
+            return;
+        }
+
+        result.Task.CollectionId = store.EnsureCollectionNamed("Imported").Id;
+        store.SaveTask(result.Task);
+        await logAsync($"Imported '{result.Task.Name}' with {result.Task.Steps.Count} step(s) from a Recorder flow.");
+        await PushStateAsync();
+    }
+
+    // ---- authoring -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// Turns a description into a feature file and compiles it, then shows BOTH to the user.
+    /// Nothing is written to the store until they accept it — the whole point of having a readable
+    /// intermediate artifact is that it can be reviewed first.
+    /// </summary>
+    private async Task DraftFlowAsync(string description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            await logAsync("⚠ Describe what the task should do first.");
+            return;
+        }
+
+        await logAsync("✎ Drafting steps…");
+        try
+        {
+            var context = new FlowAuthoringContext
+            {
+                DatasetNames = datasets.List(),
+                TaskNames = store.LoadCollections().SelectMany(c => store.LoadTasks(c.Id)).Select(t => t.Name).ToList(),
+                CurrentUrl = targetCore()?.Source,
+            };
+            pendingDraft = await authoring.DraftAsync(description, context);
+            await logAsync(pendingDraft.Result.HasErrors
+                ? $"⚠ {pendingDraft.Provider} wrote a feature that does not compile after {pendingDraft.Attempts} attempt(s)."
+                : $"✓ {pendingDraft.Provider} drafted {pendingDraft.Result.Tasks.Count} task(s) in {pendingDraft.Attempts} attempt(s).");
+            await PushFlowDraftAsync();
+        }
+        catch (Exception ex)
+        {
+            pendingDraft = null;
+            await logAsync($"⚠ Drafting failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Compiles feature text the user edited by hand. Deliberately does NOT involve the model: a
+    /// hand edit is held to exactly the same standard as a drafted one, and re-rolling it through
+    /// an LLM would quietly discard what they wrote.
+    /// </summary>
+    private async Task CompileFlowAsync(string featureText)
+    {
+        var result = GherkinFlowCompiler.Compile(featureText);
+        pendingDraft = new FlowDraft(featureText, result, 0, "your edit");
+        await logAsync(result.HasErrors
+            ? "⚠ The edited feature does not compile."
+            : $"✓ The edited feature compiles to {result.Tasks.Count} task(s).");
+        await PushFlowDraftAsync();
+    }
+
+    /// <summary>Saves the reviewed draft: the collection, its tasks, and any dataset its Examples
+    /// tables produced.</summary>
+    private async Task InsertDraftAsync()
+    {
+        if (pendingDraft?.Result.Collection == null)
+        {
+            await logAsync("⚠ Nothing to insert — draft something first.");
+            return;
+        }
+
+        var result = pendingDraft.Result;
+        store.SaveCollection(result.Collection);
+        foreach (var task in result.Tasks)
+        {
+            task.CollectionId = result.Collection.Id;
+            store.SaveTask(task);
+        }
+        foreach (var dataset in result.Datasets)
+            datasets.Write(dataset.Name, dataset.Rows, append: false);
+
+        await logAsync($"✓ Added '{result.Collection.Name}' with {result.Tasks.Count} task(s)" +
+            (result.Datasets.Count > 0 ? $" and {result.Datasets.Count} dataset(s)." : "."));
+        pendingDraft = null;
+        await PushStateAsync();
+        await PushDatasetsAsync();
+    }
+
+    /// <summary>Renders a saved task back to Gherkin for reading.</summary>
+    private async Task PushFeatureAsync(string taskId)
+    {
+        var task = store.GetTask(taskId);
+        var collection = task == null ? null : store.GetCollection(task.CollectionId);
+        if (task == null || collection == null)
+        {
+            await logAsync($"⚠ Task '{taskId}' not found.");
+            return;
+        }
+
+        var written = GherkinWriter.Write(collection, [task]);
+        var json = JsonSerializer.Serialize(new
+        {
+            taskName = task.Name,
+            featureText = written.Text,
+            isLossy = written.IsLossy,
+            reasons = written.Reasons,
+        }, AutomataJson.Options);
+        await execPanelScript($"window.ssPanel.onFeatureView({json})");
+    }
+
+    private Task PushFlowDraftAsync()
+    {
+        var draft = pendingDraft;
+        if (draft == null) return Task.CompletedTask;
+
+        var json = JsonSerializer.Serialize(new
+        {
+            featureText = draft.FeatureText,
+            provider = draft.Provider,
+            attempts = draft.Attempts,
+            canInsert = !draft.Result.HasErrors,
+            collectionName = draft.Result.Collection?.Name,
+            diagnostics = draft.Result.Diagnostics.Select(d => new
+            {
+                severity = d.Severity.ToString().ToLowerInvariant(),
+                line = d.Line,
+                message = d.Message,
+            }),
+            tasks = draft.Result.Tasks.Select(t => new
+            {
+                name = t.Name,
+                steps = Outline(t.Steps, 0),
+            }),
+            datasets = draft.Result.Datasets.Select(d => new { name = d.Name, rows = d.Rows.Count }),
+        }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onFlowDraft({json})");
+    }
+
+    /// <summary>Flattens a compiled step tree into indented labels, so the preview shows the shape
+    /// the feature actually produced — nesting included.</summary>
+    private static List<string> Outline(IReadOnlyList<Step> steps, int depth)
+    {
+        var lines = new List<string>();
+        foreach (var step in steps)
+        {
+            lines.Add(new string(' ', depth * 2) + (string.IsNullOrWhiteSpace(step.Label) ? step.Action.ToString() : step.Label));
+            lines.AddRange(Outline(step.Children, depth + 1));
+        }
+        return lines;
+    }
+
+    // ---- schedule ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Adds or replaces a schedule entry the sidebar authored.
+    /// <para>
+    /// Everything is refused up front rather than saved and left to never fire — a schedule that
+    /// quietly does nothing is the worst failure mode this feature has. The reason travels back to
+    /// the panel with the pushed schedule, so the editor can show it beside the field that caused
+    /// it instead of only writing it to the log.
+    /// </para>
+    /// </summary>
+    private async Task SaveScheduleEntryAsync(JsonNode msg)
+    {
+        ScheduleEntry? entry = null;
+        try
+        {
+            if (msg["entry"] is { } node)
+                entry = JsonSerializer.Deserialize<ScheduleEntry>(node.ToJsonString(), AutomataJson.Options);
+        }
+        catch (JsonException ex)
+        {
+            await logAsync($"⚠ Schedule entry could not be read: {ex.Message}");
+            await PushScheduleAsync("That schedule could not be read.");
+            return;
+        }
+
+        if (entry == null)
+        {
+            await PushScheduleAsync("That schedule could not be read.");
+            return;
+        }
+
+        // A blank id would collapse every new entry onto one another in the store, so it is minted
+        // here rather than trusted — the model's own default only applies when the field is absent
+        // altogether, and an empty string is not absent.
+        if (string.IsNullOrWhiteSpace(entry.Id)) entry.Id = Guid.NewGuid().ToString("n");
+
+        var existing = schedule.Get(entry.Id);
+        if (ValidateScheduleEntry(entry, existing) is { } problem)
+        {
+            await logAsync($"⚠ {problem}");
+            await PushScheduleAsync(problem);
+            return;
+        }
+
+        // Bookkeeping belongs to the scheduler, not to whoever edited the entry — the panel may
+        // send back whatever it was last shown, and it must not be able to rewrite run history.
+        entry.LastRunUtc = existing?.LastRunUtc;
+        entry.LastOutcome = existing?.LastOutcome;
+
+        // The written-down due time is only recomputed when the triggers actually changed. Keeping
+        // it otherwise is what lets a firing that was missed while nothing was running survive an
+        // unrelated edit (a rename, say) instead of being quietly pushed forward.
+        var triggersChanged = existing == null
+            || JsonSerializer.Serialize(existing.Triggers, AutomataJson.Options)
+               != JsonSerializer.Serialize(entry.Triggers, AutomataJson.Options);
+        entry.NextDueUtc = triggersChanged ? null : existing!.NextDueUtc;
+        entry.NextDueUtc ??= TriggerEvaluator.Evaluate(entry, clock).NextUtc;
+
+        schedule.Upsert(entry);
+        var verdict = TriggerEvaluator.Evaluate(entry, clock);
+        await logAsync($"Scheduled '{entry.Name}' — {verdict.Reason}.");
+        await PushScheduleAsync();
+    }
+
+    /// <summary>The reason an entry cannot be saved, or null when it is sound.</summary>
+    private string? ValidateScheduleEntry(ScheduleEntry entry, ScheduleEntry? existing)
+    {
+        if (string.IsNullOrWhiteSpace(entry.Name)) return "A schedule needs a name.";
+        if (ScheduleTargetName(entry) == null)
+            return entry.Target == ScheduleTargetKind.Task
+                ? "Pick a task for this schedule to run."
+                : "Pick a collection for this schedule to run.";
+        if (entry.Triggers.Count == 0) return "A schedule needs at least one trigger.";
+
+        var entries = schedule.Load();
+        foreach (var trigger in entry.Triggers)
+        {
+            switch (trigger.Kind)
+            {
+                case TriggerKind.Cron:
+                    if (!CronSchedule.TryParse(trigger.CronExpression, out _, out var cronError))
+                        return $"That cron expression won't work: {cronError}.";
+                    if (TriggerEvaluator.Next(trigger, clock.UtcNow) == null)
+                        return "That cron expression never matches a real date — nothing would ever run.";
+                    break;
+
+                case TriggerKind.Interval:
+                    if (trigger.IntervalSeconds is not > 0)
+                        return "An interval needs to be at least one minute.";
+                    break;
+
+                case TriggerKind.OneShot:
+                    if (trigger.FireAtUtc == null) return "Pick the date and time to run once at.";
+                    if (trigger.FireAtUtc <= clock.UtcNow)
+                        return "That one-off time has already passed — pick a later one.";
+                    break;
+
+                case TriggerKind.AfterEntry:
+                    if (string.IsNullOrWhiteSpace(trigger.AfterEntryId))
+                        return "Pick the schedule this one should follow.";
+                    if (trigger.AfterEntryId == entry.Id)
+                        return "A schedule cannot wait for itself to finish.";
+                    if (entries.All(e => e.Id != trigger.AfterEntryId))
+                        return "The schedule this one follows no longer exists.";
+                    break;
+            }
+        }
+
+        // A chain is allowed — "after the ingest, reconcile" is the point — but a cycle is not,
+        // because every entry in one would sit waiting for another entry in the same loop and none
+        // of them would ever start. Reached by walking forward from the upstream entry: if this
+        // entry is already somewhere downstream of it, closing the link would form the loop.
+        var upstreamIds = entry.Triggers
+            .Where(t => t.Kind == TriggerKind.AfterEntry && t.AfterEntryId != null)
+            .Select(t => t.AfterEntryId!);
+        var saved = existing == null ? entries : entries.Where(e => e.Id != entry.Id).ToList();
+        foreach (var upstreamId in upstreamIds)
+        {
+            var reachable = TriggerEvaluator.Chain(saved, upstreamId, succeeded: true);
+            if (reachable.Any(e => e.Id == entry.Id))
+                return "That would make a loop — the schedule it follows already waits for this one.";
+        }
+
+        return null;
+    }
+
+    private string? ScheduleTargetName(ScheduleEntry entry) =>
+        entry.Target == ScheduleTargetKind.Task
+            ? store.GetTask(entry.TargetId)?.Name
+            : store.GetCollection(entry.TargetId)?.Name;
+
+    /// <summary>
+    /// The schedule, as the sidebar shows it.
+    /// <para>
+    /// Every derived value — when an entry is next due, why, and what its success sets off — is
+    /// computed here by the same <see cref="TriggerEvaluator"/> the runner's <c>tick</c> obeys,
+    /// rather than reimplemented in JavaScript. A preview that could disagree with the run would
+    /// be worse than no preview.
+    /// </para>
+    /// </summary>
+    public Task PushScheduleAsync(string? error = null)
+    {
+        var entries = schedule.Load();
+        var listed = entries.Select(e =>
+        {
+            var verdict = TriggerEvaluator.Evaluate(e, clock);
+            return new
+            {
+                id = e.Id,
+                name = e.Name,
+                enabled = e.Enabled,
+                target = e.Target,
+                targetId = e.TargetId,
+                // Null when the collection or task has since been deleted — the row says so
+                // rather than showing a schedule that looks fine and cannot run.
+                targetName = ScheduleTargetName(e),
+                triggers = e.Triggers,
+                nextDueUtc = verdict.NextUtc,
+                due = verdict.Due,
+                reason = verdict.Reason,
+                lastRunUtc = e.LastRunUtc,
+                lastOutcome = e.LastOutcome,
+                chain = TriggerEvaluator.Chain(entries, e.Id, succeeded: true).Select(d => d.Id),
+            };
+        });
+
+        var json = JsonSerializer.Serialize(new
+        {
+            entries = listed,
+            error,
+            // Offered as a picker rather than typed: an unrecognised zone id would silently fall
+            // back to this machine's zone, which looks like the schedule working.
+            timeZones = TimeZoneInfo.GetSystemTimeZones()
+                .Select(z => new { id = z.Id, label = z.DisplayName }),
+            localTimeZoneId = TimeZoneInfo.Local.Id,
+        }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onSchedule({json})");
+    }
+
+    /// <summary>
+    /// The browser lanes running right now, in every Automata process — which in practice means
+    /// <c>automata-runner</c>'s.
+    /// <para>
+    /// This window has one browser pane and no pool, so it has no lanes of its own worth showing;
+    /// what it can do is watch the headless runner's. Deliberately read fresh on every poll rather
+    /// than cached: the whole value of the strip is that it is current.
+    /// </para>
+    /// </summary>
+    public Task PushLanesAsync()
+    {
+        var processes = liveLanes.List().Select(p => new
+        {
+            processId = p.ProcessId,
+            processName = p.ProcessName,
+            targetName = p.TargetName,
+            runId = p.RunId,
+            maxConcurrency = p.MaxConcurrency,
+            updatedUtc = p.UpdatedUtc,
+            lanes = p.Lanes.Select(l => new
+            {
+                laneId = l.LaneId,
+                profileKey = l.ProfileKey,
+                busy = l.Busy,
+                taskName = l.TaskName,
+                stepLabel = l.CurrentStepLabel,
+                startedUtc = l.StartedUtc,
+            }),
+        });
+        var json = JsonSerializer.Serialize(new { processes }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onLanes({json})");
+    }
+
+    /// <summary>
+    /// Recent runs, newest first. This is how the sidebar shows runs it did not start — including
+    /// ones the headless runner produced while the window was closed.
+    /// </summary>
+    public Task PushRunsAsync()
+    {
+        // A run that checkpointed on a long wait has an open manifest, which on its own is
+        // indistinguishable from one still executing. The parked record is what tells them apart,
+        // so it is joined in here rather than leaving the tab to show an hours-old run as
+        // "running" with no explanation.
+        var waiting = parkedRuns.List().ToDictionary(p => p.RunId, StringComparer.Ordinal);
+        var recent = runs.ListRuns(limit: 25).Select(r => new
+        {
+            id = r.RunId,
+            target = r.Target.ToString().ToLowerInvariant(),
+            name = r.TargetName,
+            trigger = r.Trigger,
+            startedUtc = r.StartedUtc,
+            endedUtc = r.EndedUtc,
+            // Null while in flight, which the panel renders as "running" rather than as a result.
+            success = r.Success,
+            summary = r.Summary,
+            parked = waiting.TryGetValue(r.RunId, out var park)
+                ? new
+                {
+                    resumeAtUtc = park.ResumeAtUtc,
+                    reason = park.Checkpoint.Reason,
+                    stepLabel = park.Checkpoint.StepLabel,
+                    taskName = park.TaskName,
+                    due = park.ResumeAtUtc <= clock.UtcNow,
+                }
+                : null,
+        });
+        var json = JsonSerializer.Serialize(new { root = runs.RootPath, runs = recent }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onRuns({json})");
+    }
+
+    /// <summary>
+    /// The datasets a task can fan out over or write into. Columns are sampled from each file so
+    /// the binding picker can offer real column names instead of asking anyone to type one.
+    /// </summary>
+    public Task PushDatasetsAsync()
+    {
+        var listed = datasets.List().Select(name => new
+        {
+            name,
+            columns = datasets.Columns(name),
+            rows = datasets.Read(name).Count,
+        });
+        var json = JsonSerializer.Serialize(
+            new { root = datasets.RootPath, datasets = listed }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onDatasets({json})");
     }
 
     private Task PushStepStatusAsync(string stepId, string status, string? message)

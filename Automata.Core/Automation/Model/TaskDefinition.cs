@@ -7,7 +7,8 @@ namespace Automata.Core.Automation.Model;
 /// </summary>
 public sealed class TaskDefinition
 {
-    public int SchemaVersion { get; set; } = 1;
+    /// <summary>Stamped on write by SchemaMigration; see that type for the migration policy.</summary>
+    public int SchemaVersion { get; set; } = 2;
     public string Id { get; set; } = Guid.NewGuid().ToString("n");
     public string CollectionId { get; set; } = "";
     public string Name { get; set; } = "";
@@ -19,4 +20,10 @@ public sealed class TaskDefinition
     public List<Step> Steps { get; set; } = [];
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset ModifiedUtc { get; set; }
+
+    /// <summary>
+    /// Engine settings overridden at this scope; null (the usual case) means "inherit everything".
+    /// Resolved through global -> collection -> task -> step by EngineSettingsResolver.
+    /// </summary>
+    public EngineSettingsOverride? Settings { get; set; }
 }

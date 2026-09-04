@@ -2,7 +2,9 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using Automata.Browser;
 using Automata.Core.Operator;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
@@ -18,16 +20,28 @@ public partial class MainWindow : Window
     private IBrowserSurface? targetBrowser;
     private CancellationTokenSource? runCts;
     private readonly AutomationController controller;
+    private readonly Automata.Core.Automation.Storage.AutomataSettingsStore settingsStore;
 
     public MainWindow()
     {
         InitializeComponent();
 
+        settingsStore = App.Services
+            .GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>();
+        RestoreSidebarWidth();
+
         controller = new AutomationController(
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.CollectionStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.ArchiveService>(),
-            App.Services.GetRequiredService<Automata.Core.Automation.Replay.ReplayEngine>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Execution.WorkflowEngine>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Storage.DatasetStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Storage.RunStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.ScheduleStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Execution.ParkedRunStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Execution.LiveLaneStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.IClock>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Flow.FlowAuthoringService>(),
             () => targetBrowser,
             () => TargetBrowser.CoreWebView2,
             script => ControlPanel.CoreWebView2 == null
@@ -46,6 +60,44 @@ public partial class MainWindow : Window
         _ = InitializeControlPanelAsync();
         _ = InitializeTargetBrowserAsync();
     }
+
+    /// <summary>
+    /// Restores the saved sidebar width, clamped to the column's own Min/Max so a hand-edited
+    /// settings.json can never wedge the layout into an unusable shape.
+    /// </summary>
+    private void RestoreSidebarWidth()
+    {
+        var saved = settingsStore.Load().SidebarWidth;
+        if (double.IsNaN(saved) || saved <= 0) return;
+        var clamped = Math.Clamp(saved, SidebarColumn.MinWidth, SidebarColumn.MaxWidth);
+        SidebarColumn.Width = new GridLength(clamped, GridUnitType.Pixel);
+    }
+
+    /// <summary>
+    /// Persists the current sidebar width. Called both when the splitter is released and when the
+    /// window closes — the second case is what catches a keyboard resize, which never raises a
+    /// drag event.
+    /// </summary>
+    private void SaveSidebarWidth()
+    {
+        try
+        {
+            var width = SidebarColumn.ActualWidth;
+            if (width <= 0) return;
+            var settings = settingsStore.Load();
+            if (Math.Abs(settings.SidebarWidth - width) < 0.5) return;
+            settings.SidebarWidth = width;
+            settingsStore.Save(settings);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A width preference is never worth failing a close over.
+        }
+    }
+
+    private void OnSplitterDragCompleted(object sender, DragCompletedEventArgs e) => SaveSidebarWidth();
+
+    private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e) => SaveSidebarWidth();
 
     /// <summary>Opt-in remote-debugging hook for tools/verify-ui.mjs. Null (today's exact
     /// behavior) unless the named env var holds a valid port number.</summary>

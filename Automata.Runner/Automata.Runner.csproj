@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net10.0-windows because it hosts WebView2. All the logic lives in Automata.Core so the
+         CLI stays unit-testable from the plain net10.0 test project. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Automata.Runner</RootNamespace>
+    <AssemblyName>automata-runner</AssemblyName>
+    <!-- Whole-number versioning: major-only bumps (1.0.0 -> 2.0.0 -> 3.0.0). Minor/patch stay 0. -->
+    <Version>3.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Automata.Core\Automata.Core.csproj" />
+    <ProjectReference Include="..\Automata.Browser\Automata.Browser.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

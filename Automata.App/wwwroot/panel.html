@@ -1,14 +1,19 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <title>Automata</title>
+<link rel="stylesheet" href="tokens.css" />
 <link rel="stylesheet" href="app.css" />
 <link rel="stylesheet" href="tooltip.css" />
 </head>
 <body>
   <header>
-    <h1>Automata</h1>
+    <div class="title-row">
+      <h1>Automata</h1>
+      <button id="btn-help" class="mini" aria-label="Help and keyboard shortcuts"
+              data-tooltip="Help and keyboard shortcuts">?</button>
+    </div>
     <div class="toolbar">
       <button id="btn-record" data-tooltip="Record your actions in the browser pane into steps">● Record</button>
       <button id="btn-stop" disabled data-tooltip="Stop recording and save the captured steps">■ Stop</button>
@@ -20,90 +25,132 @@
       <button id="btn-settings" data-tooltip="LLM provider, API keys, and appearance">⚙ Settings</button>
     </div>
     <div class="row">
-      <input id="url" type="text" placeholder="https://www.google.com" />
+      <input id="url" type="text" placeholder="https://www.google.com"
+             aria-label="Address to open in the browser pane" />
       <button id="go">Go</button>
     </div>
   </header>
 
-  <section id="rec-preview" class="hidden">
-    <label>Recording — live preview</label>
-    <div id="rec-steps"></div>
+  <!-- Polite live region for run progress and structural changes. Announcements are coalesced in
+       main.js so a burst of step events becomes one utterance instead of interrupting repeatedly. -->
+  <div id="sr-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- WAI-ARIA APG tabs with MANUAL activation: arrows move focus, Enter/Space selects. Inactive
+       panels use the real `hidden` attribute rather than a .hidden class, so their content leaves
+       the accessibility tree entirely instead of merely being invisible. -->
+  <div class="view-tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="tab-build" aria-controls="view-build" aria-selected="true" tabindex="0">Build</button>
+    <button role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1">Schedule</button>
+    <button role="tab" id="tab-data" aria-controls="view-data" aria-selected="false" tabindex="-1">Data</button>
+    <button role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1">Runs</button>
+  </div>
+
+  <section id="view-build" role="tabpanel" aria-labelledby="tab-build">
+    <section id="rec-preview" class="hidden" aria-labelledby="rec-preview-title">
+      <h2 class="section-label" id="rec-preview-title">Recording — live preview</h2>
+      <div id="rec-steps"></div>
+    </section>
+
+    <nav id="tree-section" aria-labelledby="tree-title">
+      <div class="section-head">
+        <h2 class="section-label" id="tree-title">Collections</h2>
+        <button id="btn-new-collection" class="mini">+ add collection</button>
+      </div>
+      <div id="tree" role="tree" aria-labelledby="tree-title"></div>
+    </nav>
+
+    <section id="editor" class="hidden"></section>
+
+    <details id="advanced">
+      <summary>Describe it instead (advanced)</summary>
+      <label class="inline"><input type="checkbox" id="allow-repair" /> allow LLM repair when a replayed step can't resolve (Run mode only)</label>
+      <textarea id="task" rows="3" aria-label="Describe what the task should do"
+                placeholder="e.g. search Google for wolf tshirts and click Images"></textarea>
+      <div class="row">
+        <button id="btn-draft" data-tooltip="Turn this description into real, editable steps you review first">✎ Draft steps</button>
+        <button id="run" class="secondary" data-tooltip="Run it now with an LLM driving the browser directly, without saving steps">Run once</button>
+        <button id="cancel" class="secondary" disabled>Cancel</button>
+      </div>
+    </details>
   </section>
 
-  <nav id="tree-section">
-    <div class="section-head">
-      <label>Collections</label>
-      <button id="btn-new-collection" class="mini">+ collection</button>
-    </div>
-    <div id="tree"></div>
-  </nav>
+  <section id="view-schedule" role="tabpanel" aria-labelledby="tab-schedule" hidden>
+    <p class="empty-state">Nothing is scheduled. A schedule runs a collection at a set time, or
+      once another collection has finished.</p>
+  </section>
 
-  <section id="editor" class="hidden"></section>
+  <section id="view-data" role="tabpanel" aria-labelledby="tab-data" hidden>
+    <p class="empty-state">No datasets yet. A dataset is a CSV or JSON file a task reads rows
+      from, or writes its results to.</p>
+  </section>
+
+  <section id="view-runs" role="tabpanel" aria-labelledby="tab-runs" hidden>
+    <p class="empty-state">No runs recorded yet. Finished and in-progress runs appear here,
+      including ones that started while this window was closed.</p>
+  </section>
 
   <div id="settings-modal" class="hidden">
-    <div class="modal-box wide">
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="section-head">
-        <label>⚙ Settings</label>
-        <button id="settings-modal-close" class="mini">✕</button>
+        <h2 class="section-label" id="settings-title">⚙ Settings</h2>
+        <button id="settings-modal-close" class="mini" aria-label="Close settings">✕</button>
       </div>
-      <label>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</label>
-      <div class="llm-row">
-        <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
-        <span class="llm-name">Claude</span>
-        <input type="password" id="key-claude" />
-        <button class="mini" data-clear="claude" data-tooltip="Clear the saved Claude key">✕</button>
-      </div>
-      <div class="llm-row">
-        <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
-        <span class="llm-name">OpenAI</span>
-        <input type="password" id="key-openai" />
-        <button class="mini" data-clear="openai" data-tooltip="Clear the saved OpenAI key">✕</button>
-      </div>
-      <div class="llm-row">
-        <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
-        <span class="llm-name">Gemini</span>
-        <input type="password" id="key-gemini" />
-        <button class="mini" data-clear="gemini" data-tooltip="Clear the saved Gemini key">✕</button>
-      </div>
-      <div class="llm-row">
-        <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
-        <span class="llm-name">Kimi</span>
-        <input type="password" id="key-kimi" />
-        <button class="mini" data-clear="kimi" data-tooltip="Clear the saved Kimi key">✕</button>
-      </div>
+      <fieldset class="llm-group">
+        <legend>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</legend>
+        <div class="llm-row">
+          <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
+          <label class="llm-name" for="llm-claude">Claude</label>
+          <input type="password" id="key-claude" aria-label="Claude API key" />
+          <button class="mini" data-clear="claude" aria-label="Clear the saved Claude key" data-tooltip="Clear the saved Claude key">✕</button>
+        </div>
+        <div class="llm-row">
+          <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
+          <label class="llm-name" for="llm-openai">OpenAI</label>
+          <input type="password" id="key-openai" aria-label="OpenAI API key" />
+          <button class="mini" data-clear="openai" aria-label="Clear the saved OpenAI key" data-tooltip="Clear the saved OpenAI key">✕</button>
+        </div>
+        <div class="llm-row">
+          <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
+          <label class="llm-name" for="llm-gemini">Gemini</label>
+          <input type="password" id="key-gemini" aria-label="Gemini API key" />
+          <button class="mini" data-clear="gemini" aria-label="Clear the saved Gemini key" data-tooltip="Clear the saved Gemini key">✕</button>
+        </div>
+        <div class="llm-row">
+          <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
+          <label class="llm-name" for="llm-kimi">Kimi</label>
+          <input type="password" id="key-kimi" aria-label="Kimi API key" />
+          <button class="mini" data-clear="kimi" aria-label="Clear the saved Kimi key" data-tooltip="Clear the saved Kimi key">✕</button>
+        </div>
+      </fieldset>
       <div class="row settings-row">
         <span class="key-status">selected provider runs first; others are fallbacks</span>
         <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
       </div>
+      <div class="row settings-row">
+        <span class="key-status">timeouts, retries and self-heal for every run</span>
+        <button id="set-engine-defaults" class="mini"
+                data-tooltip="Engine defaults that every collection, task and step inherits">Engine defaults…</button>
+      </div>
       <div class="field">
-        <span>Border radius</span>
-        <input type="range" id="set-radius" min="0" max="10" step="1" value="5" />
+        <span id="lbl-radius">Border radius</span>
+        <input type="range" id="set-radius" min="0" max="10" step="1" value="5" aria-labelledby="lbl-radius" />
         <span id="set-radius-value" class="key-status">5px</span>
       </div>
     </div>
   </div>
 
-  <details id="advanced">
-    <summary>AI task (advanced — free-text, interpreted by an LLM)</summary>
-    <label class="inline"><input type="checkbox" id="allow-repair" /> allow LLM repair when a replayed step can't resolve (Run mode only)</label>
-    <textarea id="task" rows="3" placeholder="e.g. search for 'cats' and report the first 5 result titles"></textarea>
-    <div class="row">
-      <button id="run">Run AI task</button>
-      <button id="cancel" disabled>Cancel</button>
-    </div>
-  </details>
-
-  <section class="log-section">
-    <label>Log</label>
-    <div id="log"></div>
+  <section class="log-section" aria-labelledby="log-title">
+    <h2 class="section-label" id="log-title">Log</h2>
+    <div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>
   </section>
 
   <div id="modal" class="hidden">
-    <div class="modal-box">
-      <label id="modal-title">Rename</label>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 class="section-label" id="modal-title">Rename</h2>
       <p id="modal-msg" class="hidden"></p>
       <div id="modal-list" class="hidden"></div>
-      <input type="text" id="modal-input" />
+      <div id="modal-form" class="hidden"></div>
+      <input type="text" id="modal-input" aria-labelledby="modal-title" />
       <div class="row">
         <button id="modal-ok">Rename</button>
         <button id="modal-cancel" class="secondary">Cancel</button>
@@ -112,6 +159,6 @@
   </div>
 
 <script src="tooltip.js"></script>
-<script src="panel.js"></script>
+<script type="module" src="main.js"></script>
 </body>
 </html>

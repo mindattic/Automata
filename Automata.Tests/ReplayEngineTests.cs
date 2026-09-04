@@ -1,5 +1,6 @@
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Replay;
+using Automata.Core.Automation.Settings;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
 
@@ -405,5 +406,554 @@ public class ReplayEngineTests
         Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Healed));
         Assert.That(step.Target!.CssSelector, Is.EqualTo("#healed"));
         Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Summary, Does.Contain("self-healed"));
+    }
+
+    // ---- scoped settings: retry and continue-on-error -------------------------------------------
+
+    private const string ResolveNotFound = """
+        { "found": false, "unique": false, "strategy": null, "ambiguous": false, "candidateCount": 0 }
+        """;
+
+    /// <summary>
+    /// Floor settings with a 5ms step budget. The resolver breaks out of its poll loop as soon as
+    /// elapsed + PollIntervalMs exceeds the budget, so one failed attempt costs exactly ONE
+    /// __automataResolve eval — which is what lets these tests count attempts.
+    /// </summary>
+    private static ResolvedSettings FastFloor() =>
+        EngineSettingsResolver.Floor() with { DefaultStepTimeoutMs = 5 };
+
+    private static ReplayOptions OptionsWith(ResolvedSettings settings) => new()
+    {
+        DefaultStepTimeoutMs = 300,
+        SettlePollMs = 1,
+        Control = new ReplayControl(),
+        ResolveForStep = _ => settings,
+    };
+
+    private static FakeBrowserSurface AlwaysUnresolvable(Action? onResolve = null) => new()
+    {
+        DefaultEvalResponse = script =>
+        {
+            if (!script.Contains("__automataResolve(")) return DefaultResponder(script);
+            onResolve?.Invoke();
+            return ResolveNotFound;
+        },
+    };
+
+    private static TaskDefinition OneClick(string id = "s1") => new()
+    {
+        Name = "T",
+        Steps = [new Step { Id = id, Action = StepAction.Click, Label = "Click", Target = Target() }],
+    };
+
+    [Test]
+    public async Task FailingStep_WithRetry_SucceedsOnTheSecondAttempt()
+    {
+        var resolveCalls = 0;
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = script =>
+            {
+                if (!script.Contains("__automataResolve(")) return DefaultResponder(script);
+                return ++resolveCalls == 1 ? ResolveNotFound : ResolveFoundCss;
+            },
+        };
+        var settings = FastFloor() with { Retry = new RetryPolicy { MaxAttempts = 2, DelayMs = 1 } };
+
+        var events = await RunToEnd(Engine(), OneClick(), OptionsWith(settings), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolveCalls, Is.EqualTo(2));
+            Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Passed));
+            Assert.That(events.OfType<StepEvent.Log>().Any(l => l.Message.Contains("retrying")), Is.True,
+                "the retry should be visible in the run log, not silent");
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task FailingStep_ExhaustsTheRetryBudgetThenFailsTheRun()
+    {
+        var resolveCalls = 0;
+        var browser = AlwaysUnresolvable(() => resolveCalls++);
+        var settings = FastFloor() with { Retry = new RetryPolicy { MaxAttempts = 3, DelayMs = 1 } };
+
+        var events = await RunToEnd(Engine(), OneClick(), OptionsWith(settings), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolveCalls, Is.EqualTo(3), "MaxAttempts counts the first try, not extra tries");
+            Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Failed));
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.False);
+        });
+    }
+
+    /// <summary>Regression guard on the floor: without scoped settings, nothing retries.</summary>
+    [Test]
+    public async Task WithNoScopedSettings_AFailingStepIsAttemptedExactlyOnce()
+    {
+        var resolveCalls = 0;
+        var browser = AlwaysUnresolvable(() => resolveCalls++);
+        var task = OneClick();
+        task.Steps[0].TimeoutMs = 5;
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(resolveCalls, Is.EqualTo(1));
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Failed));
+    }
+
+    [Test]
+    public async Task FailingStep_WithContinueOnStepError_StillRunsTheNextSibling()
+    {
+        var browser = AlwaysUnresolvable();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step { Id = "bad", Action = StepAction.Click, Label = "Bad", Target = Target() },
+                new Step { Id = "good", Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" },
+            ],
+        };
+
+        var events = await RunToEnd(
+            Engine(), task, OptionsWith(FastFloor() with { ContinueOnStepError = true }), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed.Select(c => c.StepId), Is.EqualTo(new[] { "bad", "good" }));
+            Assert.That(completed[0].Status, Is.EqualTo(StepStatus.Failed));
+            Assert.That(completed[1].Status, Is.EqualTo(StepStatus.Passed));
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.False,
+                "carrying on past a failure must not report the run as successful");
+        });
+    }
+
+    /// <summary>
+    /// Continue-on-error is about SIBLINGS. A failed step's own children still never run — its
+    /// post-condition did not hold, so its substeps have nothing to stand on.
+    /// </summary>
+    [Test]
+    public async Task FailingStep_WithContinueOnStepError_StillSkipsItsOwnChildren()
+    {
+        var browser = AlwaysUnresolvable();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "bad", Action = StepAction.Click, Label = "Bad", Target = Target(),
+                    Children = [new Step { Id = "child", Action = StepAction.Navigate, Url = "https://x.example" }],
+                },
+                new Step { Id = "sibling", Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" },
+            ],
+        };
+
+        var events = await RunToEnd(
+            Engine(), task, OptionsWith(FastFloor() with { ContinueOnStepError = true }), browser);
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Select(c => c.StepId),
+            Is.EqualTo(new[] { "bad", "sibling" }));
+    }
+
+    [Test]
+    public async Task PerStepTimeout_StillBeatsTheResolvedScopeChain()
+    {
+        var browser = AlwaysUnresolvable();
+        var task = OneClick();
+        task.Steps[0].TimeoutMs = 5;
+
+        var started = Environment.TickCount64;
+        await RunToEnd(Engine(), task, OptionsWith(EngineSettingsResolver.Floor()), browser);
+
+        Assert.That(Environment.TickCount64 - started, Is.LessThan(5_000),
+            "a 5ms per-step timeout must win over the resolved 10s default");
+    }
+
+    // ---- v3 phase 4: waits, bindings, outputs, masking ------------------------------------------
+
+    /// <summary>A fixed-offset zone, so "today or tomorrow" never depends on the test machine.</summary>
+    private static TimeZoneInfo PlusTwo() =>
+        TimeZoneInfo.CreateCustomTimeZone("Automata/Test+2", TimeSpan.FromHours(2), "UTC+2", "UTC+2");
+
+    /// <summary>
+    /// A zone that springs forward at 02:00 on 1 March, so the DST gap is deterministic instead of
+    /// depending on whatever the machine's timezone database happens to contain.
+    /// </summary>
+    private static TimeZoneInfo GapZone()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 2, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            DateTime.MinValue.Date, DateTime.MaxValue.Date, TimeSpan.FromHours(1), start, end);
+        return TimeZoneInfo.CreateCustomTimeZone(
+            "Automata/TestGap", TimeSpan.Zero, "Gap", "Gap Standard", "Gap Daylight", [rule]);
+    }
+
+    [Test]
+    public void MillisecondsUntil_UsesTodayWhenTheTimeIsStillAhead()
+    {
+        var now = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);   // 02:00 local
+
+        var ms = WaitPlan.MillisecondsUntil(new TimeOnly(9, 0), PlusTwo(), now);
+
+        Assert.That(ms, Is.EqualTo(TimeSpan.FromHours(7).TotalMilliseconds));
+    }
+
+    [Test]
+    public void MillisecondsUntil_RollsToTomorrowWhenTheTimeHasPassed()
+    {
+        var now = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);   // 02:00 local
+
+        var ms = WaitPlan.MillisecondsUntil(new TimeOnly(1, 0), PlusTwo(), now);
+
+        Assert.That(ms, Is.EqualTo(TimeSpan.FromHours(23).TotalMilliseconds));
+    }
+
+    [Test]
+    public void MillisecondsUntil_SpringForwardGapTakesTheFirstValidInstant()
+    {
+        // 02:30 does not exist on 1 March in this zone; the wait lands at 03:00 local (02:00 UTC).
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var ms = WaitPlan.MillisecondsUntil(new TimeOnly(2, 30), GapZone(), now);
+
+        Assert.That(ms, Is.EqualTo(TimeSpan.FromHours(2).TotalMilliseconds));
+    }
+
+    [Test]
+    public async Task WaitStep_ForADurationPasses()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "w", Action = StepAction.Wait, Label = "Settle",
+                    Wait = new WaitSpec { Mode = WaitMode.Duration, DurationMs = 5 },
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(completed.Status, Is.EqualTo(StepStatus.Passed));
+        Assert.That(completed.Message, Does.Contain("waited"));
+    }
+
+    [Test]
+    public async Task WaitStep_WithAnUnknownTimeZone_FailsWithTheZoneNamed()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "w", Action = StepAction.Wait,
+                    Wait = new WaitSpec
+                    {
+                        Mode = WaitMode.UntilTimeOfDay,
+                        TimeOfDay = new TimeOnly(9, 0),
+                        TimeZoneId = "Mars/Olympus_Mons",
+                    },
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Message,
+            Does.Contain("Mars/Olympus_Mons"));
+    }
+
+    [Test]
+    public async Task WaitStep_UntilAConditionSaysItNeedsTheWorkflowEngine()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "w", Action = StepAction.Wait, Wait = new WaitSpec { Mode = WaitMode.UntilCondition } }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(completed.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(completed.Message, Does.Contain("workflow engine"));
+    }
+
+    /// <summary>
+    /// The orchestrated actions are modelled so the editor and the authoring layer can produce
+    /// them, but a single-task replay has no dataset access or lane pool. Saying so beats the
+    /// switch default's misleading "unsupported action".
+    /// </summary>
+    [TestCase(StepAction.ForEach)]
+    [TestCase(StepAction.If)]
+    [TestCase(StepAction.RunTask)]
+    [TestCase(StepAction.WriteDataset)]
+    public async Task OrchestratedActions_AreRejectedWithAClearReason(StepAction action)
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition { Name = "T", Steps = [new Step { Id = "s", Action = action }] };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(completed.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(completed.Message, Does.Contain("workflow engine"));
+    }
+
+    /// <summary>A responder whose reads all return the same text, so an extracted value can be
+    /// followed through a binding into a later step's typed value.</summary>
+    private static FakeBrowserSurface EchoingBrowser(string text) => new()
+    {
+        DefaultEvalResponse = script =>
+        {
+            if (script.Contains("isProcessing")) return """{ "isProcessing": false }""";
+            if (script.Contains("__automataResolve(")) return ResolveFoundCss;
+            if (script.Contains("textContent")) return $$"""{ "ok": true, "value": "{{text}}" }""";
+            if (script.Contains("document.activeElement")) return $$"""{ "value": "{{text}}" }""";
+            return "{}";
+        },
+    };
+
+    [Test]
+    public async Task ExtractedOutput_FeedsALaterStepThroughABinding()
+    {
+        var browser = EchoingBrowser("hello world");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "read", Action = StepAction.ExtractText, Label = "Read total", Target = Target(),
+                    Outputs = [new OutputField { Name = "total" }],
+                },
+                new Step
+                {
+                    Id = "write", Action = StepAction.TypeText, Label = "Type it", Target = Target(),
+                    Value = "ignored literal",
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Value"] = new() { Kind = BindingKind.StepOutput, SourceStepId = "read", OutputField = "total" },
+                    },
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+            Assert.That(browser.Calls.Any(c => c.Method == "TypeText" && c.Args == "hello world"), Is.True,
+                "the bound value should have been typed, not the literal beside it");
+            Assert.That(browser.Calls.Any(c => c.Args == "ignored literal"), Is.False);
+        });
+    }
+
+    [Test]
+    public async Task Binding_WrapsTheValueInItsPrefixAndSuffix()
+    {
+        var browser = EchoingBrowser("sku1");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "read", Action = StepAction.ExtractText, Target = Target(),
+                    Outputs = [new OutputField { Name = "sku" }],
+                },
+                new Step
+                {
+                    Id = "go", Action = StepAction.Navigate, Label = "Open it",
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Url"] = new()
+                        {
+                            Kind = BindingKind.StepOutput, SourceStepId = "read", OutputField = "sku",
+                            Prefix = "https://shop.example/item/", Suffix = "?ref=automata",
+                        },
+                    },
+                },
+            ],
+        };
+
+        await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(browser.Calls.Any(c => c.Method == "Navigate"
+            && c.Args == "https://shop.example/item/sku1?ref=automata"), Is.True);
+    }
+
+    [Test]
+    public async Task Binding_ToAnOutputThatHasNotBeenProducedYet_FailsWithAReadableReason()
+    {
+        var browser = EchoingBrowser("x");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "write", Action = StepAction.TypeText, Target = Target(),
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Value"] = new() { Kind = BindingKind.StepOutput, SourceStepId = "later", OutputField = "total" },
+                    },
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(completed.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(completed.Message, Does.Contain("has not been produced yet"));
+    }
+
+    [Test]
+    public async Task Binding_ToAnEnvironmentVariableResolves()
+    {
+        var name = "AUTOMATA_TEST_" + Guid.NewGuid().ToString("n")[..8];
+        Environment.SetEnvironmentVariable(name, "from-env");
+        try
+        {
+            var browser = EchoingBrowser("from-env");
+            var task = new TaskDefinition
+            {
+                Name = "T",
+                Steps =
+                [
+                    new Step
+                    {
+                        Id = "write", Action = StepAction.TypeText, Target = Target(),
+                        Bindings = new Dictionary<string, BindingRef>
+                        {
+                            ["Value"] = new() { Kind = BindingKind.EnvVar, EnvVarName = name },
+                        },
+                    },
+                ],
+            };
+
+            await RunToEnd(Engine(), task, Options(), browser);
+
+            Assert.That(browser.Calls.Any(c => c.Method == "TypeText" && c.Args == "from-env"), Is.True);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, null);
+        }
+    }
+
+    [Test]
+    public async Task ADatasetBindingWithNoRowInScope_SaysSoRatherThanFallingBackToTheLiteral()
+    {
+        var browser = EchoingBrowser("x");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "write", Action = StepAction.TypeText, Target = Target(), Value = "literal",
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Value"] = new() { Kind = BindingKind.DatasetColumn, DatasetName = "skus.csv", ColumnName = "sku" },
+                    },
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Message,
+            Does.Contain("enclosing for-each"));
+        Assert.That(browser.Calls.Any(c => c.Args == "literal"), Is.False,
+            "an unresolvable binding must not silently fall back to the literal beside it");
+    }
+
+    /// <summary>
+    /// A masked step withholds its value entirely rather than scrubbing the message: a partial
+    /// scrub that misses one interpolation is worse than a generic message.
+    /// </summary>
+    [Test]
+    public async Task MaskedStep_WithholdsItsExtractedTextFromTheEventStream()
+    {
+        var browser = EchoingBrowser("hunter2");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "read", Action = StepAction.ExtractText, Target = Target(), Masked = true,
+                    Outputs = [new OutputField { Name = "secret" }],
+                },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed.Status, Is.EqualTo(StepStatus.Passed));
+            Assert.That(completed.ExtractedText, Is.Not.EqualTo("hunter2"));
+            Assert.That(completed.Message, Is.Null);
+            Assert.That(events.Any(e => e.ToString()!.Contains("hunter2")), Is.False,
+                "the secret must not appear anywhere in the event stream");
+        });
+    }
+
+    /// <summary>Masking hides a value from watchers, not from the run itself - a later step can
+    /// still bind to it.</summary>
+    [Test]
+    public async Task MaskedStep_StillPublishesItsOutputForBinding()
+    {
+        var browser = EchoingBrowser("hunter2");
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "read", Action = StepAction.ExtractText, Target = Target(), Masked = true,
+                    Outputs = [new OutputField { Name = "secret" }],
+                },
+                new Step
+                {
+                    Id = "use", Action = StepAction.TypeText, Target = Target(),
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Value"] = new() { Kind = BindingKind.StepOutput, SourceStepId = "read", OutputField = "secret" },
+                    },
+                },
+            ],
+        };
+
+        await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(browser.Calls.Any(c => c.Method == "TypeText" && c.Args == "hunter2"), Is.True);
     }
 }

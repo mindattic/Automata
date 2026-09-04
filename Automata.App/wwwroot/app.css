@@ -1,78 +1,130 @@
 * { box-sizing: border-box; }
 
-/* Set live from the Border Radius setting (0–10px, default 5). */
-:root { --radius: 5px; }
-
 body {
   margin: 0;
-  padding: 12px;
-  font-family: Segoe UI, sans-serif;
-  font-size: 13px;
-  background: #1e1e1e;
-  color: #ddd;
+  padding: var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  background: var(--color-bg-2);
+  color: var(--color-fg);
 }
 
 h1 {
-  font-size: 16px;
-  margin: 0 0 10px;
+  font-size: var(--text-lg);
+  margin: 0;
 }
 
 section, nav, header, details {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
-label {
+/* ---- accessibility primitives ---- */
+
+/* Visible focus indicator. There was none before — Chromium's UA default was all this app had,
+   and the custom div-based rows weren't focusable at all, so they showed nothing. */
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Full-bleed tree rows: an outset ring is clipped by the tree's overflow container and by the
+   sidebar's own edge, so it goes inside the row instead. */
+.node:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Screen-reader-only: stays in the accessibility tree (unlike .hidden / display:none) while
+   taking no visual space. Used for the live status region. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Section headings — <h2> now, so the panel has a real document outline (SC 1.3.1), styled
+   identically to the <label>s they replaced. */
+label, .section-label, .llm-group > legend {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #999;
-  margin-bottom: 4px;
+  color: var(--color-fg-muted);
+  margin: 0 0 var(--space-1);
+  padding: 0;
+  font-weight: normal;
 }
 
 input[type=text], input[type=number], input[type=password], textarea, select {
   width: 100%;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: #ddd;
+  background: var(--color-bg-4);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-fg);
   padding: 5px 6px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-md);
   resize: vertical;
   border-radius: var(--radius);
 }
 
 .row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 6px;
 }
 
 button {
-  background: #3c82ff;
+  background: var(--color-accent-bg);
   border: none;
   color: white;
-  padding: 6px 12px;
+  padding: 6px var(--space-3);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-md);
   border-radius: var(--radius);
+  min-height: var(--target-min);
 }
 
-button.danger { background: #b03a3a; }
+button:hover:not(:disabled) { background: var(--color-accent-bg-hover); }
+
+button.danger { background: var(--color-danger-bg); }
 
 button:disabled {
-  background: #555;
+  background: var(--color-disabled-bg);
   cursor: default;
 }
 
+/* Row/inline actions. min-width/min-height meet SC 2.5.8's 24x24 pointer-target minimum —
+   the flex centring keeps the glyph optically centred now that the box is taller than the text. */
 button.mini {
   padding: 1px 6px;
-  font-size: 11px;
-  background: #3a3a3a;
-  color: #bbb;
+  font-size: var(--text-xs);
+  background: var(--color-mini-bg);
+  color: var(--color-mini-fg);
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
 }
 
-button.mini:hover { background: #4a4a4a; color: #fff; }
+button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
+
+/* ---- header ---- */
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
 
 /* ---- toolbar ---- */
 
@@ -81,15 +133,66 @@ button.mini:hover { background: #4a4a4a; color: #fff; }
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 5px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
-.toolbar button { padding: 5px 4px; font-size: 12px; width: 100%; }
+.toolbar button { padding: 5px 4px; font-size: var(--text-sm); width: 100%; }
 
-#btn-record { background: #b03a3a; }
-#btn-record:disabled { background: #555; }
-#btn-stop:not(:disabled) { background: #b03a3a; }
-#btn-continue:not(:disabled) { background: #7a4fd0; }
+#btn-record { background: var(--color-danger-bg); }
+#btn-record:hover:not(:disabled) { background: var(--color-danger-bg); }
+#btn-record:disabled { background: var(--color-disabled-bg); }
+#btn-stop:not(:disabled) { background: var(--color-danger-bg); }
+#btn-continue:not(:disabled) { background: var(--color-info-bg); }
+
+/* ---- view tabs ---- */
+
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Reset the primary-button fill these inherit from the base button rule. */
+.view-tabs [role="tab"] {
+  background: transparent;
+  color: var(--color-fg-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  min-height: var(--target-min);
+}
+
+.view-tabs [role="tab"]:hover:not([aria-selected="true"]) {
+  background: var(--color-bg-3);
+  color: var(--color-fg);
+}
+
+/* Selection is carried by weight and an underline as well as colour, so it survives both a
+   colour-blind reader and a forced-colours mode (SC 1.4.1). */
+.view-tabs [role="tab"][aria-selected="true"] {
+  background: transparent;
+  color: var(--color-fg-strong);
+  font-weight: 600;
+  border-bottom-color: var(--color-accent);
+}
+
+/* The tab panels are toggled with the real `hidden` attribute; belt-and-braces in case a later
+   rule ever sets an explicit display on a section. */
+[hidden] { display: none !important; }
+
+.empty-state {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-fg-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
 
 /* ---- tree ---- */
 
@@ -97,121 +200,150 @@ button.mini:hover { background: #4a4a4a; color: #fff; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 #tree {
   max-height: 34vh;
   overflow-y: auto;
-  background: #171717;
-  border: 1px solid #333;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
 }
 
+/* min-height reserves room for a 24x24 row button, so revealing .node-btns on hover/focus never
+   shifts the row's height — but the arithmetic has to include this rule's own padding, because
+   box-sizing is border-box. At 3px the content box was 28-6 = 22px, two pixels short of the
+   button, so every row grew to 30px the moment it was hovered or focused and nudged everything
+   below it down. 2px leaves exactly 24px, and the row stays 28px throughout — the shift goes
+   without any row getting taller than it already was. */
 .node {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 6px;
+  padding: 2px 6px;
+  min-height: 28px;
   cursor: pointer;
   border-left: 2px solid transparent;
   white-space: nowrap;
   overflow: hidden;
 }
 
-.node:hover { background: #242424; }
-.node.selected { background: #26354e; border-left-color: #3c82ff; }
+.node:hover { background: var(--color-bg-3); }
+.node.selected { background: var(--color-bg-sel); border-left-color: var(--color-accent); }
 
 .node .name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .node.collection .name { font-weight: 600; }
-.node.task { padding-left: 20px; color: #cfcfcf; }
-.node.step { font-size: 12px; color: #b5b5b5; }
+.node.task { padding-left: 20px; color: var(--color-fg-task); }
+.node.step { font-size: var(--text-sm); color: var(--color-fg-step); }
 
-.node .twist { width: 12px; color: #888; flex: none; }
+.node .twist { width: 12px; color: var(--color-fg-subtle); flex: none; }
 .node .icon { width: 16px; flex: none; text-align: center; }
 .node-btns { display: none; gap: 3px; flex: none; }
-.node:hover .node-btns, .section-head .node-btns { display: inline-flex; }
+
+/* :focus-within is what makes the row actions keyboard-reachable — a display:none button can't
+   take focus, so the row gaining focus has to reveal them before Tab can get there. */
+.node:hover .node-btns,
+.node:focus-within .node-btns,
+.section-head .node-btns { display: inline-flex; }
 
 .node .status { width: 18px; flex: none; text-align: center; }
-.node.st-running .status { color: #e0b341; }
-.node.st-passed .status, .node.st-healed .status { color: #4fc26b; }
-.node.st-failed .status { color: #e05c5c; }
-.node.st-failed { background: #3a2020; }
-.node.st-skipped .status { color: #999; }
-.node.st-paused .status { color: #a583ec; }
+.node.st-running .status { color: var(--color-warning); }
+.node.st-passed .status, .node.st-healed .status { color: var(--color-success); }
+.node.st-failed .status { color: var(--color-danger); }
+.node.st-failed { background: var(--color-bg-fail); }
+.node.st-skipped .status { color: var(--color-fg-subtle); }
+.node.st-paused .status { color: var(--color-info); }
 
-.flag.commit { color: #e0b341; }
-.flag.pause { color: #a583ec; }
+.flag.commit { color: var(--color-warning); }
+.flag.pause { color: var(--color-info); }
 
-.node.drop-before { box-shadow: inset 0 2px 0 #3c82ff; }
-.node.drop-after { box-shadow: inset 0 -2px 0 #3c82ff; }
-.node.drop-into { background: #26354e; }
+.node.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
+.node.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
+.node.drop-into { background: var(--color-bg-sel); }
 
 input.rename {
   flex: 1;
   padding: 1px 4px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
-.empty { padding: 8px; color: #777; font-size: 12px; }
+.empty { padding: var(--space-2); color: var(--color-fg-subtle); font-size: var(--text-sm); }
 
 /* ---- insert-between-steps zones ---- */
 
+/* Mouse-only shortcut, and deliberately so: at 10px it cannot meet SC 2.5.8's 24x24 minimum,
+   and growing it would add ~14px to every step row. It qualifies under the criterion's
+   "Equivalent" exception instead — the 24x24 ＋ button on each step row performs the same
+   insertion and is fully keyboard-operable — so this stays aria-hidden and unfocusable. */
+/* A fixed-height strip with the label centred in it. Flex rather than a block flow so revealing
+   the label cannot move anything: the box is 10px tall either way, and the label is centred
+   inside it instead of establishing a line box of its own. */
 .insert-zone {
   height: 10px;
   cursor: pointer;
   overflow: hidden;
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
+/* Three layers, back to front: the line, an opaque patch the width of the label, then the label.
+   The patch is what stops the line striking through the text — the alternative, breaking the line
+   into two absolutely-positioned halves, would have to know the text's width. */
 .insert-zone span {
   display: none;
   position: relative;
+  z-index: 1;
+  flex: none;
+  background: var(--color-bg-1);
+  padding: 0 var(--space-1);
   font-size: 10px;
   line-height: 10px;
-  color: #e08a2e;
+  color: var(--color-insert);
 }
 
-/* A plain hr-style line centered in the fixed-height strip — no box/border, so hovering never
-   shifts spacing between steps, just reveals the line (and the label above it). */
+/* A plain hr-style line centred in the strip — no box/border, so hovering never shifts spacing
+   between steps, just reveals the line and the label sitting on it. */
 .insert-zone::after {
   content: '';
   position: absolute;
-  left: 8px;
-  right: 8px;
+  z-index: 0;
+  left: var(--space-2);
+  right: var(--space-2);
   top: 50%;
   height: 1px;
   background: transparent;
   transform: translateY(-50%);
 }
 
-.insert-zone:hover::after { background: #e08a2e; }
+.insert-zone:hover::after { background: var(--color-insert); }
 .insert-zone:hover span { display: block; }
 
 /* Marks the specific gap currently armed/targeted by an in-progress record-at-gap run —
    independent of mouse position, so it stays visible while the user performs the action. */
-.insert-zone.gap-active::after { background: #a583ec; }
-.insert-zone.gap-active span { display: block; color: #a583ec; }
+.insert-zone.gap-active::after { background: var(--color-info); }
+.insert-zone.gap-active span { display: block; color: var(--color-info); }
 
 /* ---- step editor ---- */
 
 #editor {
-  background: #171717;
-  border: 1px solid #333;
-  padding: 8px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  padding: var(--space-2);
 }
 
 .field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-bottom: 6px;
 }
 
 .field > span {
   width: 92px;
   flex: none;
-  font-size: 11px;
-  color: #999;
+  font-size: var(--text-xs);
+  color: var(--color-fg-muted);
 }
 
 .field.checks { gap: 14px; }
@@ -219,35 +351,42 @@ input.rename {
 label.inline {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   text-transform: none;
   letter-spacing: 0;
-  font-size: 12px;
-  color: #ccc;
+  font-size: var(--text-sm);
+  color: var(--color-fg-soft);
   margin: 0;
 }
 
-.timeout { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #999; }
+.timeout {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-fg-muted);
+}
+
 .timeout input { width: 80px; }
 
 details.target summary {
   cursor: pointer;
-  font-size: 12px;
-  color: #9db8e0;
+  font-size: var(--text-sm);
+  color: var(--color-fg-link);
   margin: 6px 0;
 }
 
 details.target code {
-  background: #2a2a2a;
-  padding: 1px 4px;
-  font-size: 11px;
+  background: var(--color-bg-4);
+  padding: 1px var(--space-1);
+  font-size: var(--text-xs);
 }
 
 /* ---- recording preview ---- */
 
 #rec-preview {
-  border: 1px solid #b03a3a;
-  background: #241717;
+  border: 1px solid var(--color-danger-bg);
+  background: var(--color-bg-rec);
   padding: 6px;
 }
 
@@ -257,8 +396,8 @@ details.target code {
 
 details > summary {
   cursor: pointer;
-  font-size: 12px;
-  color: #999;
+  font-size: var(--text-sm);
+  color: var(--color-fg-muted);
 }
 
 details[open] > summary { margin-bottom: 6px; }
@@ -271,11 +410,11 @@ details[open] > summary { margin-bottom: 6px; }
 #log {
   height: 150px;
   overflow-y: auto;
-  background: #141414;
-  border: 1px solid #333;
-  padding: 8px;
-  font-family: Consolas, monospace;
-  font-size: 12px;
+  background: var(--color-bg-0);
+  border: 1px solid var(--color-border);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   white-space: pre-wrap;
 }
 
@@ -294,12 +433,14 @@ details[open] > summary { margin-bottom: 6px; }
 }
 
 .modal-box {
-  background: #242424;
-  border: 1px solid #555;
+  background: var(--color-bg-3);
+  border: 1px solid var(--color-border-modal);
   padding: 14px;
   width: 300px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
   border-radius: var(--radius);
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .modal-box.wide { width: 420px; }
@@ -307,24 +448,356 @@ details[open] > summary { margin-bottom: 6px; }
 #modal-list {
   max-height: 55vh;
   overflow-y: auto;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 button.action-pick {
   display: block;
   width: 100%;
   text-align: left;
-  background: #2e2e2e;
-  color: #ddd;
-  padding: 6px 8px;
+  background: var(--color-pick-bg);
+  color: var(--color-fg);
+  padding: 6px var(--space-2);
   margin-bottom: 3px;
 }
 
-button.action-pick:hover { background: #26354e; }
-button.action-pick b { color: #9db8e0; margin-right: 8px; }
-button.action-pick span { font-size: 11px; color: #999; }
+button.action-pick:hover { background: var(--color-bg-sel); }
+button.action-pick b { color: var(--color-fg-link); margin-right: var(--space-2); }
+button.action-pick span { font-size: var(--text-xs); color: var(--color-fg-muted); }
+
+/* ---- bindings ---- */
+
+/* Hidden until its field is hovered or focused, exactly like the tree's row buttons: a user who
+   never reaches for it never learns bindings exist. display:none rather than opacity, so it stays
+   out of the accessibility tree until it is actually available. */
+/* Qualified with .mini because `button.mini { display: inline-flex }` above outranks a bare
+   `.binding-toggle` on specificity and would keep it permanently visible. */
+button.mini.binding-toggle { display: none; }
+.field:hover button.mini.binding-toggle,
+.field:focus-within button.mini.binding-toggle { display: inline-flex; }
+
+/* A bound value reads as a filled pill with a link glyph and its source spelled out — shape,
+   glyph and text, not colour alone. */
+.chip.bound {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--target-min);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: 999px;
+  background: var(--color-bg-sel);
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chip.bound:hover { background: var(--color-bg-3); }
+
+/* The literal text wrapped around a bound value. Narrow on purpose — this is a prefix/suffix,
+   not a formula box. */
+.affix { width: 70px; flex: none; font-size: var(--text-xs); }
+
+/* Secondary choices in a picker, collapsed so the primary list is what a new user sees. */
+.pick-group { margin-top: var(--space-2); }
+
+.pick-group > summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-fg-muted);
+  padding: var(--space-1) 0;
+  min-height: var(--target-min);
+  display: flex;
+  align-items: center;
+}
+
+/* ---- authoring (draft preview and feature view) ---- */
+
+.diagnostics {
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.diagnostics.warn { border-color: var(--color-warning); }
+.diagnostics ul { margin: 0; padding-left: var(--space-4); }
+.diagnostics li { font-size: var(--text-sm); line-height: 1.5; margin-bottom: 2px; }
+.diagnostics b { color: var(--color-fg-strong); }
+
+.draft-task { margin-bottom: var(--space-2); }
+
+.draft-task pre {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+#draft-feature, #feature-text {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+/* ---- control-flow editors ---- */
+
+.condition-row,
+.column-list,
+.column-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.column-list { flex-direction: column; align-items: stretch; }
+.column-row { min-height: var(--target-min); }
+.column-row .column-name { width: 92px; flex: none; }
+.condition-row .operand,
+.column-row .operand { flex: 1; min-width: 70px; }
+.condition-row select { width: auto; flex: none; }
+
+/* ---- runs ---- */
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 3px 6px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+}
+
+.run-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.run-row .status { width: 18px; flex: none; text-align: center; }
+.run-row.st-running .status { color: var(--color-warning); }
+.run-row.st-parked .status { color: var(--color-info); }
+.run-row.st-passed .status { color: var(--color-success); }
+.run-row.st-failed .status { color: var(--color-danger); }
+.run-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
+
+.run-summary {
+  padding: 2px 6px 6px 28px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-top: none;
+  font-size: var(--text-xs);
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- schedule ---- */
+
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  /* 24px of button needs 24px of content box — same arithmetic as .node. */
+  padding: 2px 6px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+}
+
+.sched-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sched-row .status { width: 18px; flex: none; text-align: center; color: var(--color-info); }
+.sched-row.off { color: var(--color-fg-subtle); }
+.sched-row.off .status { color: var(--color-fg-subtle); }
+/* A schedule whose collection or task has been deleted is broken, not merely paused — it reads
+   as a failure because that is what it is. */
+.sched-row.broken { background: var(--color-bg-fail); }
+.sched-row.broken .status { color: var(--color-danger); }
+.sched-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
+
+/* Unlike a tree row, these stay visible. There are a handful of schedules, not four hundred
+   steps, so hiding the actions until hover would cost discoverability and buy nothing. */
+.sched-row .node-btns { display: inline-flex; }
+
+.sched-detail {
+  padding: 2px 6px 6px 28px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-top: none;
+  font-size: var(--text-xs);
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+
+.sched-detail b { color: var(--color-danger); }
+
+/* What this entry's success sets off, in the order the runner's tick would follow. */
+.sched-chain {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-fg-link);
+}
+
+/* The chip a tree row shows when something schedules it. Compact on purpose: the row reserves
+   28px for a 24x24 button, so a chip that tall would grow every scheduled row. */
+.chip.sched {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-info);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--color-info);
+}
+
+.chip.sched.off { border-color: var(--color-fg-subtle); color: var(--color-fg-subtle); }
+
+.sched-field { align-items: flex-start; }
+.sched-field > span { padding-top: 5px; }
+
+.sched-control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: var(--target-min);
+}
+
+.sched-control input[type=number] { width: 84px; flex: none; }
+.sched-control input[type=time] { width: 110px; flex: none; }
+.sched-control input[type=datetime-local] { width: 190px; flex: none; }
+.sched-control select { flex: 1; min-width: 120px; }
+.sched-control .unit { font-size: var(--text-xs); color: var(--color-fg-muted); }
+
+/* ---- live lane strip ---- */
+
+/* Present only while something is actually running, so there is no empty widget to explain and
+   nothing extra on screen for a first-run user. */
+#lane-strip {
+  margin-bottom: var(--space-3);
+}
+
+.lane-group + .lane-group { margin-top: var(--space-2); }
+
+.lane-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 26px;
+  padding: 3px 6px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-accent);
+  border-bottom: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.lane-row:last-child { border-bottom: 1px solid var(--color-accent); }
+.lane-row .status { width: 18px; flex: none; text-align: center; color: var(--color-warning); }
+.lane-row .name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+
+/* What the lane is doing right this second - the part worth reading, so it gets the space. */
+.lane-step {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+  color: var(--color-fg-link);
+}
+
+.lane-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
+
+/* A parked run is waiting, not stuck — the left edge marks it out from an ordinary summary line
+   so the explanation reads as status rather than as the run's result. */
+.parked-note {
+  border-left: 2px solid var(--color-info);
+  color: var(--color-fg-soft);
+}
+
+/* ---- datasets ---- */
+
+.dataset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 3px 6px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+}
+
+.dataset-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.dataset-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
+
+.dataset-columns {
+  padding: 2px 6px 6px 28px;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-top: none;
+  font-size: var(--text-xs);
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- scoped settings (global / collection / task / step) ---- */
+
+.settings-field { align-items: flex-start; }
+.settings-field > span { padding-top: 5px; }
+
+.settings-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: var(--target-min);
+}
+
+/* An inherited value is read-only text, never a pre-filled control — see scoped-settings.js for
+   why that distinction is the whole point of this dialog. */
+.inherited-value {
+  font-size: var(--text-sm);
+  color: var(--color-fg-subtle);
+}
+
+.inherited-value em {
+  font-style: normal;
+  color: var(--color-fg-muted);
+}
+
+.settings-value input[type=number] { width: 84px; flex: none; }
+.settings-value select { width: auto; flex: none; }
+.settings-value .unit { font-size: var(--text-xs); color: var(--color-fg-muted); }
+
+.scope-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-fg-subtle);
+  line-height: 1.5;
+}
 
 /* ---- settings ---- */
+
+.llm-group {
+  border: 0;
+  margin: 0 0 var(--space-1);
+  padding: 0;
+}
 
 .llm-row {
   display: flex;
@@ -333,32 +806,52 @@ button.action-pick span { font-size: 11px; color: #999; }
   margin-bottom: 5px;
 }
 
-.llm-row input[type=radio] { width: auto; accent-color: #3c82ff; flex: none; }
-.llm-row .llm-name { width: 52px; flex: none; font-size: 12px; color: #ccc; }
-.llm-row input[type=password] { flex: 1; font-size: 11px; }
+.llm-row input[type=radio] {
+  width: auto;
+  accent-color: var(--color-accent);
+  flex: none;
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+}
+
+/* A real <label for> now, so the radio has an accessible name — hence the case/spacing resets
+   that keep it looking like the plain span it replaced. */
+.llm-row .llm-name {
+  width: 52px;
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--color-fg-soft);
+  text-transform: none;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.llm-row input[type=password] { flex: 1; font-size: var(--text-xs); }
 .llm-row button { flex: none; }
 
-.settings-row { align-items: center; margin-bottom: 8px; }
+.settings-row { align-items: center; margin-bottom: var(--space-2); }
 
 .key-status {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: #8a9;
   align-self: center;
 }
 
-input[type=range] { width: 100%; accent-color: #3c82ff; }
+input[type=range] { width: 100%; accent-color: var(--color-accent); min-height: var(--target-min); }
 
 .modal-box .row { justify-content: flex-end; margin-top: 10px; }
 
 #modal-msg {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.45;
-  color: #ccc;
+  color: var(--color-fg-soft);
+  /* pre-line so the help modal's shortcut list keeps its line breaks. */
+  white-space: pre-line;
 }
 
-button.secondary { background: #3a3a3a; color: #ccc; }
-button.secondary:hover { background: #4a4a4a; }
+button.secondary { background: var(--color-mini-bg); color: var(--color-fg-soft); }
+button.secondary:hover { background: var(--color-mini-bg-hover); }
 
 .hidden { display: none !important; }

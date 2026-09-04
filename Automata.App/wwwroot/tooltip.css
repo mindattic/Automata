@@ -29,12 +29,17 @@
   word-break: break-word;
   pointer-events: none;
   opacity: 0;
+  /* visibility, not opacity alone: an opacity-0 node stays in the accessibility tree, so a
+     screen reader could read a tooltip that is not on screen (and axe flags it as unreadable
+     contrast). Transitioning visibility keeps the fade-out intact - it flips at the end. */
+  visibility: hidden;
   transform: translateY(-2px) scale(0.98);
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
 }
 
 .ma-tooltip.is-visible {
   opacity: 1;
+  visibility: visible;
   transform: none;
 }
 

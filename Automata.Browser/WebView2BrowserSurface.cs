@@ -2,7 +2,7 @@ using System.Text.Json;
 using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
 
-namespace Automata.App;
+namespace Automata.Browser;
 
 /// <summary>Real implementation of <see cref="IBrowserSurface"/> against a live WebView2 pane.
 /// Ported from Prose.KdpPublish's <c>WebView2KdpBrowser</c>.</summary>

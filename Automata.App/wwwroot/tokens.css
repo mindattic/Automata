@@ -1,0 +1,83 @@
+/* Design tokens — the one place a colour, space, or type value is defined.
+   Every ratio noted below is white-on-token or token-on-surface, computed against the surface it
+   is actually rendered on. WCAG 2.2 AA needs 4.5:1 for text under 18.66px bold / 24px regular
+   (all of this app's text), and 3:1 for non-text UI boundaries and focus indicators.
+
+   Two families exist for accent and danger on purpose:
+     *-bg  is a button fill that carries WHITE 13px text  -> needs 4.5:1 against white
+     plain is a glyph/label drawn ON a dark surface        -> needs 4.5:1 against that surface
+   A single value cannot do both jobs, which is why the old #3c82ff button (3.61:1 with white)
+   failed while #3c82ff as an accent border is perfectly fine. */
+:root {
+  /* Set live from the Border Radius setting (0–10px, default 5). */
+  --radius: 5px;
+
+  /* ---- surfaces (darkest to lightest) ---- */
+  --color-bg-0: #141414;          /* #log */
+  --color-bg-1: #171717;          /* #tree, #editor */
+  --color-bg-2: #1e1e1e;          /* body */
+  --color-bg-3: #242424;          /* modal box, node hover */
+  --color-bg-4: #2a2a2a;          /* form controls */
+  --color-bg-sel: #26354e;        /* selected row / drop-into */
+  --color-bg-fail: #3a2020;       /* failed row tint */
+  --color-bg-rec: #241717;        /* recording preview */
+
+  --color-border: #333;           /* decorative container edges */
+  --color-border-strong: #6a6a6a; /* form-control edges — 3.08:1 on --color-bg-2 (1.4.11) */
+  --color-border-modal: #555;
+
+  /* ---- text ---- */
+  --color-fg-strong: #eee;
+  --color-fg: #ddd;
+  --color-fg-soft: #ccc;          /* inline labels, modal prose */
+  --color-fg-task: #cfcfcf;
+  --color-fg-step: #b5b5b5;
+  --color-fg-muted: #999;         /* 5.85:1 on bg-2, 6.29:1 on bg-1 — section labels */
+  --color-fg-subtle: #949494;     /* 5.30:1 on bg-2 — twists, empty states; replaces #777 (3.73:1, the one confirmed 1.4.3 failure) */
+  --color-fg-link: #9db8e0;       /* 6.70:1 on bg-3, 8.85:1 on bg-1 */
+
+  /* ---- accent ---- */
+  --color-accent: #3c82ff;        /* 4.63:1 on bg-2 — borders, selection edge, range/radio accent */
+  --color-accent-bg: #2f6fe0;     /* 4.70:1 with white 13px text — primary button fill */
+  --color-accent-bg-hover: #3c82ff;
+
+  /* ---- status: glyph/text on a dark surface ---- */
+  --color-success: #58c97a;       /* 7.98:1 on bg-2 */
+  --color-warning: #e6bd52;       /* 9.35:1 on bg-2 */
+  --color-danger: #e2685f;        /* 5.10:1 on bg-2, 4.57:1 on bg-fail */
+  --color-info: #b28cf0;          /* 6.26:1 on bg-2 */
+  --color-insert: #e08a2e;        /* 6.70:1 on bg-1 — insert-gap hairline (non-text, needs 3:1) */
+
+  /* ---- status: button fill carrying white text ---- */
+  --color-danger-bg: #b03a3a;     /* 6.02:1 with white */
+  --color-info-bg: #7a4fd0;       /* 5.45:1 with white */
+  --color-disabled-bg: #555;
+
+  --color-mini-bg: #3a3a3a;
+  --color-mini-bg-hover: #4a4a4a;
+  --color-mini-fg: #bbb;          /* 5.92:1 on --color-mini-bg */
+  --color-pick-bg: #2e2e2e;
+
+  /* ---- spacing ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  /* ---- type ---- */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 16px;
+  --font-ui: Segoe UI, sans-serif;
+  --font-mono: Consolas, monospace;
+
+  /* ---- focus (nothing like this existed before — SC 2.4.7) ---- */
+  --focus-ring-color: #7ab8ff;    /* 5.9:1 on bg-2, clears the 3:1 non-text minimum everywhere */
+  --focus-ring: 2px solid var(--focus-ring-color);
+  --focus-ring-offset: 2px;
+
+  /* ---- pointer targets (SC 2.5.8 minimum) ---- */
+  --target-min: 24px;
+}

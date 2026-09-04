@@ -166,6 +166,7 @@ public sealed class CollectionStore
                 log.LogWarning("Skipping unreadable task file {File}", file);
                 continue;
             }
+            SchemaMigration.Migrate(task);
 
             var changed = false;
             if (!seenIds.Add(task.Id))
@@ -352,6 +353,7 @@ public sealed class CollectionStore
             log.LogWarning("Skipping unreadable collection file {File}", file);
             return null;
         }
+        SchemaMigration.Migrate(collection);
 
         var changed = false;
         if (seenIds.Contains(collection.Id))
@@ -411,8 +413,13 @@ public sealed class CollectionStore
         a != null && b != null &&
         string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 
-    private static void WriteJson<T>(string path, T value) =>
+    /// <summary>The store's ONE write path, so version stamping and normalization cannot be
+    /// bypassed by any caller — including the hand-edit healing rewrites above.</summary>
+    private static void WriteJson<T>(string path, T value)
+    {
+        SchemaMigration.StampCurrentVersion(value);
         File.WriteAllText(path, JsonSerializer.Serialize(value, AutomataJson.Options));
+    }
 
     private static T? ReadJson<T>(string path) where T : class
     {

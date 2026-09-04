@@ -1,3 +1,5 @@
+using Automata.Core.Automation.Execution;
+
 namespace Automata.Core.Automation.Replay;
 
 public enum StepStatus
@@ -29,6 +31,18 @@ public abstract record StepEvent
 
     /// <summary>The step is flagged pauseForUser — the run is parked until Continue.</summary>
     public sealed record StepPaused(string StepId, string Label) : StepEvent;
+
+    /// <summary>
+    /// The run reached a wait too long to hold a browser through, and has checkpointed instead.
+    /// <para>
+    /// Terminal for this pass, and NOT a <see cref="RunCompleted"/>: the run has neither passed
+    /// nor failed, so a caller that collapsed the two would report a success or a failure that
+    /// has not happened yet. A caller that persists the checkpoint gets the run finished later;
+    /// one that ignores this event simply loses the rest of the run, which is why both the runner
+    /// and the app handle it explicitly.
+    /// </para>
+    /// </summary>
+    public sealed record RunParked(ParkCheckpoint Checkpoint) : StepEvent;
 
     public sealed record RunCompleted(bool Success, string Summary) : StepEvent;
 

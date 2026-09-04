@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0-windows, not net10.0: WebView2 is a Windows component. Automata.Core stays
+         plain net10.0 and never references this - IBrowserSurface is the seam. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Automata.Browser</RootNamespace>
+    <AssemblyName>Automata.Browser</AssemblyName>
+    <!-- Whole-number versioning: major-only bumps (1.0.0 -> 2.0.0 -> 3.0.0). Minor/patch stay 0. -->
+    <Version>3.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Automata.Core\Automata.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+  </ItemGroup>
+
+</Project>
