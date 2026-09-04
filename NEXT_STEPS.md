@@ -1248,6 +1248,29 @@ already fast enough to walk a CSV, fill a form and record each response one row 
 the shape of the work; the lane pool already covers the case where more than one browser is
 genuinely wanted.
 
+### Phase 26 - where a called task starts is something the step says (2026-09-04)
+
+`runTask` ran a callee's steps and ignored its start URL, so a called task began on whatever page
+the caller left open. That is the right default — it is what makes a subtask reusable in more than
+one context — but the rule was invisible: nothing in the editor mentioned it, and the only place it
+was written down was one example's description.
+
+Both behaviours are a field now. The step SAYS which it is, and the editor says what the other one
+would mean, so a task can be read without having learnt a convention first — the same reason a
+condition here is a record rather than an expression. False stays the default, so nothing on disk
+changes meaning.
+
+It reaches the Gherkin surface as a second phrase (`I run task "X" from its start page`), ordered
+before the shorter one so the shorter does not match the front of it and leave a tail nothing
+recognises. Without that, rendering a task that made the choice would quietly drop it.
+
+Asking to open a start page a task does not have is not an error. Failing would make the option
+unusable on a task that starts wherever it is put, which is a perfectly ordinary kind of subtask.
+
+The `chain` example now shows both: it navigates before the second call, the way it always did, and
+tells the third to open its own start page — so the two rules sit next to each other in a task
+someone can run.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1289,8 +1312,3 @@ yet** below.
   each poll (a condition over a live element, not over a captured output) or letting a signal or a
   sibling lane write into run state. The `slow` example uses it in the only shape that currently
   works, as a guard on a value already read.
-- **A called task starts on whatever page the caller left open.** `runTask` runs the callee's steps
-  and ignores its `StartUrl`, which is defensible - a subtask usually belongs in its caller's
-  context - but it is undocumented anywhere except the `chain` example, which navigates explicitly
-  before each call and says why in its description. Worth either honouring the callee's start URL
-  behind a flag or naming the rule in the editor.

@@ -127,6 +127,18 @@ export function flowFieldsHtml(step, task) {
             return '<div class="field"><span>Run task</span>' +
                 '<select id="ed-runtask" aria-label="Task to run from here">' +
                 taskOptions(task.id, step.runTaskId) + '</select></div>' +
+                // The rule used to be invisible: a called task starts on whatever page the caller
+                // left open, and the only place that was written down was one example's
+                // description. Now the step says which it is, either way round.
+                '<div class="field"><span>Starts on</span>' +
+                '<label class="inline"><input type="checkbox" id="ed-runtask-starturl"' +
+                (step.runTaskOpensStartUrl ? ' checked' : '') +
+                ' /> open that task’s own start page first</label>' +
+                '<span class="scope-note">' +
+                (step.runTaskOpensStartUrl
+                    ? 'It will navigate before running, so it does not matter where this task left off.'
+                    : 'Otherwise it starts on whatever page this task has open.') +
+                '</span></div>' +
                 (declared.length
                     ? '<div class="field"><span>With</span><div class="column-list">' +
                       declared.map(function (i) {
@@ -323,6 +335,7 @@ export function commitFlowFields(step, root) {
         });
     } else if (step.action === 'runTask') {
         step.runTaskId = (($('ed-runtask') || {}).value || '') || null;
+        step.runTaskOpensStartUrl = !!($('ed-runtask-starturl') || {}).checked;
         var passed = {};
         root.querySelectorAll('[data-input]').forEach(function (row) {
             var name = row.getAttribute('data-input');

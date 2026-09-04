@@ -170,6 +170,15 @@ public static class StepDefinitionCatalog
                 },
             })),
 
+            // Longest first: "I run task \"X\"" would otherwise match the front of the longer
+            // phrase and leave "from its start page" as an unrecognised tail.
+            Def($"I run task {Q} from its start page", $@"I run task {Q} from its start page", m => Draft(new Step
+            {
+                Action = StepAction.RunTask,
+                Label = $"Run task '{m.Groups[1].Value}'",
+                RunTaskOpensStartUrl = true,
+            }, rawTaskName: m.Groups[1].Value)),
+
             Def($"I run task {Q}", $@"I run task {Q}", m => Draft(new Step
             {
                 Action = StepAction.RunTask,

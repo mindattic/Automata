@@ -138,7 +138,8 @@ public static class GherkinWriter
             StepAction.Wait => WaitPhrase(step),
             StepAction.If => GuardPhrase(step),
             StepAction.Else => "otherwise",
-            StepAction.RunTask => "I run task " + FlowValues.Quote(RunTaskName(step)),
+            StepAction.RunTask => "I run task " + FlowValues.Quote(RunTaskName(step))
+                + (step.RunTaskOpensStartUrl ? " from its start page" : ""),
             StepAction.WriteDataset => WritePhrase(step),
             _ => null,
         };

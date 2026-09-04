@@ -523,6 +523,23 @@ public sealed partial class WorkflowEngine
                     supplied[name] = value ?? "";
                 }
 
+                // Asked for explicitly, never assumed: a called task normally belongs in its
+                // caller's context, and navigating first would throw away the page the caller
+                // spent its steps getting to.
+                if (step.RunTaskOpensStartUrl && !string.IsNullOrWhiteSpace(target.StartUrl))
+                {
+                    yield return new StepEvent.Log(
+                        $"Opening '{target.Name}' start URL {target.StartUrl}");
+                    var navError = await ReplayEngine.TryNavigateAsync(scope.Browser, target.StartUrl!, ct);
+                    if (navError != null)
+                    {
+                        state.TaskStack.Remove(target.Id);
+                        await foreach (var e in FailAsync(step, scope, state,
+                            $"could not open '{target.Name}' start URL: {navError}")) yield return e;
+                        yield break;
+                    }
+                }
+
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, $"running '{target.Name}'", null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;

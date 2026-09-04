@@ -319,6 +319,89 @@ public class WorkflowEngineTests
         Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message, Does.Contain("enclosing for-each"));
     }
 
+    // ---- where a called task starts ---------------------------------------------------------
+
+    /// <summary>A caller and a callee, each with its own start URL, so the two are told apart by
+    /// where the browser ends up.</summary>
+    private TaskDefinition Callee(string startUrl)
+    {
+        var callee = new TaskDefinition
+        {
+            Name = "Callee",
+            StartUrl = startUrl,
+            Steps = [Nav("inside", "https://inside.example")],
+        };
+        collections.SaveTask(callee);
+        return callee;
+    }
+
+    private static Step Call(string taskId, bool openStartUrl) => new()
+    {
+        Id = "call", Action = StepAction.RunTask, Label = "Call it",
+        RunTaskId = taskId,
+        RunTaskOpensStartUrl = openStartUrl,
+    };
+
+    /// <summary>The rule this app has always had, now written down where it can be checked: a
+    /// called task carries on from wherever the caller left the browser.</summary>
+    [Test]
+    public async Task RunTask_LeavesTheCallerOnItsOwnPageByDefault()
+    {
+        var callee = Callee("https://callee.example");
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "Caller",
+            Steps = [Nav("open", "https://caller.example"), Call(callee.Id, openStartUrl: false)],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://caller.example", "https://inside.example" }),
+            "nothing should have opened the callee's start URL");
+    }
+
+    [Test]
+    public async Task RunTask_OpensTheCalleesStartUrlWhenAskedTo()
+    {
+        var callee = Callee("https://callee.example");
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "Caller",
+            Steps = [Nav("open", "https://caller.example"), Call(callee.Id, openStartUrl: true)],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser), Is.EqualTo(new[]
+        {
+            "https://caller.example", "https://callee.example", "https://inside.example",
+        }));
+    }
+
+    /// <summary>Asking for a start page a task does not have is not an error — there is simply
+    /// nothing to open, and failing would make the option unusable on a task that starts wherever
+    /// it is put.</summary>
+    [Test]
+    public async Task RunTask_AskedToOpenAStartUrlThatIsNotThere_JustCarriesOn()
+    {
+        var callee = Callee("");
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "Caller",
+            Steps = [Nav("open", "https://caller.example"), Call(callee.Id, openStartUrl: true)],
+        };
+
+        var events = await Run(task, browser);
+
+        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://caller.example", "https://inside.example" }));
+    }
+
     // ---- what a loop knows that its columns do not --------------------------------------------
 
     /// <summary>Binds one field and reports what the step was actually given, which is the only

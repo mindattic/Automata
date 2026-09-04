@@ -204,6 +204,22 @@ public sealed class Step
     /// </summary>
     public Dictionary<string, BindingRef>? RunTaskInputs { get; set; }
 
+    /// <summary>
+    /// <see cref="StepAction.RunTask"/>: open the called task's own start URL before running it.
+    /// <para>
+    /// False is the default and the rule this app has always had — a called task begins on
+    /// whatever page the caller left open, which is what makes a subtask reusable in more than one
+    /// context. The trouble was that the rule was invisible: nothing in the editor said it, and the
+    /// only place it was written down was one example's description.
+    /// </para>
+    /// <para>
+    /// So it is a field rather than a paragraph. Both behaviours are now something a step SAYS,
+    /// which is the same reason a condition is a record and not an expression — you can read a task
+    /// and know what it will do without having learnt a convention first.
+    /// </para>
+    /// </summary>
+    public bool RunTaskOpensStartUrl { get; set; }
+
     /// <summary><see cref="StepAction.WriteDataset"/>.</summary>
     public DatasetWriteSpec? WriteDataset { get; set; }
 

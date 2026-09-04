@@ -348,6 +348,52 @@ public class GherkinFlowTests
         Assert.That(main.Steps[0].RunTaskId, Is.EqualTo(report.Id));
     }
 
+    /// <summary>
+    /// Where a called task starts is a choice the step makes, so it has to be a choice the feature
+    /// file can carry — otherwise rendering a task that made it would quietly drop it.
+    /// </summary>
+    [Test]
+    public void RunningATaskFromItsOwnStartPageIsSaidOutLoudAndReadsBack()
+    {
+        const string source = """
+            Feature: F
+
+              Scenario: Report
+                Given I click "Send"
+
+              Scenario: Main
+                Given I run task "Report" from its start page
+            """;
+
+        var first = Compile(source);
+        Assert.That(first.HasErrors, Is.False, Errors(first));
+        Assert.That(first.Tasks.Single(t => t.Name == "Main").Steps[0].RunTaskOpensStartUrl, Is.True);
+
+        var written = GherkinWriter.Write(first.Collection!, first.Tasks);
+        Assert.That(written.Text, Does.Contain("from its start page"), written.Text);
+
+        var second = Compile(written.Text);
+        Assert.That(second.Tasks.Single(t => t.Name == "Main").Steps[0].RunTaskOpensStartUrl, Is.True,
+            written.Text);
+    }
+
+    /// <summary>And the plain phrase still means the rule it always meant.</summary>
+    [Test]
+    public void RunningATaskWithoutSayingSoStartsWhereTheCallerLeftOff()
+    {
+        var result = Compile("""
+            Feature: F
+
+              Scenario: Report
+                Given I click "Send"
+
+              Scenario: Main
+                Given I run task "Report"
+            """);
+
+        Assert.That(result.Tasks.Single(t => t.Name == "Main").Steps[0].RunTaskOpensStartUrl, Is.False);
+    }
+
     // ---- what a loop knows that its columns do not ------------------------------------------------
 
     /// <summary>

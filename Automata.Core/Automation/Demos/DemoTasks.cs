@@ -960,9 +960,10 @@ public static class DemoTasks
         "A task can call another task, which is how one long recording becomes several short ones "
         + "that can be fixed independently. This runs 'Click a button', then 'Wait for a page that "
         + "is not ready', then 'Search for a word you choose' — handing that last one a term of "
-        + $"its own (\"{ChainedSearchTerm}\") rather than letting it use its default. It opens the "
-        + "right page before each, because a called task starts on whatever page the caller left "
-        + "open.",
+        + $"its own (\"{ChainedSearchTerm}\") rather than letting it use its default. A called task "
+        + "starts on whatever page the caller left open, so this opens the right page before the "
+        + "second one — and shows the other way round for the third, which is told to open its own "
+        + "start page first.",
         PageUrl(demoRoot, "buttons.html"),
         [
             new Step
@@ -986,19 +987,16 @@ public static class DemoTasks
                 Label = "Run 'Wait for a page that is not ready'",
                 RunTaskId = DemoTask.TaskIdFor("slow"),
             },
-            new Step
-            {
-                Id = "demo-chain-open-form",
-                Action = StepAction.Navigate,
-                Label = "Open the form for the last one",
-                Url = PageUrl(demoRoot, "form.html"),
-            },
+            // No Navigate in front of this one, on purpose: it is told to open the called task's
+            // own start page instead. The two calls above show the default rule; this shows the
+            // choice, and the step says which it is rather than leaving it to be inferred.
             new Step
             {
                 Id = "demo-chain-search",
                 Action = StepAction.RunTask,
-                Label = $"Run the search, but for \"{ChainedSearchTerm}\"",
+                Label = $"Run the search from its own page, for \"{ChainedSearchTerm}\"",
                 RunTaskId = DemoTask.TaskIdFor("search"),
+                RunTaskOpensStartUrl = true,
                 RunTaskInputs = new Dictionary<string, BindingRef>
                 {
                     [SearchTermInput] = new()
