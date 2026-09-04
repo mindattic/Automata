@@ -254,6 +254,7 @@ export function describeBinding(binding) {
     if (!binding) return '';
     if (binding.label) return binding.label;
     if (binding.kind === 'datasetColumn') return 'row.' + (binding.columnName || '?');
+    if (binding.kind === 'datasetRow') return 'the whole row';
     if (binding.kind === 'envVar') return 'env: ' + (binding.envVarName || '?');
     if (binding.kind === 'taskInput') return 'input: ' + (binding.parameterName || '?');
     if (binding.kind === 'stepOutput') return binding.outputField || 'output';

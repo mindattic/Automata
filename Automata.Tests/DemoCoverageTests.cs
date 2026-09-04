@@ -30,7 +30,13 @@ public class DemoCoverageTests
     /// An example of it would be an example that hangs. Delete this entry the day signals land.
     /// </para>
     /// </summary>
-    private static readonly HashSet<object> NotDemonstrable = [WaitMode.UntilSignal];
+    /// <para>
+    /// <see cref="BindingKind.EnvVar"/>: its whole point is a value that is NOT in the store, read
+    /// from the machine at run time. A seeded example could only demonstrate it by depending on a
+    /// variable the user has not set, which would ship an example that fails on every fresh
+    /// install. The editor offers it and the resolver reads it; there is nowhere honest to show it.
+    /// </para>
+    private static readonly HashSet<object> NotDemonstrable = [WaitMode.UntilSignal, BindingKind.EnvVar];
 
     /// <summary>The demo root only decides what the baked-in URLs point at, not the shape.</summary>
     private static IReadOnlyList<DemoTask> Demos() =>
@@ -86,6 +92,47 @@ public class DemoCoverageTests
     }
 
     /// <summary>
+    /// Every way a value can be reached has to be reachable in an example too.
+    /// <para>
+    /// A binding kind is worth checking for the same reason a step action is: it is a capability
+    /// with a picker entry, and one nobody has ever run is one nobody knows works.
+    /// </para>
+    /// <para>
+    /// What it does NOT prove, and the reason to say so here:
+    /// <see cref="BindingKind.DatasetRow"/> is sited two ways — as a for-each's source and as a
+    /// value — and every loop in every example satisfies this count with the first. That it also
+    /// resolves to the row is held up by the roster example and by the engine's own tests, not by
+    /// this one.
+    /// </para>
+    /// </summary>
+    [Test]
+    public void EveryBindingKindIsDemonstratedBySomeExample()
+    {
+        AssertCovered<BindingKind>(AllBindings().Select(b => (object)b.Kind));
+    }
+
+    private static IEnumerable<BindingRef> Values(Dictionary<string, BindingRef>? map) =>
+        map?.Values ?? Enumerable.Empty<BindingRef>();
+
+    /// <summary>Every BindingRef an example carries, wherever a step can hold one.</summary>
+    private static IEnumerable<BindingRef> AllBindings()
+    {
+        foreach (var step in AllSteps())
+        {
+            foreach (var binding in Values(step.Bindings)) yield return binding;
+            foreach (var binding in Values(step.RunTaskInputs)) yield return binding;
+            foreach (var binding in Values(step.WriteDataset?.Columns)) yield return binding;
+            if (step.ForEach?.Source is { } source) yield return source;
+            foreach (var condition in new[] { step.Condition, step.Wait?.Condition })
+            {
+                if (condition == null) continue;
+                yield return condition.Left;
+                if (condition.Right != null) yield return condition.Right;
+            }
+        }
+    }
+
+    /// <summary>
     /// An exemption that has quietly become false is worse than no exemption: it reads like a
     /// standing limitation of the product when the limitation is gone.
     /// </summary>
@@ -99,7 +146,8 @@ public class DemoCoverageTests
                     .SelectMany(s => new[] { s.Condition, s.Wait?.Condition })
                     .Where(c => c != null)
                     .Select(c => (object)c!.Op))
-                .Concat(AllSteps().Where(s => s.Aggregate != null).Select(s => (object)s.Aggregate!.Op)));
+                .Concat(AllSteps().Where(s => s.Aggregate != null).Select(s => (object)s.Aggregate!.Op))
+                .Concat(AllBindings().Select(b => (object)b.Kind)));
 
         Assert.That(NotDemonstrable.Where(covered.Contains), Is.Empty,
             "an example now demonstrates this, so its exemption is stale — delete it");

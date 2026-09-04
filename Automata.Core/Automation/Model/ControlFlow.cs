@@ -96,6 +96,18 @@ public sealed class ForEachSpec
     /// <summary>The name children use to reach the current row, e.g. <c>row.sku</c>.</summary>
     public string RowVariableName { get; set; } = "row";
 
+    /// <summary>
+    /// The name this loop publishes a row's POSITION under, after the row variable: <c>row.#</c>.
+    /// <para>
+    /// One-based, so it is the same number the run log already prints ("row 3 of 12"). Published
+    /// both bare and qualified, exactly as a column is, because every binding written anywhere —
+    /// by the picker, by the Gherkin compiler — names a column bare, and a value a binding cannot
+    /// reach is not a feature. A dataset that really has a column called <c>#</c> wins, because
+    /// that one is data and this is bookkeeping.
+    /// </para>
+    /// </summary>
+    public const string RowNumberKey = "#";
+
     /// <summary>Rows to process at once. Above 1 requires a browser lane per row, so it is
     /// bounded by the resolved MaxConcurrency ceiling.</summary>
     public int MaxConcurrency { get; set; } = 1;

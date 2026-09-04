@@ -572,6 +572,18 @@ async function main() {
       const missingActions = actions.filter((a) => !offered.includes(a) && !notOffered[a]);
       assertEqual(JSON.stringify(missingActions), '[]',
         `the action picker does not offer ${JSON.stringify(missingActions)}`);
+
+      // Not a list this time: the binding picker WRITES its kinds, one `kind: 'x'` per branch, so
+      // what the panel can express is exactly the set of kinds it constructs.
+      const kinds = enumMembers('Automata.Core/Automation/Model/BindingRef.cs', 'BindingKind');
+      const written = ['binding-field.js', 'flow-fields.js'].flatMap((file) => [
+        ...readFileSync(path.join(repoRoot, 'Automata.App/wwwroot', file), 'utf8')
+          .matchAll(/kind:\s*'([a-zA-Z]\w*)'/g),
+      ].map((m) => m[1]));
+      const missingKinds = kinds.filter((k) => !written.includes(k) && !notOffered[k]);
+      assertEqual(JSON.stringify(missingKinds), '[]',
+        `the binding picker cannot produce ${JSON.stringify(missingKinds)} — the engine resolves ` +
+        'it but nothing in the editor can write one');
     });
 
     // The fixture task exists but starts collapsed/unselected — select it to expand its step
@@ -1462,10 +1474,27 @@ async function main() {
       assertTrue(offered.includes('row.sku'),
         `expected the loop's own column to be offered, got ${JSON.stringify(offered)}`);
 
+      // The two a loop publishes that are NOT columns, so nothing can read them off the dataset:
+      // where the row sits in the list, and the row itself. They have to be offered here or they
+      // are code-only bindings, which is the state row.url was in before this group existed.
+      assertTrue(offered.includes('row.#'),
+        `expected the row's position to be offered, got ${JSON.stringify(offered)}`);
+      assertTrue(offered.some((label) => label.startsWith('row (')),
+        `expected the whole row to be offered, got ${JSON.stringify(offered)}`);
+
       await panelPage.locator('#modal-list .action-pick[data-value="column:sku"]').click();
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
       await waitFor(() => readFileSync(loopFile, 'utf8').includes('"datasetColumn"'),
         { timeoutMs: 5000, label: 'the column binding to reach disk' });
+
+      // And picking the whole row writes one. Checked by its label rather than by the kind: the
+      // loop's own source is a datasetRow too, so the word alone was already in this file.
+      await panelPage.locator('.chip.bound').first().click();
+      await panelPage.locator('#modal-list .action-pick').first()
+        .waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('#modal-list .action-pick[data-value^="row:"]').first().click();
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('the whole row'),
+        { timeoutMs: 5000, label: 'the whole-row binding to reach disk' });
     });
 
     await group('guards: an operator the editor once could not show survives being edited', async () => {

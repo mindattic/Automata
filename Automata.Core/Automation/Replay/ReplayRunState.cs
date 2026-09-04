@@ -1,3 +1,5 @@
+using System.Globalization;
+using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
 
 namespace Automata.Core.Automation.Replay;
@@ -65,8 +67,41 @@ internal sealed class ReplayRunState
     /// Row variables from an enclosing ForEach. Each column is published twice — bare
     /// (<c>sku</c>) and qualified (<c>row.sku</c>) — so a nested loop can be disambiguated by
     /// naming its row variable while the common single-loop case stays short.
+    /// <para>
+    /// The row's POSITION joins them under the name <c>#</c>, published both ways for the same
+    /// reason. It is not a column — nothing can read it off the dataset — but a binding should not
+    /// have to know that, and every binding written anywhere names a column bare.
+    /// </para>
     /// </summary>
     public readonly Dictionary<string, string> Variables = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The row each enclosing for-each is on, as JSON, keyed by the dataset it came from.
+    /// <para>
+    /// Keyed rather than "the current one" so a whole-row binding inside a nested loop can name
+    /// which loop it means — the same disambiguation <c>row.sku</c> gets from its row variable.
+    /// </para>
+    /// </summary>
+    public readonly Dictionary<string, string> Rows = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The innermost of those, so a binding that names no dataset still resolves to the
+    /// loop it is written inside.</summary>
+    public string? InnermostRow;
+
+    /// <summary>
+    /// The current row of a named dataset, or of the innermost loop when the binding names none.
+    /// False means there is no such row — which is a different answer from a broken binding, and
+    /// the caller reports it as one.
+    /// </summary>
+    public bool TryRow(string? datasetName, out string? json)
+    {
+        if (string.IsNullOrWhiteSpace(datasetName))
+        {
+            json = InnermostRow;
+            return json != null;
+        }
+        return Rows.TryGetValue(datasetName, out json);
+    }
 
     /// <summary>Task ids currently on the RunTask stack, so a task cannot invoke itself forever.</summary>
     public readonly HashSet<string> TaskStack = new(StringComparer.Ordinal);
@@ -167,7 +202,8 @@ internal sealed class ReplayRunState
     /// distrust the concurrency setting entirely.
     /// </para>
     /// </summary>
-    public ReplayRunState ForkForRow(string rowVariable, IReadOnlyDictionary<string, string> row)
+    public ReplayRunState ForkForRow(
+        string rowVariable, IReadOnlyDictionary<string, string> row, int rowNumber, string? datasetName)
     {
         // The freshened set is passed by reference, not copied: it is the one thing rows must
         // agree on, or every row would think itself the first and clear the dataset again.
@@ -175,7 +211,15 @@ internal sealed class ReplayRunState
         child.InRowScope = true;
         foreach (var (key, value) in Outputs) child.Outputs[key] = value;
         foreach (var (key, value) in Variables) child.Variables[key] = value;
+        foreach (var (name, json) in Rows) child.Rows[name] = json;
         foreach (var taskId in TaskStack) child.TaskStack.Add(taskId);
+
+        // Before the columns, so a dataset that really has a column called "#" overrides it. The
+        // row's own data is what the author is looking at; the position is this loop's bookkeeping,
+        // and losing an argument to a real column is the right way round.
+        var position = rowNumber.ToString(CultureInfo.InvariantCulture);
+        child.Variables[ForEachSpec.RowNumberKey] = position;
+        child.Variables[rowVariable + "." + ForEachSpec.RowNumberKey] = position;
 
         // Each column twice: bare for the common single loop, qualified so a nested loop can be
         // disambiguated by naming its row variable.
@@ -184,6 +228,10 @@ internal sealed class ReplayRunState
             child.Variables[column] = value;
             child.Variables[rowVariable + "." + column] = value;
         }
+
+        var rowJson = DatasetIO.RowJson(row);
+        child.InnermostRow = rowJson;
+        if (!string.IsNullOrWhiteSpace(datasetName)) child.Rows[datasetName] = rowJson;
         return child;
     }
 

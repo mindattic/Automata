@@ -1069,6 +1069,51 @@ Also, scrollbars: everything that scrolls is thin, and nothing scrolls sideways 
 position, so revealing them cannot re-wrap a row; the "nothing moves when the buttons appear" check
 now holds for width as well as height, structurally rather than by luck.
 
+### Phase 21 - what a loop knows that its columns do not (2026-09-04)
+
+A for-each published a row's columns and nothing else. Two things it knew perfectly well were
+unreachable: where the row sat in the list (the number appeared in a log line and nowhere a binding
+could see it) and the row itself, which `BindingKind.DatasetRow` promised in its own doc comment
+while the resolver answered "not supported yet".
+
+Both are bindings now, and neither needed a new mechanism:
+
+- **`row.#` is the position, counting from 1** — the same number the run log already prints, because
+  two numbering schemes for one thing is worse than either. It is published exactly the way a column
+  is, bare and qualified, so a binding never has to know whether it is naming data or bookkeeping;
+  publishing it qualified-only was the first attempt, and `verify-demos` caught it within a minute
+  of the demo running. It is written BEFORE the columns, so a dataset that really has a column
+  called `#` wins: that one is data and this is not. The position belongs to the SOURCE list, not to
+  a count of what the loop did — the roster's gap is its second row, so the two people it adds come
+  from positions 1 and 3, and the acceptance check asserts exactly that. A running count of writes
+  would say 1 and 2 and look perfectly fine.
+- **The whole row is one line of JSON**, keyed by dataset name so a nested loop can say which loop it
+  means — the same disambiguation `row.sku` gets from its row variable — and falling back to the
+  innermost when a binding names none. Absence gets the two-message treatment `DatasetColumn`
+  already had: outside a loop the binding is in the wrong place, inside one over a different dataset
+  it is naming the wrong file, and those are not the same mistake.
+
+Both reach the Gherkin surface without new grammar. `row.#` rides the existing column syntax once
+`Ref` admits a `#` (safe: Gherkin's comments are whole lines, so a `#` inside step text is text),
+and a bare `row` inside a loop is the whole row — deliberately not `<row>`, which Gherkin would read
+as an Examples substitution and hand back as a column called "row". A step output of the same name
+does not lose silently; it gets a diagnostic saying the row won.
+
+**And a round-trip bug the new test walked straight into.** A write step's column bound to a dataset
+column rendered as `sku="<sku>"`, and the compiler read a quoted value in an assignment as a
+LITERAL — so the binding survived being written and stopped being a binding when read back. Nothing
+had exercised it, because the one round-trip test that wrote a dataset bound its column to a step
+output, which renders bare. Fixed at both ends: assignments now render in the same bare form guards
+use (one renderer for the two slots whose grammar takes bare references), and a quoted placeholder
+in an assignment is read as the column it obviously means, so feature files already on disk keep
+their meaning.
+
+The guard against the class: `DemoCoverageTests` now covers `BindingKind` as well, and `verify-ui`'s
+enum check now proves the picker can PRODUCE every kind, not just that the engine accepts it. The
+`BindingKind` coverage test says out loud what it cannot prove — `DatasetRow` is sited two ways, and
+every loop satisfies the count with the source form — because an exemption or a check that quietly
+means less than it appears to is worse than none.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1103,10 +1148,6 @@ yet** below.
 - **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
   selector against the top document, so the one action that does not go through the resolver is the
   one action that still stops at the boundary.
-- **No row index, and no whole-row value.** A loop publishes a row's COLUMNS; there is no `row.#`
-  to bind to (the row number appears only in a log line) and `BindingKind.DatasetRow` still answers
-  "not supported yet" despite its doc promising the row as JSON. Neither has been needed yet, and
-  both are small — the index especially, since the walker already counts.
 - **Nested JSON is flat.** `ReadJsonArray` keeps a nested object as its raw JSON text in that
   column, so `Address.City` is not reachable as a column. Flattening it at read time is the obvious
   answer and the obvious risk (a name collision with a real column).

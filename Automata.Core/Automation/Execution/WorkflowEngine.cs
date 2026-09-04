@@ -470,7 +470,8 @@ public sealed partial class WorkflowEngine
 
                 if (wanted > 1 && scope.Lanes != null)
                 {
-                    await foreach (var evt in RunRowsInParallelAsync(step, rows, rowVar, wanted, effective, scope, state, walk, ct))
+                    await foreach (var evt in RunRowsInParallelAsync(
+                        step, rows, rowVar, name, wanted, effective, scope, state, walk, ct))
                         yield return evt;
                     yield break;
                 }
@@ -480,7 +481,7 @@ public sealed partial class WorkflowEngine
                     ct.ThrowIfCancellationRequested();
                     yield return new StepEvent.Log($"{step.Label}: row {i + 1} of {rows.Count}");
 
-                    var rowState = state.ForkForRow(rowVar, rows[i]);
+                    var rowState = state.ForkForRow(rowVar, rows[i], i + 1, name);
                     await foreach (var evt in RunStepsAsync(step.Children, scope, rowState, walk.Unparkable(), ct))
                         yield return evt;
                     state.MergeFrom(rowState);
@@ -724,6 +725,7 @@ public sealed partial class WorkflowEngine
         Step step,
         IReadOnlyList<Dictionary<string, string>> rows,
         string rowVariable,
+        string datasetName,
         int wanted,
         ResolvedSettings effective,
         RunScope scope,
@@ -744,7 +746,7 @@ public sealed partial class WorkflowEngine
             await gate.WaitAsync(ct);
             try
             {
-                var rowState = state.ForkForRow(rowVariable, row);
+                var rowState = state.ForkForRow(rowVariable, row, index + 1, datasetName);
                 await using var lease = await pool.AcquireAsync(
                     effective.BrowserProfile ?? "default", taskName: step.Label, ct: ct);
                 lease.Describe($"row {index + 1} of {rows.Count}");

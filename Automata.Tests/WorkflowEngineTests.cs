@@ -319,6 +319,194 @@ public class WorkflowEngineTests
         Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message, Does.Contain("enclosing for-each"));
     }
 
+    // ---- what a loop knows that its columns do not --------------------------------------------
+
+    /// <summary>Binds one field and reports what the step was actually given, which is the only
+    /// way to see a binding's resolved value from outside the engine.</summary>
+    private static Step NavBoundTo(string id, BindingRef binding, string? prefix = null)
+    {
+        binding.Prefix = prefix;
+        return new Step
+        {
+            Id = id, Action = StepAction.Navigate, Label = id,
+            Bindings = new Dictionary<string, BindingRef> { ["Url"] = binding },
+        };
+    }
+
+    private static Step LoopOver(string dataset, string rowVariable, params Step[] children) => new()
+    {
+        Id = "loop-" + dataset, Action = StepAction.ForEach, Label = "Each row of " + dataset,
+        ForEach = new ForEachSpec
+        {
+            Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = dataset },
+            RowVariableName = rowVariable,
+        },
+        Children = [.. children],
+    };
+
+    private static BindingRef Column(string name) =>
+        new() { Kind = BindingKind.DatasetColumn, ColumnName = name };
+
+    private static BindingRef WholeRow(string? dataset = null) =>
+        new() { Kind = BindingKind.DatasetRow, DatasetName = dataset };
+
+    /// <summary>One-based, because the run log has always said "row 1 of 3" and two numbering
+    /// schemes for the same thing is worse than either.</summary>
+    [Test]
+    public async Task ForEach_PublishesTheRowsPositionCountingFromOne()
+    {
+        datasets.Write("skus.csv",
+            new[] { "a", "b", "c" }.Select(s => new Dictionary<string, string> { ["sku"] = s }), append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [LoopOver("skus.csv", "row",
+                NavBoundTo("open", Column(ForEachSpec.RowNumberKey), "https://x.example/"))],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://x.example/1", "https://x.example/2", "https://x.example/3" }));
+    }
+
+    /// <summary>The position is the loop's bookkeeping; a column of the same name is the user's
+    /// data, and data wins.</summary>
+    [Test]
+    public async Task ForEach_ARealColumnCalledHashBeatsThePosition()
+    {
+        datasets.Write("skus.csv",
+            new[] { "first", "second" }.Select(v => new Dictionary<string, string> { ["#"] = v }), append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [LoopOver("skus.csv", "row",
+                NavBoundTo("open", Column(ForEachSpec.RowNumberKey), "https://x.example/"))],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://x.example/first", "https://x.example/second" }));
+    }
+
+    [Test]
+    public async Task ForEach_TheWholeRowBindsAsOneLineOfJson()
+    {
+        datasets.Write("skus.csv",
+            [new Dictionary<string, string> { ["sku"] = "aaa", ["qty"] = "2" }], append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [LoopOver("skus.csv", "row", NavBoundTo("open", WholeRow("skus.csv")))],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser).Single(), Is.EqualTo("""{"sku":"aaa","qty":"2"}"""));
+    }
+
+    /// <summary>The dataset name is what a whole-row binding uses to say WHICH loop it means, so
+    /// an inner loop cannot shadow the row an outer one is on.</summary>
+    [Test]
+    public async Task NestedLoops_AWholeRowBindingReachesTheLoopItNames()
+    {
+        datasets.Write("outer.csv", [new Dictionary<string, string> { ["o"] = "1" }], append: false);
+        datasets.Write("inner.csv", [new Dictionary<string, string> { ["i"] = "9" }], append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                LoopOver("outer.csv", "outer",
+                    LoopOver("inner.csv", "row",
+                        NavBoundTo("named", WholeRow("outer.csv")),
+                        NavBoundTo("innermost", WholeRow()))),
+            ],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser), Is.EqualTo(new[]
+        {
+            """{"o":"1"}""",
+            """{"i":"9"}""",
+        }), "naming the dataset reaches that loop's row; naming none means the loop you are in");
+    }
+
+    /// <summary>
+    /// Each loop counts its own rows, so an inner loop starts at 1 again for every outer row
+    /// rather than continuing a running total — and the outer loop's own count is still reachable
+    /// from inside it, by the row variable that names it.
+    /// </summary>
+    [Test]
+    public async Task NestedLoops_TheInnerPositionRestartsForEachOuterRow()
+    {
+        datasets.Write("outer.csv",
+            new[] { "a", "b" }.Select(v => new Dictionary<string, string> { ["o"] = v }), append: false);
+        datasets.Write("inner.csv",
+            new[] { "x", "y" }.Select(v => new Dictionary<string, string> { ["i"] = v }), append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                LoopOver("outer.csv", "outer",
+                    LoopOver("inner.csv", "row",
+                        NavBoundTo("here", Column(ForEachSpec.RowNumberKey), "https://inner.example/"),
+                        NavBoundTo("out", Column("outer." + ForEachSpec.RowNumberKey), "https://outer.example/"))),
+            ],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser), Is.EqualTo(new[]
+        {
+            "https://inner.example/1", "https://outer.example/1",
+            "https://inner.example/2", "https://outer.example/1",
+            "https://inner.example/1", "https://outer.example/2",
+            "https://inner.example/2", "https://outer.example/2",
+        }));
+    }
+
+    /// <summary>The same distinction a missing column gets: outside a loop the binding is in the
+    /// wrong place, which is a different mistake from naming the wrong dataset.</summary>
+    [Test]
+    public async Task WholeRow_OutsideALoop_SaysThereIsNoRowHere()
+    {
+        var events = await Run(
+            new TaskDefinition { Name = "T", Steps = [NavBoundTo("open", WholeRow())] }, Browser());
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Message,
+            Does.Contain("enclosing for-each"));
+    }
+
+    [Test]
+    public async Task WholeRow_NamingADatasetNoLoopIsOver_SaysWhichOne()
+    {
+        datasets.Write("skus.csv", [new Dictionary<string, string> { ["sku"] = "a" }], append: false);
+
+        var events = await Run(
+            new TaskDefinition
+            {
+                Name = "T",
+                Steps = [LoopOver("skus.csv", "row", NavBoundTo("open", WholeRow("other.csv")))],
+            },
+            Browser());
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message, Does.Contain("other.csv"));
+    }
+
     [Test]
     public async Task ForEach_AskingForConcurrencySaysItIsRunningInOrder()
     {
@@ -1356,6 +1544,41 @@ public class WorkflowEngineTests
             Assert.That(factory.Requested, Has.Count.LessThanOrEqualTo(3), "never more browsers than the ceiling");
             Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
         });
+    }
+
+    /// <summary>
+    /// Every row keeps the position it started with, whichever lane took it. The index is read
+    /// before the fork rather than counted as rows finish, so a slow row does not renumber itself.
+    /// </summary>
+    [Test]
+    public async Task ParallelForEach_EachRowKeepsItsOwnPosition()
+    {
+        WriteSkus("a", "b", "c", "d");
+        var factory = new FakeBrowserSurfaceFactory();
+        await using var pool = new BrowserLanePool(factory, maxConcurrency: 3);
+
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                ParallelLoop(3,
+                    NavBoundTo("open", Column(ForEachSpec.RowNumberKey), "https://x.example/")),
+            ],
+        };
+
+        await RunWithLanes(task, Browser(), pool);
+
+        var visited = factory.Lanes
+            .SelectMany(l => l.Fake.Calls.Where(c => c.Method == "Navigate").Select(c => c.Args))
+            .OrderBy(u => u, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.That(visited, Is.EqualTo(new[]
+        {
+            "https://x.example/1", "https://x.example/2",
+            "https://x.example/3", "https://x.example/4",
+        }));
     }
 
     [Test]

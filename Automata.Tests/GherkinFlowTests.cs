@@ -348,6 +348,162 @@ public class GherkinFlowTests
         Assert.That(main.Steps[0].RunTaskId, Is.EqualTo(report.Id));
     }
 
+    // ---- what a loop knows that its columns do not ------------------------------------------------
+
+    /// <summary>
+    /// The position rides on the column syntax rather than getting one of its own — <c>row.#</c> is
+    /// a reference like any other, so the guard grammar, the placeholder form and the write
+    /// assignments all took it without a new rule.
+    /// </summary>
+    [Test]
+    public void TheRowsPositionReadsAsAnOrdinaryColumnReference()
+    {
+        var result = Compile("""
+            Feature: F
+              Scenario Outline: S
+                Given row.# is not empty
+                And I write "out.csv" with at=<#>
+                Examples: skus.csv
+                  | sku |
+                  | a   |
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        var guard = result.Tasks[0].Steps[0].Children[0];
+        var write = guard.Children[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(guard.Condition!.Left.ColumnName, Is.EqualTo("#"));
+            Assert.That(write.WriteDataset!.Columns["at"].Kind, Is.EqualTo(BindingKind.DatasetColumn));
+            Assert.That(write.WriteDataset.Columns["at"].ColumnName, Is.EqualTo("#"));
+        });
+    }
+
+    /// <summary><c>row.sku</c> is a column; <c>row</c> on its own is the row.</summary>
+    [Test]
+    public void ABareRowInsideALoopIsTheWholeRow()
+    {
+        var result = Compile("""
+            Feature: F
+              Scenario Outline: S
+                Given I write "out.csv" with source=row, sku=<sku>
+                Examples: skus.csv
+                  | sku |
+                  | a   |
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        var columns = result.Tasks[0].Steps[0].Children[0].WriteDataset!.Columns;
+        Assert.Multiple(() =>
+        {
+            Assert.That(columns["source"].Kind, Is.EqualTo(BindingKind.DatasetRow));
+            Assert.That(columns["sku"].Kind, Is.EqualTo(BindingKind.DatasetColumn));
+        });
+    }
+
+    /// <summary>Outside a loop there is no row for the word to mean, so it stays an ordinary bare
+    /// name — and the diagnostic is the one about a value nothing has captured.</summary>
+    [Test]
+    public void ABareRowOutsideALoopIsStillJustAName()
+    {
+        var result = Compile("""
+            Feature: F
+              Scenario: S
+                Given I write "out.csv" with source=row
+            """);
+
+        Assert.That(Errors(result), Does.Contain("row"));
+        Assert.That(Errors(result), Does.Contain("captured"));
+    }
+
+    /// <summary>
+    /// A write step's columns are the other slot that takes a bare reference, and it used to
+    /// render them as <c>sku="&lt;sku&gt;"</c> — which the compiler read back as a LITERAL string
+    /// of angle brackets. The binding survived the render and stopped being a binding.
+    /// </summary>
+    [Test]
+    public void AColumnWrittenIntoADatasetStaysABindingAcrossARoundTrip()
+    {
+        const string source = """
+            Feature: Round trip
+
+              Scenario Outline: Copy a column
+                Given I write "out.csv" with sku=<sku>
+                Examples: skus.csv
+                  | sku |
+                  | a   |
+            """;
+
+        var written = GherkinWriter.Write(Compile(source).Collection!, Compile(source).Tasks);
+        var again = Compile(written.Text);
+
+        Assert.That(again.HasErrors, Is.False, Errors(again));
+        var column = again.Tasks[0].Steps[0].Children[0].WriteDataset!.Columns["sku"];
+        Assert.Multiple(() =>
+        {
+            Assert.That(column.Kind, Is.EqualTo(BindingKind.DatasetColumn), written.Text);
+            Assert.That(column.ColumnName, Is.EqualTo("sku"), written.Text);
+        });
+    }
+
+    /// <summary>The same file written the old way still means what it said — a feature already on
+    /// disk must not turn its column into the text "&lt;sku&gt;".</summary>
+    [Test]
+    public void AQuotedPlaceholderInAWriteAssignmentIsStillTheColumn()
+    {
+        var result = Compile("""
+            Feature: F
+              Scenario Outline: S
+                Given I write "out.csv" with sku="<sku>"
+                Examples: skus.csv
+                  | sku |
+                  | a   |
+            """);
+
+        var column = result.Tasks[0].Steps[0].Children[0].WriteDataset!.Columns["sku"];
+        Assert.Multiple(() =>
+        {
+            Assert.That(column.Kind, Is.EqualTo(BindingKind.DatasetColumn));
+            Assert.That(column.ColumnName, Is.EqualTo("sku"));
+        });
+    }
+
+    /// <summary>
+    /// Both of them render to something the compiler reads back as what it was. The position goes
+    /// out as a placeholder and the row as a bare word — deliberately not <c>&lt;row&gt;</c>, which
+    /// would come back as a column called "row".
+    /// </summary>
+    [Test]
+    public void APositionAndAWholeRowSurviveARoundTrip()
+    {
+        const string source = """
+            Feature: Round trip
+
+              Scenario Outline: Record where each row came from
+                Given I write "out.csv" with at=<#>, source=row
+                Examples: skus.csv
+                  | sku |
+                  | a   |
+            """;
+
+        var first = Compile(source);
+        Assert.That(first.HasErrors, Is.False, Errors(first));
+
+        var written = GherkinWriter.Write(first.Collection!, first.Tasks);
+        var second = Compile(written.Text);
+        Assert.That(second.HasErrors, Is.False,
+            Errors(second) + Environment.NewLine + "---" + Environment.NewLine + written.Text);
+
+        var before = first.Tasks[0].Steps[0].Children[0].WriteDataset!.Columns;
+        var after = second.Tasks[0].Steps[0].Children[0].WriteDataset!.Columns;
+        Assert.Multiple(() =>
+        {
+            Assert.That(after["at"].Kind, Is.EqualTo(before["at"].Kind), written.Text);
+            Assert.That(after["at"].ColumnName, Is.EqualTo(before["at"].ColumnName), written.Text);
+            Assert.That(after["source"].Kind, Is.EqualTo(before["source"].Kind), written.Text);
+        });
+    }
+
     // ---- round trip ------------------------------------------------------------------------------
 
     /// <summary>

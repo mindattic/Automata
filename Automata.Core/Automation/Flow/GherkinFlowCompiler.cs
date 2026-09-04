@@ -311,9 +311,16 @@ public static class GherkinFlowCompiler
             }
             var name = part[..eq].Trim();
             var value = part[(eq + 1)..].Trim();
-            spec.Columns[name] = value.StartsWith('"')
-                ? new BindingRef { Kind = BindingKind.Literal, Literal = value.Trim('"') }
-                : Reference(value, outputs, insideLoop, location, diagnostics);
+
+            // A quoted value is a literal — unless it is a placeholder, which is what older
+            // renderings of a column binding look like ( at="<sku>" ). Reading that back as a
+            // literal string of angle brackets is never what anyone meant, and it turned a bound
+            // column into a fixed value without saying a word.
+            var quoted = value.StartsWith('"');
+            var bare = quoted ? value.Trim('"') : value;
+            spec.Columns[name] = quoted && !FlowValues.IsPlaceholder(bare)
+                ? new BindingRef { Kind = BindingKind.Literal, Literal = bare }
+                : Reference(bare, outputs, insideLoop, location, diagnostics);
         }
         if (spec.Columns.Count == 0)
             diagnostics.Add(new FlowDiagnostic(FlowSeverity.Error, location.Line, location.Column,
@@ -339,8 +346,9 @@ public static class GherkinFlowCompiler
 
     /// <summary>
     /// Turns a written reference into a binding: a quoted string is a literal, <c>&lt;col&gt;</c>
-    /// or <c>row.col</c> is a dataset column, <c>env.NAME</c> is an environment variable, and a
-    /// bare name must be something an earlier step declared — checked here, not at run time.
+    /// or <c>row.col</c> is a dataset column, <c>row</c> on its own is the whole row,
+    /// <c>env.NAME</c> is an environment variable, and a bare name must be something an earlier
+    /// step declared — checked here, not at run time.
     /// </summary>
     private static BindingRef Reference(
         string written, Dictionary<string, string> outputs, bool insideLoop,
@@ -352,7 +360,7 @@ public static class GherkinFlowCompiler
             return new BindingRef { Kind = BindingKind.Literal, Literal = text.Trim('"') };
 
         if (FlowValues.IsPlaceholder(text))
-            text = "row." + FlowValues.PlaceholderName(text);
+            text = FlowValues.RowWord + "." + FlowValues.PlaceholderName(text);
 
         if (text.StartsWith("env.", StringComparison.OrdinalIgnoreCase))
         {
@@ -360,9 +368,23 @@ public static class GherkinFlowCompiler
             return new BindingRef { Kind = BindingKind.EnvVar, EnvVarName = name, Label = "env: " + name };
         }
 
-        if (text.StartsWith("row.", StringComparison.OrdinalIgnoreCase))
+        // Before the outputs lookup, so inside a loop the word means the row. A step that also
+        // publishes an output called "row" is not an error — the row simply wins, and saying so is
+        // better than either silently shadowing it or refusing a feature file that already reads
+        // clearly.
+        if (insideLoop && string.Equals(text, FlowValues.RowWord, StringComparison.OrdinalIgnoreCase))
         {
-            var column = text[4..];
+            if (outputs.ContainsKey(text))
+            {
+                diagnostics.Add(new FlowDiagnostic(FlowSeverity.Warning, location.Line, location.Column,
+                    $"'{text}' here is the whole row this loop is on, not the output of the same name"));
+            }
+            return new BindingRef { Kind = BindingKind.DatasetRow, Label = "the whole row" };
+        }
+
+        if (text.StartsWith(FlowValues.RowWord + ".", StringComparison.OrdinalIgnoreCase))
+        {
+            var column = text[(FlowValues.RowWord.Length + 1)..];
             if (!insideLoop)
             {
                 diagnostics.Add(new FlowDiagnostic(FlowSeverity.Error, location.Line, location.Column,

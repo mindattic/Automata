@@ -68,11 +68,23 @@ public static class FlowValues
         return binding.Kind switch
         {
             BindingKind.DatasetColumn => Quote("<" + binding.ColumnName + ">"),
+            // Bare, like the other references. NOT the "<name>" placeholder form a column uses:
+            // Gherkin would read <row> as an Examples substitution and the compiler would hand it
+            // straight back as a column called "row".
+            BindingKind.DatasetRow => RowWord,
             BindingKind.StepOutput => binding.OutputField ?? "",
             BindingKind.EnvVar => "env." + binding.EnvVarName,
             _ => Quote(binding.Literal),
         };
     }
+
+    /// <summary>
+    /// How the whole current row is written and read back. Fixed, not the loop's own
+    /// <see cref="ForEachSpec.RowVariableName"/>: a Scenario Outline has no place to record that
+    /// name, so the compiler always builds a loop called <c>row</c> and writing anything else
+    /// would render a word nothing could recompile.
+    /// </summary>
+    public const string RowWord = "row";
 
     public static string Quote(string? text) => "\"" + (text ?? "").Replace("\"", "'") + "\"";
 }

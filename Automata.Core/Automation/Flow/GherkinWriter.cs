@@ -164,31 +164,34 @@ public static class GherkinWriter
         var entry = StepDefinitionCatalog.Comparisons.FirstOrDefault(c => c.Op == condition.Op);
         if (entry.Phrase == null) return null;
 
-        var left = GuardOperand(condition.Left);
+        var left = BareOperand(condition.Left);
         if (left == null) return null;
         if (entry.Unary) return $"{Bare(left)} {entry.Phrase}";
 
-        var right = GuardOperand(condition.Right);
+        var right = BareOperand(condition.Right);
         return right == null ? null : $"{Bare(left)} {entry.Phrase} {right}";
     }
 
     /// <summary>
-    /// A guard's operands are written in the BARE form the guard grammar reads back — <c>row.sku</c>,
-    /// <c>price</c>, <c>env.TOKEN</c>.
+    /// The BARE form of a reference — <c>row.sku</c>, <c>row</c>, <c>price</c>, <c>env.TOKEN</c> —
+    /// used by the two slots whose grammar reads bare references back: a guard's operands and a
+    /// write step's column assignments.
     /// <para>
     /// Not the quoted-placeholder form a step VALUE uses. <c>"&lt;sku&gt;"</c> is Gherkin's own
-    /// Scenario Outline substitution and means something there; the guard pattern does not accept
-    /// it, so writing a column guard that way produced a line the compiler could not read back —
-    /// a feature that rendered and then would not recompile.
+    /// Scenario Outline substitution and means something there; neither of these patterns accepts
+    /// it, so writing one that way produced a line the compiler read back as a LITERAL containing
+    /// angle brackets — a column binding that survived rendering and then silently stopped being a
+    /// binding.
     /// </para>
     /// <para>
-    /// Null for a binding with no guard form at all, which makes the caller record it as lossy
+    /// Null for a binding with no bare form at all, which makes the caller record it as lossy
     /// rather than write a line that says the wrong thing.
     /// </para>
     /// </summary>
-    private static string? GuardOperand(BindingRef? binding) => binding == null ? null : binding.Kind switch
+    private static string? BareOperand(BindingRef? binding) => binding == null ? null : binding.Kind switch
     {
-        BindingKind.DatasetColumn => "row." + binding.ColumnName,
+        BindingKind.DatasetColumn => FlowValues.RowWord + "." + binding.ColumnName,
+        BindingKind.DatasetRow => FlowValues.RowWord,
         BindingKind.StepOutput => binding.OutputField,
         BindingKind.EnvVar => "env." + binding.EnvVarName,
         BindingKind.Literal => FlowValues.Quote(binding.Literal),
@@ -199,7 +202,16 @@ public static class GherkinWriter
     {
         var spec = step.WriteDataset;
         if (spec == null || spec.Columns.Count == 0) return null;
-        var assignments = spec.Columns.Select(kv => kv.Key + "=" + FlowValues.Write(null, kv.Value));
+
+        // Null from any one column takes the whole line out, rather than writing a step that says
+        // it fills three columns and fills two — the caller records it and the reader is told.
+        var assignments = new List<string>();
+        foreach (var (column, binding) in spec.Columns)
+        {
+            var written = BareOperand(binding);
+            if (written == null) return null;
+            assignments.Add(column + "=" + written);
+        }
         return $"I write {FlowValues.Quote(spec.DatasetName)} with {string.Join(", ", assignments)}";
     }
 

@@ -53,8 +53,15 @@ public static class StepDefinitionCatalog
     // grammar unambiguous without needing a real parser.
     private const string Q = "\"([^\"]*)\"";
 
-    /// <summary>A bare reference: a captured value (<c>price</c>) or a row column (<c>row.sku</c>).</summary>
-    private const string Ref = @"([A-Za-z_][\w.]*)";
+    /// <summary>
+    /// A bare reference: a captured value (<c>price</c>), the whole current row (<c>row</c>), or
+    /// one of its columns (<c>row.sku</c>, <c>row.#</c>).
+    /// <para>
+    /// <c>#</c> is in the set because that is the name a row's position is published under. It is
+    /// safe mid-line: Gherkin's comments are whole lines, so a <c>#</c> inside step text is text.
+    /// </para>
+    /// </summary>
+    private const string Ref = @"([A-Za-z_][\w.#]*)";
 
     private static Regex Rx([StringSyntax(StringSyntaxAttribute.Regex)] string pattern) =>
         new("^" + pattern + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

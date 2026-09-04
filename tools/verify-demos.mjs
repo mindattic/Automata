@@ -160,6 +160,30 @@ try {
     'a list with no gap in it would not exercise the branch',
   );
 
+  // The two things a loop knows that its columns do not. This is the assertion that separates
+  // `row.#` from "how many rows have I written": the gap is the SECOND row, so the people added
+  // came from positions 1 and 3 — a running count of the writes would say 1 and 2 and look fine.
+  const added = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'roster-added.csv'));
+  const wanted = roster
+    .map((r, at) => ({ at: String(at + 1), row: r }))
+    .filter((e) => e.row.Name !== undefined && e.row.Role !== undefined);
+  check(
+    'each added row carries the position it came from in the source list',
+    added.length === wanted.length && added.every((r, i) => r.position === wanted[i].at),
+    `${added.map((r) => r.position).join(', ')} — expected ${wanted.map((e) => e.at).join(', ')}`,
+  );
+  check(
+    'and the whole source row alongside it, as JSON',
+    added.every((r, i) => {
+      try {
+        return JSON.parse(r.source).Name === wanted[i].row.Name;
+      } catch {
+        return false;
+      }
+    }),
+    added.map((r) => r.source).join(' | '),
+  );
+
   // ---- a task run more than one way -------------------------------------------------------------
   // The search example passed on its default above. Supplying a value has to actually change what
   // it does — an input that is declared, bound, and then ignored would look identical to one that

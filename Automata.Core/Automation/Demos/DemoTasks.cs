@@ -58,6 +58,9 @@ public static class DemoTasks
     /// <summary>Dataset the order example writes one row to per check that held.</summary>
     public const string OrderChecksDataset = "order-checks.csv";
 
+    /// <summary>Dataset the roster example writes one row to per person it added.</summary>
+    public const string RosterAddedDataset = "roster-added.csv";
+
     /// <summary>Lanes the parallel variant asks for. Four is enough to expose an ordering or
     /// locking problem while still fitting comfortably on one machine.</summary>
     public const int ParallelLanes = 4;
@@ -797,6 +800,30 @@ public static class DemoTasks
                                         Label = "Add them",
                                         Target = Css("button", "#add"),
                                     },
+                                    // The two things a loop knows that its columns do not: where
+                                    // in the list this row sat, and what the row was. Written side
+                                    // by side with the name so a result can be traced back to the
+                                    // line of input it came from — which is the whole reason to
+                                    // want either of them.
+                                    new Step
+                                    {
+                                        Id = "demo-roster-record",
+                                        Action = StepAction.WriteDataset,
+                                        Label = "Record who was added, and where they came from",
+                                        WriteDataset = new DatasetWriteSpec
+                                        {
+                                            DatasetName = RosterAddedDataset,
+                                            Format = "csv",
+                                            Append = true,
+                                            ResetOnFirstWrite = true,
+                                            Columns = new Dictionary<string, BindingRef>
+                                            {
+                                                ["position"] = RowNumber(),
+                                                ["name"] = Column("Name"),
+                                                ["source"] = WholeRow(DemoPages.RosterDataset),
+                                            },
+                                        },
+                                    },
                                 ],
                             },
                         ],
@@ -819,6 +846,18 @@ public static class DemoTasks
         Kind = BindingKind.DatasetColumn,
         ColumnName = name,
         Label = "row." + name,
+    };
+
+    /// <summary>A binding to the row's position in the list, counting from 1. A column like any
+    /// other as far as a binding is concerned — the loop is what publishes it.</summary>
+    private static BindingRef RowNumber() => Column(ForEachSpec.RowNumberKey);
+
+    /// <summary>A binding to the whole current row, as one line of JSON.</summary>
+    private static BindingRef WholeRow(string datasetName) => new()
+    {
+        Kind = BindingKind.DatasetRow,
+        DatasetName = datasetName,
+        Label = "the whole row",
     };
 
     // ---- a task run more than one way -----------------------------------------------------------

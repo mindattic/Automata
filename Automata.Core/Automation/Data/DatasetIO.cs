@@ -247,6 +247,18 @@ public static class DatasetIO
         _ => value.GetRawText(),
     };
 
+    /// <summary>
+    /// One row as a single-line JSON object — the form a whole-row binding hands to a step.
+    /// <para>
+    /// Compact, unlike <see cref="WriteJsonArray"/>: this value goes into a CSV cell or a text
+    /// field, and an indented object would put newlines inside one. Values stay strings, because
+    /// that is what a row IS here — a column whose value is itself raw JSON (see
+    /// <see cref="Stringify"/>) comes back as a JSON string containing that text rather than as a
+    /// nested object, which is the same flatness a column binding already has.
+    /// </para>
+    /// </summary>
+    public static string RowJson(IReadOnlyDictionary<string, string> row) => JsonSerializer.Serialize(row);
+
     public static void WriteJsonArray(string path, IEnumerable<IReadOnlyDictionary<string, string>> rows, bool append = false)
     {
         var all = new List<IReadOnlyDictionary<string, string>>();

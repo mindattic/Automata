@@ -78,6 +78,13 @@ internal static class BindingResolver
                     return (false, null, null);
                 break;
 
+            // Sited two ways, meaning the same thing both times: on a ForEach it names the rows to
+            // iterate, and on a value it is the one the loop is on now. Only the second reaches
+            // here — the engine reads the loop's dataset name straight off the spec.
+            case BindingKind.DatasetRow:
+                if (!state.TryRow(binding.DatasetName, out core)) return (false, null, null);
+                break;
+
             case BindingKind.TaskInput:
                 if (string.IsNullOrWhiteSpace(binding.ParameterName))
                     return (false, null, "no input name set");
@@ -118,6 +125,10 @@ internal static class BindingResolver
             $"no value for '{binding.ColumnName}' here — this binding needs an enclosing for-each over a dataset",
         BindingKind.DatasetColumn =>
             $"this row has no '{binding.ColumnName}' — check the column name, or guard the step with 'exists'",
+        BindingKind.DatasetRow when !state.InRowScope =>
+            "there is no row here — a whole-row binding needs an enclosing for-each over a dataset",
+        BindingKind.DatasetRow =>
+            $"no loop here is over '{binding.DatasetName}' — check which dataset the whole-row binding names",
         BindingKind.EnvVar => $"environment variable '{binding.EnvVarName}' is not set",
         _ => $"{binding.Kind} has no value here",
     };

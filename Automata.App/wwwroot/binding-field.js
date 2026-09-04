@@ -113,7 +113,8 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
     var inputs = (task.inputs || []).filter(function (i) { return i.name; });
     var columns = columnsInScope(task, step);
 
-    if (!sources.length && !inputs.length && !columns.length && !current) {
+    if (!sources.length && !inputs.length && !columns.length
+        && !loopDatasetsInScope(task, step).length && !current) {
         openInfoModal('Nothing to bind to yet',
             'A binding reuses a value an earlier step captured, or one this task takes from ' +
             'whoever runs it. Add an "extractText" step before this one and name its output, or ' +
@@ -137,6 +138,29 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
             value: 'column:' + c.name,
             label: 'row.' + c.name,
             detail: 'a column of ' + c.dataset + ', for the row this loop is on',
+        });
+    });
+
+    // Two things a loop publishes that are not columns, so nothing can read them off the dataset:
+    // where the row sits in the list, and the row itself. Taken from the same walk the columns came
+    // from, so a step outside every loop is offered neither.
+    var loops = loopDatasetsInScope(task, step);
+    if (loops.length) {
+        // Once, not once per loop: like a column, the position is named bare and means the loop you
+        // are in. See ForEachSpec.RowNumberKey.
+        items.push({
+            value: 'column:#',
+            label: 'row.#',
+            detail: 'which row this is, counting from 1 — the same number the run log prints',
+        });
+    }
+    // The row itself IS named per loop, because that is the only way a step inside a nested one can
+    // say which row it means.
+    loops.forEach(function (name) {
+        items.push({
+            value: 'row:' + name,
+            label: 'row (all of ' + name + ')',
+            detail: 'every column of the current row, as one line of JSON',
         });
     });
 
@@ -176,6 +200,16 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
                         suffix: current ? current.suffix : null,
                     });
                 });
+            return;
+        }
+        if (choice.indexOf('row:') === 0) {
+            onCommit({
+                kind: 'datasetRow',
+                datasetName: choice.slice('row:'.length),
+                label: 'the whole row',
+                prefix: current ? current.prefix : null,
+                suffix: current ? current.suffix : null,
+            });
             return;
         }
         if (choice.indexOf('column:') === 0) {
