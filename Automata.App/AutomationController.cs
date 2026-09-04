@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Automata.Core.Automation;
 using Automata.Core.Automation.Logging;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Recording;
+using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Flow;
 using Automata.Core.Automation.Replay;
@@ -34,6 +36,7 @@ public sealed class AutomationController
     private readonly ScheduleStore schedule;
     private readonly ParkedRunStore parkedRuns;
     private readonly LiveLaneStore liveLanes;
+    private readonly DemoSeeder demos;
     private readonly IClock clock;
 
     /// <summary>
@@ -82,6 +85,7 @@ public sealed class AutomationController
         ScheduleStore schedule,
         ParkedRunStore parkedRuns,
         LiveLaneStore liveLanes,
+        DemoSeeder demos,
         IClock clock,
         FlowAuthoringService authoring,
         Func<IBrowserSurface?> targetSurface,
@@ -98,6 +102,7 @@ public sealed class AutomationController
         this.schedule = schedule;
         this.parkedRuns = parkedRuns;
         this.liveLanes = liveLanes;
+        this.demos = demos;
         this.clock = clock;
         this.authoring = authoring;
         this.targetSurface = targetSurface;
@@ -114,8 +119,47 @@ public sealed class AutomationController
         switch (action)
         {
             case "getState":
+                // First load seeds the generated examples, so a new user has something that works
+                // to run and read before building anything. It is a no-op on every later launch,
+                // and it never overwrites an example somebody has edited.
+                await SeedDemosOnceAsync();
                 await PushStateAsync();
                 return true;
+
+            case "surveyDemos":
+                await PushDemoSurveyAsync();
+                return true;
+
+            case "pickHarvest":
+                await ArmHarvestPickAsync(Str(msg, "mode") ?? "row", Str(msg, "itemSelector") ?? "");
+                return true;
+
+            case "cancelHarvestPick":
+            {
+                var surface = targetCore();
+                if (surface != null)
+                    await TryEvalAsync(surface, "window.__automataRecorder && window.__automataRecorder.cancelPick()");
+                return true;
+            }
+
+            case "regenerateDemos":
+            {
+                var resolutions = new Dictionary<string, DemoResolution>(StringComparer.Ordinal);
+                if (msg["resolutions"] is JsonObject chosen)
+                {
+                    foreach (var (key, value) in chosen)
+                    {
+                        if (Enum.TryParse<DemoResolution>(value?.GetValue<string>(), true, out var resolution))
+                            resolutions[key] = resolution;
+                    }
+                }
+
+                var report = demos.Regenerate(resolutions);
+                await logAsync(SummariseDemoRegeneration(report));
+                await PushStateAsync();
+                await PushDemoSurveyAsync();
+                return true;
+            }
 
             case "createCollection":
                 store.CreateCollection(Str(msg, "name") ?? "New collection");
@@ -538,6 +582,15 @@ public sealed class AutomationController
     /// <summary>Raw recorder message from the target pane (already filtered by source tag).</summary>
     public async Task HandleRecorderMessageAsync(JsonNode msg)
     {
+        // A pick is not a recording. It arrives on the same channel because it is the same injected
+        // script, but it happens while nothing is being recorded — so it is answered before the
+        // recording guard below, not after it.
+        if (msg["kind"]?.GetValue<string>() == "pick")
+        {
+            await execPanelScript($"window.ssPanel.onHarvestPick({msg.ToJsonString()})");
+            return;
+        }
+
         if (!recording) return;
         try
         {
@@ -890,6 +943,101 @@ public sealed class AutomationController
     // ---- panel pushes --------------------------------------------------------------------------
 
     /// <summary>Full collections→tasks tree, re-sent after every mutation — keeps the panel JS dumb.</summary>
+    /// <summary>
+    /// Seeds the generated examples the first time the panel asks for state in this process.
+    /// <para>
+    /// Once per launch rather than once ever: it restores a page somebody deleted and refreshes an
+    /// untouched example that an older build produced, both of which are cheap and both of which
+    /// prevent the demo batch quietly rotting. A failure here is logged and swallowed — a
+    /// generated example is a convenience, and nothing about it is worth refusing to open the app
+    /// over.
+    /// </para>
+    /// </summary>
+    private async Task SeedDemosOnceAsync()
+    {
+        if (demosSeeded) return;
+        demosSeeded = true;
+        try
+        {
+            var report = demos.SeedMissing();
+            if (report.Added.Count > 0)
+                await logAsync($"Added example task(s): {string.Join(", ", report.Added)}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await logAsync($"⚠ Could not write the examples to {demos.RootPath}: {ex.Message}");
+        }
+    }
+
+    private bool demosSeeded;
+
+    /// <summary>
+    /// Arms the target pane to answer the next click as a harvest pick rather than acting on it.
+    /// <para>
+    /// This is how a harvest gets built without anybody typing a selector: the user clicks one
+    /// product tile and the page reports what "all the tiles like this one" resolves to, and how
+    /// many there are, so the count is confirmed on screen before it is stored.
+    /// </para>
+    /// </summary>
+    private async Task ArmHarvestPickAsync(string mode, string itemSelector)
+    {
+        var surface = targetCore();
+        if (surface == null)
+        {
+            await logAsync("⚠ The browser pane isn't ready yet — wait for it to load, then try again.");
+            return;
+        }
+
+        var arg = JsonSerializer.Serialize(itemSelector, AutomataJson.Options);
+        var wanted = mode == "field" ? "field" : "row";
+        await TryEvalAsync(surface,
+            $"window.__automataRecorder && window.__automataRecorder.pick(\"{wanted}\", {arg})");
+        await logAsync(wanted == "row"
+            ? "Click one item in the page — the whole list like it becomes the harvest."
+            : "Click the value inside that item you want as a column.");
+    }
+
+    /// <summary>Evaluates in the target pane, swallowing the failure a closed pane throws.</summary>
+    private static async Task TryEvalAsync(CoreWebView2 surface, string script)
+    {
+        try { await surface.ExecuteScriptAsync(script); }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException) { /* pane gone */ }
+    }
+
+    private Task PushDemoSurveyAsync()
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            root = demos.RootPath,
+            items = demos.Survey().Select(s => new
+            {
+                key = s.Key,
+                name = s.Name,
+                state = s.State.ToString().ToLowerInvariant(),
+                taskId = s.TaskId,
+            }),
+        }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onDemoSurvey({json})");
+    }
+
+    private static string SummariseDemoRegeneration(DemoSeedReport report)
+    {
+        var parts = new List<string>();
+        void Add(string label, IReadOnlyList<string> names)
+        {
+            if (names.Count > 0) parts.Add($"{label} {string.Join(", ", names)}");
+        }
+        Add("added", report.Added);
+        Add("refreshed", report.Refreshed);
+        Add("restored", report.Reverted);
+        Add("copied in", report.Cloned);
+        Add("left alone", report.Kept);
+
+        return parts.Count == 0
+            ? "Examples are already up to date."
+            : $"Examples: {string.Join("; ", parts)}.";
+    }
+
     public Task PushStateAsync()
     {
         var tree = store.LoadCollections().Select(c => new
@@ -902,7 +1050,14 @@ public sealed class AutomationController
             settings = c.Settings,
             tasks = store.LoadTasks(c.Id),
         });
-        var json = JsonSerializer.Serialize(new { collections = tree }, AutomataJson.Options);
+        // Named so the first-run tutorial can tell "this person has built nothing yet" from
+        // "this person has nothing but the examples we generated for them". Without it, seeding
+        // the examples would silently suppress the tutorial — and the tutorial surviving every
+        // change is the one invariant this project does not trade away.
+        var demoCollectionId = store.LoadCollections()
+            .FirstOrDefault(c => c.Name == DemoTasks.CollectionName)?.Id;
+        var json = JsonSerializer.Serialize(
+            new { collections = tree, demoCollectionId }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onState({json})");
     }
 

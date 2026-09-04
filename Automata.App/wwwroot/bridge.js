@@ -3,17 +3,27 @@
 // outbound half.
 
 import {
-    $, logEl, state, post, announce, findTask, findCollection, spliceStepsAt, saveTask,
+    $, logEl, state, post, announce, findTask, findCollection, findStep, spliceStepsAt, saveTask,
 } from './core.js';
 import { render, renderRecPreview } from './render.js';
 import { renderDatasets } from './data.js';
 import { renderRuns } from './runs.js';
 import { renderLanes } from './lanes.js';
 import { renderSchedule, onSchedulePushed } from './schedule.js';
+import { renderDemosDialog } from './demos.js';
 import { showDraft, showFeatureView } from './flow.js';
 import { maybeStartTutorial, advanceTutorial } from './tutorial.js';
 import { showBuildTab } from './tabs.js';
 import { LLM_PROVIDERS } from './settings.js';
+
+/// A free "column1", "column2"… so a freshly picked column always has a usable name; the user
+/// renames it in place. An unnamed column would be dropped on the next save.
+function nextColumnName(fields) {
+    var taken = (fields || []).map(function (f) { return f.name; });
+    for (var n = 1; ; n++) {
+        if (taken.indexOf('column' + n) < 0) return 'column' + n;
+    }
+}
 
 window.ssPanel = {
     onLog: function (line) {
@@ -45,12 +55,72 @@ window.ssPanel = {
     },
     onState: function (model) {
         state.collections = (model && model.collections) || [];
+        state.demoCollectionId = (model && model.demoCollectionId) || null;
         // Drop selections that no longer exist (deleted/moved elsewhere).
         if (state.sel.taskId && !findTask(state.sel.taskId)) state.sel.taskId = state.sel.stepId = null;
         if (state.sel.collectionId && !findCollection(state.sel.collectionId)) state.sel.collectionId = null;
         render();
         maybeStartTutorial();
         advanceTutorial();
+    },
+    // A harvest pick, answered by the target pane. state.harvestPick says which step and which
+    // column asked, because this editor has been re-rendered since the request went out.
+    onHarvestPick: function (answer) {
+        var want = state.harvestPick;
+        state.harvestPick = null;
+        if (!want) return;
+        if (!answer || !answer.ok) {
+            announce('Nothing was picked.');
+            window.ssPanel.onLog('⚠ ' + ((answer && answer.error) || 'that could not be used as a harvest'));
+            return;
+        }
+
+        var task = findTask(want.taskId);
+        var step = task ? findStep(task.steps, want.stepId) : null;
+        if (!step) return;
+        var harvest = Object.assign({ format: 'csv', append: false, fields: [] }, step.harvest);
+        harvest.fields = (harvest.fields || []).slice();
+
+        if (want.mode === 'row') {
+            harvest.itemSelector = answer.selector;
+            harvest.expectedCount = answer.count;
+            // Columns were located RELATIVE to the previous row set, so they cannot survive a
+            // different one. Saying so beats silently keeping selectors that resolve to nothing.
+            if (harvest.fields.length) {
+                harvest.fields = [];
+                window.ssPanel.onLog(
+                    'The row picked changed, so the columns were cleared — pick them again.');
+            }
+            announce('Harvest matches ' + answer.count + ' items.');
+        } else {
+            var field = {
+                name: '',
+                selector: answer.selector || null,
+                source: answer.href ? 'href' : 'text',
+                attributeName: null,
+            };
+            if (want.index === null || want.index === undefined) {
+                field.name = nextColumnName(harvest.fields);
+                harvest.fields.push(field);
+            } else {
+                var was = harvest.fields[want.index] || {};
+                field.name = was.name || nextColumnName(harvest.fields);
+                field.source = was.source || field.source;
+                field.attributeName = was.attributeName || null;
+                harvest.fields[want.index] = field;
+            }
+            if (answer.resolves !== undefined && answer.total !== undefined && answer.resolves < answer.total) {
+                window.ssPanel.onLog('That element is only present in ' + answer.resolves +
+                    ' of ' + answer.total + ' rows — those rows will have an empty value here.');
+            }
+        }
+
+        step.harvest = harvest;
+        saveTask(task);
+    },
+    onDemoSurvey: function (survey) {
+        state.demos = survey || null;
+        renderDemosDialog();
     },
     onStepEvent: function (e) {
         state.stepStatus[e.stepId] = e.status;

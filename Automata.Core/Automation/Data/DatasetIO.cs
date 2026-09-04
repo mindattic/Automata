@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using Automata.Core.Automation.Storage;
 
 namespace Automata.Core.Automation.Data;
 
@@ -18,13 +19,33 @@ namespace Automata.Core.Automation.Data;
 /// </summary>
 public static class DatasetIO
 {
-    /// <summary>Reads a dataset, picking the format from the file extension.</summary>
-    public static IReadOnlyList<Dictionary<string, string>> Read(string path) =>
-        IsJson(path) ? ReadJsonArray(path) : ReadCsv(path);
+    /// <summary>
+    /// Reads a dataset, picking the format from the file extension.
+    /// <para>
+    /// Locked, so a reader never catches a rewrite half-done. Appending a row that introduces a new
+    /// column rewrites the whole file, and a read landing in the middle of that would see a
+    /// truncated one.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<Dictionary<string, string>> Read(string path)
+    {
+        using var _ = ExclusiveFileLock.Acquire(path);
+        return IsJson(path) ? ReadJsonArray(path) : ReadCsv(path);
+    }
 
-    /// <summary>Writes a dataset, picking the format from the file extension.</summary>
+    /// <summary>
+    /// Writes a dataset, picking the format from the file extension.
+    /// <para>
+    /// <b>The lock spans the whole read-modify-write, not just the write.</b> An append reads the
+    /// existing rows, works out the union of columns and writes the result back; locking only the
+    /// final write would still let two writers each read the same "before" and clobber each other's
+    /// rows. This is the door every run's dataset writing goes through, including a parallel
+    /// for-each where several rows finish at once.
+    /// </para>
+    /// </summary>
     public static void Write(string path, IEnumerable<IReadOnlyDictionary<string, string>> rows, bool append = false)
     {
+        using var _ = ExclusiveFileLock.Acquire(path);
         if (IsJson(path)) WriteJsonArray(path, rows, append);
         else WriteCsv(path, rows, append);
     }
@@ -34,6 +55,16 @@ public static class DatasetIO
     /// picker enumerates so a user chooses a column instead of typing one.
     /// </summary>
     public static IReadOnlyList<string> Columns(string path)
+    {
+        using var _ = ExclusiveFileLock.Acquire(path);
+        return ColumnsUnlocked(path);
+    }
+
+    /// <summary>
+    /// The same, for callers that already hold the lock. Re-taking it from inside
+    /// <see cref="WriteCsv"/> would deadlock against itself.
+    /// </summary>
+    private static IReadOnlyList<string> ColumnsUnlocked(string path)
     {
         if (!File.Exists(path)) return [];
         if (IsJson(path))
@@ -54,6 +85,8 @@ public static class DatasetIO
         Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase);
 
     // ---- CSV ---------------------------------------------------------------------------------
+    // The format-specific methods below do NO locking: they are the internals that Read and Write
+    // call while already holding it. Call them directly only where concurrency is not in play.
 
     public static IReadOnlyList<Dictionary<string, string>> ReadCsv(string path) =>
         File.Exists(path) ? ReadCsvText(File.ReadAllText(path)) : [];
@@ -88,7 +121,7 @@ public static class DatasetIO
     {
         var incoming = rows.ToList();
         var existing = append && File.Exists(path) ? ReadCsv(path).ToList() : [];
-        var existingHeader = append && File.Exists(path) ? Columns(path).ToList() : [];
+        var existingHeader = append && File.Exists(path) ? ColumnsUnlocked(path).ToList() : [];
 
         var columns = new List<string>(existingHeader);
         foreach (var row in incoming)

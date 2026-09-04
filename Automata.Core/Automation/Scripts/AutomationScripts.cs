@@ -12,6 +12,7 @@ public static class AutomationScripts
 {
     public static string FingerprintJs { get; } = Load("fingerprint.js");
     public static string ResolverJs { get; } = Load("resolver.js");
+    public static string HarvestJs { get; } = Load("harvest.js");
 
     private static string Load(string fileName)
     {

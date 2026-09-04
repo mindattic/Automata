@@ -14,7 +14,7 @@ function openSettings() {
     $('settings-modal-close').focus();
 }
 
-function closeSettings() {
+export function closeSettings() {
     if ($('settings-modal').classList.contains('hidden')) return;
     $('settings-modal').classList.add('hidden');
     if (settingsReturnEl && document.body.contains(settingsReturnEl)) settingsReturnEl.focus();

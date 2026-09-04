@@ -131,10 +131,30 @@
         <button id="set-engine-defaults" class="mini"
                 data-tooltip="Engine defaults that every collection, task and step inherits">Engine defaults…</button>
       </div>
+      <div class="row settings-row">
+        <span class="key-status">the worked examples in the Demos collection</span>
+        <button id="set-regen-demos" class="mini"
+                data-tooltip="Rebuild the example pages and tasks; anything you have edited is asked about first">Examples…</button>
+      </div>
       <div class="field">
         <span id="lbl-radius">Border radius</span>
         <input type="range" id="set-radius" min="0" max="10" step="1" value="5" aria-labelledby="lbl-radius" />
         <span id="set-radius-value" class="key-status">5px</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="demos-modal" class="hidden">
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="demos-title">
+      <div class="section-head">
+        <h2 class="section-label" id="demos-title">Examples</h2>
+        <button id="demos-modal-close" class="mini" aria-label="Close examples">✕</button>
+      </div>
+      <div id="demos-body"></div>
+      <div class="row settings-row">
+        <span class="key-status">example pages are always rebuilt; tasks follow your answers above</span>
+        <button id="demos-regen" class="mini"
+                data-tooltip="Rebuild the example pages and apply the choices above">Regenerate</button>
       </div>
     </div>
   </div>

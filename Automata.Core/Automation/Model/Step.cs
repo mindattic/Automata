@@ -73,6 +73,13 @@ public enum StepAction
 
     /// <summary>Write bound values as a row of a named dataset.</summary>
     WriteDataset,
+
+    /// <summary>
+    /// Read many rows off the current page and write them to a dataset, so a later
+    /// <see cref="ForEach"/> can iterate something gathered while browsing rather than only a file
+    /// a human supplied. See <see cref="Step.Harvest"/>.
+    /// </summary>
+    ExtractAll,
 }
 
 /// <summary>
@@ -148,6 +155,9 @@ public sealed class Step
 
     /// <summary><see cref="StepAction.WriteDataset"/>.</summary>
     public DatasetWriteSpec? WriteDataset { get; set; }
+
+    /// <summary><see cref="StepAction.ExtractAll"/>.</summary>
+    public HarvestSpec? Harvest { get; set; }
 
     /// <summary>
     /// Engine settings overridden at this scope; null (the usual case) means "inherit everything".

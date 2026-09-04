@@ -16,6 +16,9 @@ import {
 var NEEDS_TARGET = {
     navigate: false, group: false, wait: false,
     if: false, forEach: false, runTask: false, writeDataset: false,
+    // A harvest's rows come from a picked set selector, not from a single-element
+    // fingerprint, so the ordinary target box would be a second, contradictory answer.
+    extractAll: false,
 };
 var NEEDS_VALUE = { typeText: 'Text to type', setValue: 'Value to set', selectOption: 'Option text',
     uploadFile: 'Local file path', assertElement: 'Expected text (optional)' };

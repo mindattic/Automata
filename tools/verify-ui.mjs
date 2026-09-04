@@ -268,6 +268,8 @@ async function floorCheck(exePath, group) {
       AUTOMATA_SCHEDULE_PATH: path.join(scratch, 'schedule', 'schedule.json'),
       AUTOMATA_PARKED_ROOT: path.join(scratch, 'parked'),
       AUTOMATA_LIVE_ROOT: path.join(scratch, 'live'),
+      AUTOMATA_DEMOS_ROOT: path.join(scratch, 'demos'),
+      AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
     },
     stdio: 'ignore',
   });
@@ -295,19 +297,38 @@ async function floorCheck(exePath, group) {
     });
 
     await group('floor: it builds Google Searches / Wolf Tshirts, ending at Click Images', async () => {
-      assertEqual(await page.locator('#tree .node.collection').count(), 1, 'expected exactly one collection');
-      assertEqual((await page.locator('#tree .node.collection .name').textContent())?.trim(), 'Google Searches',
-        'expected the tutorial collection');
-      assertEqual((await page.locator('#tree .node.task .name').textContent())?.trim(), 'Wolf Tshirts',
-        'expected the tutorial task');
-      const labels = await page.locator('#tree .node.step .name').allTextContents();
+      // First load also seeds the generated "Demos" collection, deliberately: a new user should
+      // have something that already works to run and read. So the invariant is not "one
+      // collection" any more — it is that the tutorial's own collection is there, that it is the
+      // only thing besides the generated examples, and that it holds exactly the tutorial.
+      const collections = (await page.locator('#tree .node.collection .name').allTextContents())
+        .map((t) => t.trim());
+      assertEqual(JSON.stringify(collections.slice().sort()), JSON.stringify(['Demos', 'Google Searches']),
+        `expected the tutorial collection plus the generated examples, got ${JSON.stringify(collections)}`);
+
+      // Scoped by id through the tree's data-collection / data-task attributes, so the examples'
+      // tasks and steps cannot mask a regression in what the tutorial itself builds. The tree is a
+      // flat list of rows, so scoping has to be by attribute rather than by containment.
+      const tutorialId = await page
+        .locator('#tree .node.collection', { has: page.locator('.name', { hasText: /^Google Searches$/ }) })
+        .getAttribute('data-collection');
+      const tasks = (await page.locator(`#tree .node.task[data-collection="${tutorialId}"] .name`)
+        .allTextContents()).map((t) => t.trim());
+      assertEqual(JSON.stringify(tasks), JSON.stringify(['Wolf Tshirts']),
+        `expected only the tutorial task, got ${JSON.stringify(tasks)}`);
+      const tutorialTaskId = await page
+        .locator(`#tree .node.task[data-collection="${tutorialId}"]`).getAttribute('data-task');
+      const labels = await page.locator(`#tree .node.step[data-task="${tutorialTaskId}"] .name`)
+        .allTextContents();
       assertEqual(labels.length, 5, `expected the 5 tutorial steps, got ${JSON.stringify(labels)}`);
       assertTrue(/Images/i.test(labels[4]), `the tutorial must end at Click Images, got "${labels[4]}"`);
     });
 
     await group('floor: the action picker still offers only the original 14 actions', async () => {
-      // New step actions (Wait / If / ForEach / RunTask / WriteDataset) must arrive in a
-      // separate collapsed "Flow" group, never at the top level of this list.
+      // Every step action added after the original fourteen (Wait / If / ForEach / RunTask /
+      // WriteDataset / ExtractAll / whatever comes next) must arrive in a separate collapsed
+      // "Flow" group, never at the top level of this list. The number in the group is expected to
+      // GROW, so what is pinned here is the top level, which must not.
       await clickRowOp(page.locator('#tree .node.step').first(), 'ins-after');
       await page.locator('#modal-list .action-pick').first().waitFor({ state: 'visible', timeout: 5000 });
       // Direct children only: flow-control actions live in a collapsed <details> below, and the
@@ -318,8 +339,17 @@ async function floorCheck(exePath, group) {
       const flowGroup = page.locator('#modal-list details.pick-group');
       assertEqual(await flowGroup.count(), 1, 'flow actions should be in their own group');
       assertEqual(await flowGroup.evaluate((el) => el.open), false, 'the flow group must start collapsed');
-      assertEqual(await flowGroup.locator('.action-pick').count(), 5,
-        'the five flow-control actions belong in the collapsed group, not at the top level');
+      const flowCount = await flowGroup.locator('.action-pick').count();
+      assertTrue(flowCount >= 5,
+        `every flow-control action belongs in the collapsed group; found only ${flowCount}`);
+      // The specific trap this catches: a new action added to the basic list by mistake. Checked by
+      // action key and named in the failure, because a count says nothing about WHICH one leaked.
+      const topLevelKeys = await page.locator('#modal-list > .action-pick')
+        .evaluateAll((els) => els.map((el) => el.getAttribute('data-value')));
+      for (const advanced of ['wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll']) {
+        assertTrue(!topLevelKeys.includes(advanced),
+          `the advanced action "${advanced}" leaked into the top-level picker`);
+      }
       await page.keyboard.press('Escape');
       await waitFor(() => hasClass(page.locator('#modal'), 'hidden'),
         { timeoutMs: 5000, label: 'the picker to close' });
@@ -404,6 +434,10 @@ async function main() {
   const parkedRoot = path.join(scratch, 'parked');
   // Where each Automata process publishes the browser lanes it has busy right now.
   const liveRoot = path.join(scratch, 'live');
+  // The generated example pages. Isolated for the same reason as everything else here — the app
+  // WRITES these on first load, so without the hook a test run would rewrite the developer's own
+  // Documents\Automata\Demos folder every time it ran.
+  const demosRoot = path.join(scratch, 'demos');
   for (const dir of [panelProfile, targetProfile, collectionsRoot, datasetsRoot]) mkdirSync(dir, { recursive: true });
 
   const fixtureHtmlPath = path.join(__dirname, 'verify-ui-fixture.html');
@@ -428,6 +462,8 @@ async function main() {
       AUTOMATA_SCHEDULE_PATH: schedulePath,
       AUTOMATA_PARKED_ROOT: parkedRoot,
       AUTOMATA_LIVE_ROOT: liveRoot,
+      AUTOMATA_DEMOS_ROOT: demosRoot,
+      AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
     },
     stdio: 'ignore',
   });
@@ -1006,6 +1042,114 @@ async function main() {
         .evaluateAll((rows) => rows.map((r) => r.className));
       assertTrue(statuses.some((c) => /\bst-passed\b/.test(c)),
         `expected the loop's steps to pass, got ${JSON.stringify(statuses)}`);
+    });
+
+    // ---- harvest (extractAll) ------------------------------------------------------------
+    // The point of these is that NOTHING here is typed. A harvest is built by clicking one
+    // example in the page, and what that click resolved to is shown back as a count — so these
+    // checks drive the real click in the real target pane and read the real count.
+
+    await group('harvest: the examples are generated on first load, off in their own folder', async () => {
+      // Written by the app at startup, into the scratch folder the hook points at — the check
+      // that the developer's own Documents\Automata\Demos is never the thing being rewritten.
+      await waitFor(() => Promise.resolve(existsSync(path.join(demosRoot, 'shop', 'search.html'))),
+        { timeoutMs: 15000, label: 'the generated shop pages' });
+      assertTrue(existsSync(path.join(demosRoot, 'buttons.html')), 'the buttons example page');
+      const demoDir = path.join(collectionsRoot, 'Demos');
+      assertTrue(existsSync(demoDir), 'the generated Demos collection');
+      const seeded = readdirSync(demoDir).filter((f) => f !== 'collection.json').sort();
+      assertTrue(seeded.length >= 3, `expected the example tasks, got ${JSON.stringify(seeded)}`);
+    });
+
+    await group('harvest: picking one item in the page becomes the whole list', async () => {
+      // A fresh step on the flow fixture task, switched to extractAll through the editor's own
+      // action dropdown — "+ add step" creates a plain click step rather than opening the picker.
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
+      await clickRowOp(panelPage.locator(`.node.task[data-task="${flowTaskId}"]`), 'add-step');
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('extractAll');
+
+      await panelPage.locator('#ed-harvest-pick-row').waitFor({ state: 'visible', timeout: 10000 });
+
+      // Nothing picked yet, so there is nothing to pick columns FROM — offering the button would
+      // invite a click that cannot be answered.
+      assertTrue(await panelPage.locator('#ed-harvest-add-field').isDisabled(),
+        'the column picker must stay disabled until a row has been picked');
+
+      // Put the generated results page in the target pane, then pick a tile.
+      const searchUrl = 'file:///' + path.join(demosRoot, 'shop', 'search.html').replace(/\\/g, '/');
+      await targetPage.goto(searchUrl);
+      await targetPage.locator('ul.results > li.product').first().waitFor({ state: 'visible', timeout: 10000 });
+
+      await panelPage.locator('#ed-harvest-pick-row').click();
+      await targetPage.locator('ul.results > li.product .title').first().click();
+
+      await waitFor(async () => (await panelPage.locator('.harvest-rows').innerText()).includes('12'),
+        { timeoutMs: 10000, label: 'the harvest to report how many items it matched' });
+      const rowsText = await panelPage.locator('.harvest-rows').innerText();
+      assertTrue(/li\.product/.test(rowsText),
+        `expected the generalised row selector to be shown, got: ${rowsText}`);
+      assertTrue(!/SKU-001/.test(rowsText),
+        'the selector must be generalised away from the one tile that was clicked, not pinned to it');
+    });
+
+    await group('harvest: a picked link becomes a column, without following the link', async () => {
+      const before = targetPage.url();
+      await panelPage.locator('#ed-harvest-add-field').click();
+      await targetPage.locator('ul.results > li.product .title').first().click();
+
+      await waitFor(() => panelPage.locator('.column-row[data-harvest-field]').count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the picked column to appear' });
+
+      // The pick consumes the click. If it did not, picking a column inside a product tile would
+      // navigate to that product and take the page out from under the harvest being built.
+      assertEqual(targetPage.url(), before, 'picking a link must not follow it');
+
+      const row = panelPage.locator('.column-row[data-harvest-field]').first();
+      const source = await row.locator('.harvest-source').inputValue();
+      assertEqual(source, 'href', 'a picked <a> should default to reading where its link goes');
+      assertTrue((await row.locator('.column-name').inputValue()).length > 0,
+        'a picked column needs a usable name straight away, or the next save drops it');
+    });
+
+    await group('harvest: re-picking the rows clears columns rather than keeping dead ones', async () => {
+      // Column selectors are relative to the row set, so they cannot survive a different one.
+      // Keeping them would leave selectors that quietly resolve to nothing on every row.
+      await panelPage.locator('#ed-harvest-pick-row').click();
+      await targetPage.locator('ul.results > li.product .brand').nth(1).click();
+
+      await waitFor(() => panelPage.locator('.column-row[data-harvest-field]').count().then((n) => n === 0),
+        { timeoutMs: 10000, label: 'the columns to be cleared with the row set' });
+      const log = await panelPage.locator('#log').innerText();
+      assertTrue(/columns were cleared/i.test(log),
+        'clearing the columns has to be said out loud, not done silently');
+    });
+
+    await group('harvest: the Examples dialog reports each example, and asks about none', async () => {
+      // Safe to open Settings now that AUTOMATA_SETTINGS_PATH isolates it; before that hook
+      // existed this dialog would have been reading the developer's real provider and API keys.
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#set-regen-demos').click();
+      await waitFor(async () => (await panelPage.locator('#demos-body').innerText()).includes('Shop prices'),
+        { timeoutMs: 10000, label: 'the examples to be surveyed' });
+
+      const body = await panelPage.locator('#demos-body').innerText();
+      assertTrue(/up to date/.test(body), `expected the untouched examples to read as current: ${body}`);
+      // Freshly generated, so there is nothing edited — and an untouched example must never be
+      // asked about, or every launch would nag about examples nobody has opened.
+      assertEqual(await panelPage.locator('.demo-choices').count(), 0,
+        'an untouched example must not be asked about');
+      assertTrue(/Nothing you have edited/.test(body), 'the dialog should say there is nothing to decide');
+      assertTrue(body.includes(demosRoot) || /demos/i.test(body), 'the dialog should name where pages are written');
+
+      // Opening this closes Settings rather than stacking on top of it — two live modals would
+      // fight over the focus trap, and the button that opened this one lives inside the other.
+      assertTrue(await hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        'Settings should have closed when the Examples dialog opened');
+
+      await panelPage.locator('#demos-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#demos-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the examples dialog to close' });
     });
 
     await group('data tab: lists the dataset with its row and column counts', async () => {

@@ -5,7 +5,7 @@
 // condition's operands go through the same binding picker as any other value. The only free text
 // is a literal you were always going to type anyway.
 
-import { $, esc, state } from './core.js';
+import { $, esc, state, post } from './core.js';
 import { openBindingPicker, describeBinding } from './binding-field.js';
 
 var OPS = [
@@ -126,9 +126,80 @@ export function flowFieldsHtml(step, task) {
                 '</div></div>';
         }
 
+        case 'extractAll':
+            return harvestHtml(step);
+
         default:
             return '';
     }
+}
+
+var SOURCES = [
+    { value: 'text', label: 'its text' },
+    { value: 'href', label: 'where its link goes' },
+    { value: 'attribute', label: 'one of its attributes' },
+];
+
+/// The harvest editor. Nothing here is a selector anyone typed: the rows and every column come
+/// from clicking an example in the page, and what the click resolved to is shown back as a count
+/// so it can be believed before it is saved.
+function harvestHtml(step) {
+    var h = step.harvest || {};
+    var fields = h.fields || [];
+    var picked = !!h.itemSelector;
+
+    var rows = picked
+        ? '<p class="scope-note">Matching <b>' + (h.expectedCount || '?') + '</b> item(s) on the page ' +
+          'the harvest was built against.<br /><code>' + esc(h.itemSelector) + '</code></p>'
+        : '<p class="scope-note">Nothing picked yet. Open the list or results page in the browser ' +
+          'pane, then pick one item — everything like it becomes the harvest.</p>';
+
+    return '<div class="field"><span>Rows</span><div class="harvest-rows">' + rows +
+        '<button type="button" class="mini" id="ed-harvest-pick-row">' +
+        (picked ? 'pick a different item' : 'pick an item in the page') + '</button></div></div>' +
+
+        '<div class="field"><span>Columns</span><div class="column-list">' +
+        (fields.length
+            ? fields.map(function (f, i) {
+                return '<div class="column-row" data-harvest-field="' + i + '">' +
+                    '<input type="text" class="column-name" aria-label="Column name" value="' +
+                    esc(f.name || '') + '" />' +
+                    '<select class="harvest-source" aria-label="What to read for column ' +
+                    esc(f.name || '') + '">' +
+                    SOURCES.map(function (o) {
+                        return '<option value="' + o.value + '"' +
+                            (f.source === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+                    }).join('') + '</select>' +
+                    (f.source === 'attribute'
+                        ? '<input type="text" class="harvest-attr" aria-label="Attribute name for column ' +
+                          esc(f.name || '') + '" placeholder="data-id" value="' + esc(f.attributeName || '') + '" />'
+                        : '') +
+                    '<span class="scope-note harvest-where">' +
+                    (f.selector ? esc(f.selector) : 'the item itself') + '</span>' +
+                    '<button type="button" class="mini" data-harvest-repick="' + i +
+                    '" aria-label="Pick the element for column ' + esc(f.name || '') + ' again">◎</button>' +
+                    '<button type="button" class="mini" data-drop-harvest-field="' + i +
+                    '" aria-label="Remove column ' + esc(f.name || '') + '">✕</button>' +
+                    '</div>';
+            }).join('')
+            : '<p class="scope-note">No columns yet — a harvest with no columns would write empty rows.</p>') +
+        '<button type="button" class="mini" id="ed-harvest-add-field"' + (picked ? '' : ' disabled') +
+        '>+ pick a column in the page</button>' +
+        '</div></div>' +
+
+        '<div class="field"><span>Write to</span>' +
+        '<input type="text" id="ed-harvest-name" aria-label="Dataset file to write"' +
+        ' placeholder="products.csv" value="' + esc(h.datasetName || '') + '" />' +
+        '<label class="inline"><input type="checkbox" id="ed-harvest-append"' +
+        (h.append ? ' checked' : '') + ' /> add to what is already there</label></div>' +
+
+        '<div class="field"><span>No duplicates by</span>' +
+        '<select id="ed-harvest-dedupe" aria-label="Column to de-duplicate rows by">' +
+        '<option value=""' + (h.dedupeBy ? '' : ' selected') + '>keep every row</option>' +
+        fields.map(function (f) {
+            return '<option value="' + esc(f.name) + '"' +
+                (h.dedupeBy === f.name ? ' selected' : '') + '>' + esc(f.name) + '</option>';
+        }).join('') + '</select></div>';
 }
 
 /// True when this step's wait needs a condition editor rather than a duration or a clock time.
@@ -161,7 +232,37 @@ export function commitFlowFields(step) {
         spec.append = ($('ed-write-append') || {}).checked !== false;
         spec.columns = readColumns(spec.columns || {});
         step.writeDataset = spec;
+    } else if (step.action === 'extractAll') {
+        var h = Object.assign({ format: 'csv' }, step.harvest);
+        h.datasetName = (($('ed-harvest-name') || {}).value || '').trim();
+        h.append = ($('ed-harvest-append') || {}).checked === true;
+        h.fields = readHarvestFields(h.fields || []);
+        var dedupe = (($('ed-harvest-dedupe') || {}).value || '').trim();
+        // A de-duplication column that no longer exists would be refused by the host on the way to
+        // storage, so it is dropped here rather than saved and then rejected.
+        h.dedupeBy = h.fields.some(function (f) { return f.name === dedupe; }) ? dedupe : null;
+        step.harvest = h;
     }
+}
+
+/// Field rows keep their POSITION, so renaming one keeps the selector that was picked for it.
+function readHarvestFields(existing) {
+    var next = [];
+    document.querySelectorAll('[data-harvest-field]').forEach(function (row) {
+        var i = Number(row.getAttribute('data-harvest-field'));
+        var was = existing[i] || {};
+        var name = ((row.querySelector('.column-name') || {}).value || '').trim();
+        if (!name) return;
+        var source = (row.querySelector('.harvest-source') || {}).value || 'text';
+        var attr = ((row.querySelector('.harvest-attr') || {}).value || '').trim();
+        next.push({
+            name: name,
+            selector: was.selector || null,
+            source: source,
+            attributeName: source === 'attribute' ? attr : null,
+        });
+    });
+    return next;
 }
 
 function readCondition(existing) {
@@ -234,6 +335,56 @@ export function wireFlowFields(root, task, step, onChange) {
             step.writeDataset = spec;
             onChange();
         });
+    });
+
+    wireHarvestFields(root, task, step, onChange);
+}
+
+/// A pick is a round trip through the target pane: the panel arms it, the user clicks in the page,
+/// and the answer comes back through onHarvestPick. `state.harvestPick` remembers which step and
+/// which column the answer belongs to, because by then this editor has been re-rendered.
+function wireHarvestFields(root, task, step, onChange) {
+    var pickRow = $('ed-harvest-pick-row');
+    if (pickRow) {
+        pickRow.addEventListener('click', function () {
+            state.harvestPick = { taskId: task.id, stepId: step.id, mode: 'row' };
+            post('pickHarvest', { mode: 'row' });
+        });
+    }
+
+    var addField = $('ed-harvest-add-field');
+    if (addField) {
+        addField.addEventListener('click', function () {
+            state.harvestPick = { taskId: task.id, stepId: step.id, mode: 'field', index: null };
+            post('pickHarvest', { mode: 'field', itemSelector: (step.harvest || {}).itemSelector || '' });
+        });
+    }
+
+    root.querySelectorAll('[data-harvest-repick]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            state.harvestPick = {
+                taskId: task.id, stepId: step.id, mode: 'field',
+                index: Number(btn.getAttribute('data-harvest-repick')),
+            };
+            post('pickHarvest', { mode: 'field', itemSelector: (step.harvest || {}).itemSelector || '' });
+        });
+    });
+
+    root.querySelectorAll('[data-drop-harvest-field]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var h = Object.assign({}, step.harvest);
+            h.fields = (h.fields || []).slice();
+            var gone = h.fields.splice(Number(btn.getAttribute('data-drop-harvest-field')), 1)[0];
+            if (gone && h.dedupeBy === gone.name) h.dedupeBy = null;
+            step.harvest = h;
+            onChange();
+        });
+    });
+
+    // The attribute box only exists for an attribute column, so the row is re-rendered on change
+    // rather than trying to grow a box in place.
+    root.querySelectorAll('.harvest-source').forEach(function (sel) {
+        sel.addEventListener('change', onChange);
     });
 }
 

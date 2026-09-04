@@ -99,8 +99,8 @@ Two gotchas worth knowing before you write assertions against computed style:
 
 `AUTOMATA_PANEL_CDP_PORT`, `AUTOMATA_TARGET_CDP_PORT`, `AUTOMATA_PANEL_PROFILE_DIR`,
 `AUTOMATA_TARGET_PROFILE_DIR`, `AUTOMATA_COLLECTIONS_ROOT`, `AUTOMATA_DATASETS_ROOT`,
-`AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`, `AUTOMATA_LIVE_ROOT` — all
-opt-in, all no-ops when unset
+`AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`, `AUTOMATA_LIVE_ROOT`,
+`AUTOMATA_DEMOS_ROOT`, `AUTOMATA_SETTINGS_PATH` — all opt-in, all no-ops when unset
 (see `MainWindow.xaml.cs`'s `DebugOptions`/`ProfileDir` helpers and
 `ServiceCollectionExtensions.cs`'s `CollectionStore` registration). Never set these when running
 the app normally.
@@ -108,10 +108,15 @@ the app normally.
 ## What it never touches
 
 The real `%LocalAppData%\MindAttic\Automata\{ControlPanelWebView2,WebView2}` profiles and the real
-`Documents\Automata\{Collections,Datasets,Runs,Schedule,Parked,Live}` are never used — the driver always points at a scratch directory
-it creates itself. It also never opens Settings or posts `saveSettings` — `AutomataSettingsStore`
-(`%APPDATA%\MindAttic\Automata\settings.json`, the real LLM provider/BYO keys) is **not** isolated
-by any of the 8 hooks, so extending this harness to touch Settings would need a 9th hook first.
+`Documents\Automata\{Collections,Datasets,Runs,Schedule,Parked,Live,Demos}` are never used — the
+driver always points at a scratch directory it creates itself.
+
+`AUTOMATA_SETTINGS_PATH` is the newest of these and the reason the harness can now open Settings at
+all: `AutomataSettingsStore` (`%APPDATA%\MindAttic\Automata\settings.json`, the real LLM provider
+and BYO keys) was the one store with no environment hook, so before it existed any check that
+touched Settings would have been reading and writing the developer's own keys. `AUTOMATA_DEMOS_ROOT`
+matters for a blunter reason: the app WRITES the generated example pages on first load, so without
+the hook every test run would rewrite the developer's own `Documents\Automata\Demos`.
 
 ## Where the sidebar code lives
 
@@ -133,6 +138,22 @@ misplaced `export`. To check the graph, copy the modules to a temp directory wit
 `{"type":"module"}` package.json and `import('./main.js')` — Node links before it evaluates, so a
 missing export throws a SyntaxError while `ReferenceError: document is not defined` means every
 import resolved.
+
+## The harvest checks, and where demo pages fit
+
+`extractAll` is built by CLICKING, not typing, so its checks drive a real click in the real target
+pane: navigate it to the generated `demos/shop/search.html`, click one product tile, and assert the
+editor reports 12 matched items with a generalised `li.product` selector rather than the one tile's
+own id. A second check picks a column off an `<a>` and asserts the pick did NOT follow the link —
+a harvest pick has to consume the click, or picking a column inside a product tile navigates away
+from the page being harvested. A third re-picks the rows and asserts the columns are cleared and
+said to be cleared, because a column selector is relative to the row set and cannot survive a
+different one.
+
+The generated demo pages (`DemoPages`) are written by the app itself, so they are available to the
+harness for free. `buttons.html` is the same three-button page as `tools/verify-ui-fixture.html`;
+the harness still writes its own copy, so the two are duplicates for now rather than one shared
+asset set.
 
 ## Extending the fixture
 

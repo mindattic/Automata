@@ -1,4 +1,5 @@
 using Automata.Browser;
+using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Storage;
@@ -44,7 +45,8 @@ public static class Program
             provider.GetRequiredService<IClock>(),
             new SchTasksRegistrar(Environment.ProcessPath ?? "automata-runner.exe"),
             provider.GetRequiredService<ParkedRunStore>(),
-            provider.GetRequiredService<LiveLaneStore>());
+            provider.GetRequiredService<LiveLaneStore>(),
+            provider.GetRequiredService<DemoSeeder>());
 
         using var cancelling = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>

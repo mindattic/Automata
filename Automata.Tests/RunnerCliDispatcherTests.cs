@@ -69,16 +69,23 @@ public class RunnerCliDispatcherTests
         public int? InstalledEvery { get; private set; }
         public bool Uninstalled { get; private set; }
 
-        public Task<string> InstallAsync(int intervalMinutes, CancellationToken ct)
+        /// <summary>Set to make the operating system refuse, the way a missing privilege does.</summary>
+        public string? Refusal { get; set; }
+
+        public Task<RegistrationResult> InstallAsync(int intervalMinutes, CancellationToken ct)
         {
             InstalledEvery = intervalMinutes;
-            return Task.FromResult($"registered every {intervalMinutes} minute(s)");
+            return Task.FromResult(Refusal is null
+                ? RegistrationResult.Ok($"registered every {intervalMinutes} minute(s)")
+                : RegistrationResult.Failed(Refusal));
         }
 
-        public Task<string> UninstallAsync(CancellationToken ct)
+        public Task<RegistrationResult> UninstallAsync(CancellationToken ct)
         {
             Uninstalled = true;
-            return Task.FromResult("removed");
+            return Task.FromResult(Refusal is null
+                ? RegistrationResult.Ok("removed")
+                : RegistrationResult.Failed(Refusal));
         }
     }
 
@@ -492,6 +499,37 @@ public class RunnerCliDispatcherTests
     {
         Assert.That(await Dispatcher().DispatchAsync(["uninstall"]), Is.EqualTo(RunnerExitCode.Success));
         Assert.That(registrar.Uninstalled, Is.True);
+    }
+
+    /// <summary>
+    /// A refused registration must fail loudly. Exiting 0 over a scheduler that said no leaves the
+    /// user believing in a heartbeat that will never fire — the exact outcome the whole scheduling
+    /// feature exists to prevent.
+    /// </summary>
+    [Test]
+    public async Task InstallFailsWhenTheSchedulerRefuses()
+    {
+        registrar.Refusal = "schtasks failed (1): ERROR: Access is denied.";
+
+        var code = await Dispatcher().DispatchAsync(["install"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(code, Is.EqualTo(RunnerExitCode.Fault));
+            Assert.That(Written, Does.Contain("Access is denied"),
+                "the scheduler's own words are the only useful diagnosis");
+            Assert.That(Written, Does.Contain("NOT registered"));
+            Assert.That(Written, Does.Not.Contain("session 0"),
+                "the logged-on explanation describes a task that exists; there isn't one");
+        });
+    }
+
+    [Test]
+    public async Task UninstallFailsWhenTheSchedulerRefuses()
+    {
+        registrar.Refusal = "schtasks failed (1): ERROR: Access is denied.";
+
+        Assert.That(await Dispatcher().DispatchAsync(["uninstall"]), Is.EqualTo(RunnerExitCode.Fault));
     }
 
     // ---- parked runs ---------------------------------------------------------------------------

@@ -334,7 +334,8 @@ public sealed partial class WorkflowEngine
     }
 
     private static bool IsOrchestrated(Step step) =>
-        step.Action is StepAction.If or StepAction.ForEach or StepAction.RunTask or StepAction.WriteDataset
+        step.Action is StepAction.If or StepAction.ForEach or StepAction.RunTask
+            or StepAction.WriteDataset or StepAction.ExtractAll
         || (step.Action == StepAction.Wait
             && step.Wait?.Mode is WaitMode.UntilCondition or WaitMode.UntilSignal);
 
@@ -488,6 +489,44 @@ public sealed partial class WorkflowEngine
                     $"{(spec.Append ? "appended to" : "wrote")} {spec.DatasetName}", null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
+                yield break;
+            }
+
+            case StepAction.ExtractAll:
+            {
+                var spec = step.Harvest;
+                var result = await HarvestRunner.RunAsync(scope.Browser, spec!, ct);
+
+                // A harvest that read nothing usable is a failure, not an empty success. Writing an
+                // empty dataset here would let the ForEach that consumes it loop zero times and
+                // report a clean pass, which is the most expensive kind of wrong this engine can be.
+                if (!result.Ok)
+                {
+                    await foreach (var e in FailAsync(step, scope, state, result.Error ?? "harvest failed"))
+                        yield return e;
+                    yield break;
+                }
+
+                datasets.Write(spec!.DatasetName, result.Rows, spec.Append);
+
+                // Published so an `if` can branch on how much was found, and so a later step can
+                // name the dataset without the author retyping it.
+                state.Outputs[ReplayRunState.OutputKey(step.Id, "count")] =
+                    result.Rows.Count.ToString();
+                state.Outputs[ReplayRunState.OutputKey(step.Id, "dataset")] = spec.DatasetName;
+
+                var dropped = result.MatchedRows - result.Rows.Count;
+                var note = dropped > 0 ? $" ({dropped} duplicate or excess row(s) dropped)" : "";
+                var partial = result.EmptyFields.Count > 0
+                    ? $"; nothing found for {string.Join(", ", result.EmptyFields)}"
+                    : "";
+                yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
+                    $"harvested {result.Rows.Count} row(s) into {spec.DatasetName}{note}{partial}", null);
+                state.LastStatus = StepStatus.Passed;
+                state.Passed++;
+
+                await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                    yield return evt;
                 yield break;
             }
 

@@ -47,7 +47,11 @@ function tutorialSteps() {
 export function maybeStartTutorial() {
     if (tutorialChecked) return;
     tutorialChecked = true;
-    if (state.collections.length > 0) return;
+    // The generated examples do not count as work this person has done. They are seeded on
+    // first load so there is always something that runs to read, and if they suppressed the
+    // tutorial then a brand-new user would never be walked through Collection -> Task -> Steps.
+    var built = state.collections.filter(function (c) { return c.id !== state.demoCollectionId; });
+    if (built.length > 0) return;
     tutorialStage = 1;
     openInfoModal('Welcome to Automata',
         "A Collection is a group of Tasks. Everything you automate lives inside one. " +

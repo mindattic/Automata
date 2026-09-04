@@ -1,3 +1,4 @@
+using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Scheduling;
@@ -39,6 +40,7 @@ public sealed class RunnerCliDispatcher
     private readonly LiveLaneStore live;
     private readonly IClock clock;
     private readonly IScheduledTaskRegistrar? registrar;
+    private readonly DemoSeeder? demos;
 
     public RunnerCliDispatcher(
         CollectionStore collections,
@@ -51,7 +53,8 @@ public sealed class RunnerCliDispatcher
         IClock? clock = null,
         IScheduledTaskRegistrar? registrar = null,
         ParkedRunStore? parked = null,
-        LiveLaneStore? live = null)
+        LiveLaneStore? live = null,
+        DemoSeeder? demos = null)
     {
         this.collections = collections;
         this.runs = runs;
@@ -64,6 +67,7 @@ public sealed class RunnerCliDispatcher
         this.registrar = registrar;
         this.parked = parked ?? new ParkedRunStore();
         this.live = live ?? new LiveLaneStore();
+        this.demos = demos;
     }
 
     public async Task<int> DispatchAsync(string[] args, CancellationToken ct = default)
@@ -84,6 +88,7 @@ public sealed class RunnerCliDispatcher
                 "install" => await InstallAsync(args, ct),
                 "uninstall" => await UninstallAsync(ct),
                 "status" => Status(),
+                "demos" => DemosCommand(args),
                 _ => Unknown(args[0]),
             };
         }
@@ -598,7 +603,18 @@ public sealed class RunnerCliDispatcher
             return RunnerExitCode.Fault;
         }
         var minutes = int.TryParse(Option(args, "--interval-minutes"), out var m) && m > 0 ? m : 5;
-        output.WriteLine(await registrar.InstallAsync(minutes, ct));
+        var result = await registrar.InstallAsync(minutes, ct);
+        output.WriteLine(result.Report);
+
+        // A refusal is never dressed up as success. Reporting "installed" over a scheduler that
+        // said no produces the one failure this whole feature exists to avoid: a schedule the user
+        // believes in that fires nothing.
+        if (!result.Succeeded)
+        {
+            output.WriteLine("error: nothing is scheduled — the heartbeat was NOT registered.");
+            return RunnerExitCode.Fault;
+        }
+
         output.WriteLine(
             "Registered to run only while you are logged on. WebView2 cannot render in session 0, " +
             "so an unattended task would start and then fail to drive a browser.");
@@ -612,8 +628,105 @@ public sealed class RunnerCliDispatcher
             output.WriteLine("error: task registration is not available in this build");
             return RunnerExitCode.Fault;
         }
-        output.WriteLine(await registrar.UninstallAsync(ct));
-        return RunnerExitCode.Success;
+        var result = await registrar.UninstallAsync(ct);
+        output.WriteLine(result.Report);
+        return result.Succeeded ? RunnerExitCode.Success : RunnerExitCode.Fault;
+    }
+
+    // ---- demos -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The generated examples. Seeding is safe to run at any time and never touches an example the
+    /// user has edited; regenerating only overwrites the ones named on the command line, which is
+    /// the CLI's version of being asked.
+    /// </summary>
+    private int DemosCommand(string[] args)
+    {
+        if (demos == null)
+        {
+            output.WriteLine("error: demo generation is not available in this build");
+            return RunnerExitCode.Fault;
+        }
+
+        var sub = args.Length > 1 ? args[1].ToLowerInvariant() : "list";
+        switch (sub)
+        {
+            case "list":
+            {
+                foreach (var status in demos.Survey())
+                    output.WriteLine($"{Describe(status.State),-10} {status.Name}  [{status.Key}]");
+                output.WriteLine($"Pages: {demos.RootPath}");
+                return RunnerExitCode.Success;
+            }
+
+            case "seed":
+                Report(demos.SeedMissing());
+                return RunnerExitCode.Success;
+
+            case "regenerate":
+            {
+                var revertAll = args.Any(a => a.Equals("--revert-all", StringComparison.OrdinalIgnoreCase));
+                var resolutions = new Dictionary<string, DemoResolution>(StringComparer.Ordinal);
+
+                foreach (var status in demos.Survey())
+                {
+                    if (status.State != DemoState.Edited) continue;
+                    if (revertAll || Named(args, "--revert").Contains(status.Key))
+                        resolutions[status.Key] = DemoResolution.Revert;
+                    else if (Named(args, "--clone").Contains(status.Key))
+                        resolutions[status.Key] = DemoResolution.Clone;
+                }
+
+                Report(demos.Regenerate(resolutions));
+                return RunnerExitCode.Success;
+            }
+
+            default:
+                output.WriteLine($"error: unknown demos command '{sub}'");
+                return RunnerExitCode.BadArguments;
+        }
+    }
+
+    private static string Describe(DemoState state) => state switch
+    {
+        DemoState.Missing => "missing",
+        DemoState.Current => "current",
+        DemoState.Stale => "stale",
+        _ => "EDITED",
+    };
+
+    /// <summary>Every value given for a repeatable option, e.g. <c>--revert a --revert b</c>.</summary>
+    private static HashSet<string> Named(string[] args, string option)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < args.Length - 1; i++)
+            if (args[i].Equals(option, StringComparison.OrdinalIgnoreCase)) found.Add(args[i + 1]);
+        return found;
+    }
+
+    private void Report(DemoSeedReport report)
+    {
+        output.WriteLine($"{report.PagesWritten.Count} page(s) written to {demos!.RootPath}");
+        Line("added", report.Added);
+        Line("refreshed", report.Refreshed);
+        Line("reverted", report.Reverted);
+        Line("cloned", report.Cloned);
+        Line("kept (edited, left alone)", report.Kept);
+
+        var edited = report.Before.Count(s => s.State == DemoState.Edited);
+        var untouched = edited - report.Reverted.Count - report.Cloned.Count;
+        if (untouched > 0)
+        {
+            output.WriteLine(
+                $"{untouched} edited example(s) were left as they are. Name one with " +
+                "--revert <key> to restore the original, or --clone <key> to keep yours and add " +
+                "the original beside it.");
+        }
+
+        void Line(string label, IReadOnlyList<string> names)
+        {
+            if (names.Count > 0) output.WriteLine($"  {label}: {string.Join(", ", names)}");
+        }
     }
 
     // ---- status ----------------------------------------------------------------------------
@@ -733,6 +846,11 @@ public sealed class RunnerCliDispatcher
 
           install [--interval-minutes 5]   register the tick with Windows Task Scheduler
           uninstall                        remove it
+
+          demos list                    the generated examples, and which have been edited
+          demos seed                    write any example that is missing; refresh untouched ones
+          demos regenerate [--revert <key>...] [--clone <key>...] [--revert-all]
+                                        rebuild the examples; edited ones are kept unless named
           --help                        this text
 
         Exit codes: 0 success, 1 a run failed, 2 fault, 3 bad arguments.

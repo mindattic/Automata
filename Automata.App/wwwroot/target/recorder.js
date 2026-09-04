@@ -48,7 +48,43 @@
         return el.closest('button, a, input, select, textarea, option, label, [role=button], [role=checkbox], [role=radio], [role=link]') || el;
     }
 
+    // ---- harvest picking ---------------------------------------------------------------------
+    // A one-shot mode, separate from recording: the next click is CONSUMED rather than replayed,
+    // because the whole point is to indicate an element, and letting a product tile's link
+    // navigate would take the page out from under the thing being picked. Answered by harvest.js,
+    // which rides along on the same injection.
+    var pending = null;   // { mode: 'row' | 'field', itemSelector }
+
+    function onPickClick(e) {
+        if (!pending) return false;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        var request = pending;
+        pending = null;
+        var el = e.target;
+        var answer;
+        try {
+            answer = request.mode === 'row'
+                ? window.__automataPickSet(el)
+                : window.__automataPickField(el, request.itemSelector);
+        } catch (err) {
+            answer = JSON.stringify({ ok: false, error: String(err && err.message || err) });
+        }
+
+        var payload = JSON.parse(answer);
+        payload.kind = 'pick';
+        payload.mode = request.mode;
+        // The field's own fingerprint comes along so a picked field can also be used as an
+        // ordinary step target later, without asking the user to point at it a second time.
+        try { payload.fingerprint = window.__automataFingerprint(el); } catch (err) { /* optional */ }
+        post(payload);
+        return true;
+    }
+
     function onClick(e) {
+        if (onPickClick(e)) return;
         if (!enabled) return;
         var el = actionTarget(e.target);
         if (!el || el.nodeType !== 1) return;
@@ -114,9 +150,25 @@
     document.addEventListener('change', onChange, true);
     document.addEventListener('keydown', onKeydown, true);
 
+    // A pick has to swallow the mousedown too, or a link follows before the click ever arrives.
+    document.addEventListener('mousedown', function (e) {
+        if (!pending) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+    }, true);
+
     window.__automataRecorder = {
         enable: function () { enabled = true; },
         disable: function () { enabled = false; },
-        isEnabled: function () { return enabled; }
+        isEnabled: function () { return enabled; },
+
+        /// Arms a one-shot pick. 'row' generalises the click into "everything like this"; 'field'
+        /// locates it relative to the row set that a previous 'row' pick found.
+        pick: function (mode, itemSelector) {
+            pending = { mode: mode === 'field' ? 'field' : 'row', itemSelector: itemSelector || '' };
+        },
+        cancelPick: function () { pending = null; },
+        isPicking: function () { return pending !== null; }
     };
 })();

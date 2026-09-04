@@ -40,6 +40,7 @@ public partial class MainWindow : Window
             App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.ScheduleStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Execution.ParkedRunStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Execution.LiveLaneStore>(),
+            App.Services.GetRequiredService<Automata.Core.Automation.Demos.DemoSeeder>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.IClock>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Flow.FlowAuthoringService>(),
             () => targetBrowser,
@@ -171,8 +172,12 @@ public partial class MainWindow : Window
         };
 
         // The recorder rides along on every document, dormant until the Record button arms it.
-        // fingerprint.js is Automata.Core's embedded resource; recorder.js ships in wwwroot.
+        // fingerprint.js and harvest.js are Automata.Core embedded resources; recorder.js ships in
+        // wwwroot. harvest.js rides along because picking a harvest is a gesture in the TARGET
+        // pane — the user clicks one row and the page itself works out what "all the rows like this
+        // one" means, which is only answerable where the DOM is.
         var recorderJs = Automata.Core.Automation.AutomationScripts.FingerprintJs + "\n" +
+            Automata.Core.Automation.AutomationScripts.HarvestJs + "\n" +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wwwroot", "target", "recorder.js"));
         await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(recorderJs);
         TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;

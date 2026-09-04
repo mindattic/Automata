@@ -547,9 +547,90 @@ soonest firing across it. The editor was the part that wrote exactly one, so "ev
   both triggers reaching disk, each block editing only its own trigger, reopening as the shapes
   they were built with rather than raw cron, and removal keeping the right one.
 
+### Phase 9 - harvesting a page into a dataset, and generated examples (2026-09-04)
+
+The gap this closes: everything in the data model could already fan out over a dataset and write
+results back, but a dataset could only come from a **file a human put there**. `WorkflowEngine`
+read `ForEach.Source.DatasetName` and nothing else, so there was no way to loop over a list
+gathered **while browsing**.
+
+- **`StepAction.ExtractAll`** (`HarvestSpec`, `HarvestField`, `HarvestSource`) reads many rows off
+  the current page and writes them to a dataset. It joins the collapsed flow group, NOT the
+  original fourteen, so the floor is untouched.
+- **The dataset is the seam, deliberately.** A harvest writes the same CSV a hand-dropped
+  spreadsheet would, so looping, conditions, parallel lanes, park/resume and the Data tab all keep
+  working with no new machinery. A file also survives parking with no serialization of engine
+  internals, and it can be opened in Explorer and checked *before* the loop that consumes it runs.
+- **Nothing is typed.** `harvest.js` walks OUTWARD from one clicked element to the first ancestor
+  that has siblings of its own kind — that ancestor is the row — and generalises away the clicked
+  element's own id, text and framework hash classes. The count it matched is reported back and
+  shown in the editor before anything is stored. Field selectors are relative to the row.
+- **A harvest that read nothing usable FAILS.** Zero matches, or rows matched with every column
+  blank, are refused with a reason rather than written as an empty dataset — an empty dataset lets
+  the ForEach that consumes it loop zero times and report a clean pass, which is the most expensive
+  way this engine can be wrong. `HarvestRunner.Shape` holds those rules and is pure, so they are
+  unit-testable with no browser in sight.
+- **Generated examples** (`DemoPages`, `DemoTasks`, `DemoSeeder`): local HTML written to
+  `Documents\Automata\Demos` plus a matching "Demos" collection, seeded on first load and
+  regenerable from Settings -> Examples. Local pages rather than live sites, because a demo whose
+  job is to prove harvesting works cannot also be a bet on someone else's markup, consent banner
+  and rate limiter. `buttons.html` is deliberately the same three-button page as
+  `tools/verify-ui-fixture.html`, but the harness still writes its own copy — folding the two into
+  one asset set is left for when there are enough demo pages to be worth it.
+- **Regeneration never eats work.** An untouched example is refreshed silently (nothing to lose,
+  nothing worth asking); an edited one is left alone unless answered, with three answers: keep
+  mine, restore the original, or **keep mine + add the original beside it**. Cloning moves the demo
+  marker to the pristine copy and drops it from the user's, so exactly one task carries a demo key,
+  no two tasks share a name (the name IS the file name), and the next regenerate has nothing left
+  to ask.
+- **`DemoOrigin` records a content hash** over what a demo DOES - steps, start URL, settings. Name
+  and description are excluded: renaming a demo is not editing it. Demo step ids are FIXED, not
+  generated, or every regenerate would either break every binding or look like a hand edit.
+- **The first-run tutorial survives.** `maybeStartTutorial` now ignores the generated collection
+  (`state.demoCollectionId`, pushed by the host), because "this person has built nothing yet" is a
+  different question from "this person has nothing but the examples we made for them". Seeding
+  without this would have silently suppressed the tutorial - the one invariant this project does
+  not trade away.
+- **`tools/verify-shop.mjs`** - the three-way acceptance check: harvest 12 products, visit each in
+  turn collecting prices, do it again with 4 lanes, and require **sequential == parallel == what
+  the generated pages actually say**. Comparing the two runs to each other is not enough; both can
+  skip the same rows and agree perfectly while being wrong, so the pages are read off disk for the
+  oracle ($457.50). It also asserts the parallel run was not silently throttled to one lane, since
+  a throttled run would agree with the sequential one for entirely the wrong reason.
+- **`AUTOMATA_SETTINGS_PATH`** - the one store with no environment hook, which meant a scratch run
+  read and wrote the developer's real `settings.json`. Added, and the UI harness now uses it (so it
+  can finally open Settings), along with `AUTOMATA_DEMOS_ROOT`.
+
+### The concurrency bug the three-way check found on its first real run
+
+`MaxConcurrency` is **tighten-only** by design - the global value is the machine's ceiling and a
+task may only lower it - so the parallel example needs the ceiling granted before it demonstrates
+anything. Once it was, four lanes appending to one dataset produced:
+
+    The process cannot access the file 'shop-prices-parallel.csv' because it is being used by
+    another process.
+
+Ten rows of twelve, total $426.95 against a true $457.50. `DatasetIO.Write` is a read-modify-write
+(read the rows, work out the union of columns, write it all back), so racing writers lose whichever
+update finished first, and on Windows they usually collide on the handle instead.
+
+Fixed with **`ExclusiveFileLock`**, which serialises across threads AND processes: a per-path
+in-process semaphore (a parallel for-each is several rows in ONE process) plus a sentinel file
+opened `FileShare.None` with a retry (the app and the runner are separate executables over one
+workspace). The lock spans the whole read-modify-write, not just the write - locking only the write
+would still let two writers read the same "before". `Read` takes it too, so a reader never catches
+a full-file rewrite half-done. Sentinels live in the system temp folder keyed by a hash of the full
+path, not as `.lock` files beside the data, because datasets are meant to be browsable in Explorer.
+
+This is the "file locking for multi-instance" item that had been sitting in **Not done yet** since
+v2. It was found by measurement, not by reading, which is the second time this has happened - and
+both times the test that found it was one that compared against an independent oracle rather than
+against another run.
+
 ### Still to do in v3
 
-Nothing. All eight planned phases plus 8b-8e are done; what remains is in **Not done yet** below.
+Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
+yet** below.
 
 ## Not done yet
 
@@ -563,8 +644,23 @@ Nothing. All eight planned phases plus 8b-8e are done; what remains is in **Not 
 - **Orchestration (old Phase 4)**: multiple concurrent panes/instances with separate
   userDataFolders running the same task with different parameter bindings; templated parameters
   (`{{query}}`) in step values.
-- **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing; file locking
-  for multi-instance.
+- **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing. (File locking for
+  multi-instance is DONE - see `ExclusiveFileLock` under phase 9.)
+- **A collecting loop cannot clear its dataset first.** The shop examples append, so running one
+  twice doubles its rows; `verify-shop.mjs` sidesteps this by working in a fresh scratch workspace
+  every time. Expressing it needs run-scoped state that survives the per-row fork (`ForkForRow`
+  isolates each row deliberately, so "am I the first writer this run?" is not answerable from
+  inside a row) - most likely a `resetOnFirstWrite` flag on `DatasetWriteSpec` plus a set of
+  freshened dataset names owned by the run rather than the row.
+- **No `Aggregate` step.** Summing a harvested column happens in `verify-shop.mjs`, not in the
+  product, which was a deliberate call to keep the step model closed - no arithmetic, no expression
+  language. If it is ever wanted in-product it is one action plus a picker (sum/count/min/max/avg
+  over a dataset column into an output), still a record rather than a formula.
+- **No enum-coverage test for the demo batch.** The intent is that adding a `StepAction`,
+  `WaitMode` or `ConditionOp` FAILS the build until some seeded example exercises it, the same
+  mechanical trick the floor-check group uses. Only three examples exist so far (buttons,
+  sequential shop, parallel shop), so the demo pages for form controls, late-rendering elements and
+  a conditional banner have to land before that test could pass.
 - **Known perf cleanup** (fine at current scale, flagged by code review): every panel mutation
   re-scans the whole store (`PushStateAsync` → `LoadCollections` + per-collection `LoadTasks`,
   each id lookup re-enumerating directories). Fix when stores get large: an id→path index

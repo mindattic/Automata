@@ -7,6 +7,17 @@
 // after every mutation and the whole UI re-renders from it.
 export const state = {
     collections: [],          // [{id, name, description, tasks:[TaskDefinition...]}]
+
+    // The generated "Demos" collection, named by the host. Held so the first-run tutorial can
+    // tell a store holding only generated examples from one the user has actually built in.
+    demoCollectionId: null,
+
+    // Per-example status from the host (onDemoSurvey): missing | current | stale | edited.
+    demos: null,
+
+    // An outstanding harvest pick: {taskId, stepId, mode, index}. The answer arrives from the
+    // target pane long after this editor was re-rendered, so it has to say what asked.
+    harvestPick: null,
     sel: { collectionId: null, taskId: null, stepId: null },
     recording: false,
     running: false,
@@ -194,6 +205,7 @@ export const ACTION_INFO = {
     if: 'Run the substeps only when a condition holds',
     runTask: 'Run another task from here',
     writeDataset: 'Append a row to a CSV or JSON file',
+    extractAll: 'Read every matching row off this page into a dataset',
 };
 
 // Flow-control actions live apart from the original fourteen and are offered in a collapsed
@@ -201,7 +213,7 @@ export const ACTION_INFO = {
 // not have to step over them. Only `wait` is here because only `wait` executes today — the rest
 // need the workflow engine, and offering a control that fails at run time is worse than offering
 // none.
-export const FLOW_ACTIONS = ['wait', 'if', 'forEach', 'runTask', 'writeDataset'];
+export const FLOW_ACTIONS = ['wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll'];
 
 // Everything a step's action dropdown may show, including actions created elsewhere (imported,
 // or authored) that the picker itself does not offer.

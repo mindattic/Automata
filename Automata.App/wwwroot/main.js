@@ -15,6 +15,7 @@ import './tree.js';
 import './editor.js';
 import './tabs.js';
 import './settings.js';
+import './demos.js';
 import './data.js';
 import './runs.js';
 import './lanes.js';

@@ -573,6 +573,47 @@ button.mini.binding-toggle { display: none; }
 .column-row .operand { flex: 1; min-width: 70px; }
 .condition-row select { width: auto; flex: none; }
 
+/* ---- harvest (extractAll) ---- */
+
+.harvest-rows { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+.harvest-rows code { word-break: break-all; }
+
+/* The element a column was picked from, shown so it can be recognised without re-picking.
+   Truncated rather than wrapped: a long path must not push the row's controls out of reach. */
+.harvest-where {
+  flex: 1;
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-row .harvest-source,
+.column-row .harvest-attr { width: auto; flex: none; max-width: 140px; }
+
+/* ---- generated examples ---- */
+
+.demo-list { list-style: none; margin: 0; padding: 0; }
+
+.demo-row {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.demo-row:last-child { border-bottom: 0; }
+
+/* Stacked, not inline: three choices with an explanation each do not fit side by side at a
+   sidebar's width, and a radio whose label wraps away from it is a mis-click waiting to happen. */
+.demo-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-left: var(--space-2);
+}
+
+.demo-choices .inline { min-height: var(--target-min); align-items: center; }
+
 /* ---- runs ---- */
 
 .run-row {

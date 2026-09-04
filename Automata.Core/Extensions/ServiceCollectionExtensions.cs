@@ -1,3 +1,4 @@
+using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Flow;
 using Automata.Core.Automation.Scheduling;
@@ -19,7 +20,10 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAutomataCore(this IServiceCollection services)
     {
-        services.AddSingleton<AutomataSettingsStore>();
+        // Every store here takes its root from an AUTOMATA_* variable so a test or the UI
+        // harness can run against a scratch workspace instead of the developer's real one.
+        services.AddSingleton(_ => new AutomataSettingsStore(
+            filePath: Environment.GetEnvironmentVariable("AUTOMATA_SETTINGS_PATH")));
 
         services.AddHttpClient();                    // generic factory for the LLM adapters
         services.AddHttpClient<AnthropicToolClient>();
@@ -104,6 +108,9 @@ public static class ServiceCollectionExtensions
             rootPath: Environment.GetEnvironmentVariable("AUTOMATA_PARKED_ROOT")));
         services.AddSingleton(_ => new LiveLaneStore(
             rootPath: Environment.GetEnvironmentVariable("AUTOMATA_LIVE_ROOT")));
+        services.AddSingleton(sp => new DemoSeeder(
+            sp.GetRequiredService<CollectionStore>(),
+            demoRoot: Environment.GetEnvironmentVariable("AUTOMATA_DEMOS_ROOT")));
         // The workflow engine wraps the replay engine rather than replacing it: it owns the tree
         // walk so control-flow steps can decide whether and how often their children run.
         services.AddSingleton(sp => new FlowAuthoringService(

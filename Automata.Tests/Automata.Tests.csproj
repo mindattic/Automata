@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RootNamespace>Automata.Tests</RootNamespace>
-    <!-- Whole-number versioning: major-only bumps (1.0.0 â†’ 2.0.0 â†’ 3.0.0). Minor/patch stay 0. -->
-    <Version>2.0.0</Version>
+    <!-- Whole-number versioning: major-only bumps (1.0.0 -> 2.0.0 -> 3.0.0). Minor/patch stay 0. -->
+    <Version>3.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
