@@ -1282,9 +1282,12 @@ async function main() {
 
       // And the picker offers it, everywhere inside that task.
       await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
-      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).first().click();
+      // nth(1): the first step is the fixture's forEach, and the checks after this one need it to
+      // still be a loop.
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).nth(1).click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('typeText');
+
       await panelPage.locator('#ed-value').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-value').focus();
       await panelPage.locator('.binding-toggle').click();
@@ -1298,6 +1301,87 @@ async function main() {
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
       await waitFor(() => readFileSync(target, 'utf8').includes('"taskInput"'),
         { timeoutMs: 5000, label: 'the binding to reach disk' });
+    });
+
+    await group('loops: a step inside one can bind to the row\'s columns', async () => {
+      // The gap this closes: the shop examples bind to row.url, but that binding was only ever
+      // expressible in code — the picker offered captured outputs, task inputs and environment
+      // variables, and no way at all to name a column of the row a loop is on.
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const steps = () => panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`);
+
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
+      await waitFor(() => steps().count().then((n) => n >= 2),
+        { timeoutMs: 10000, label: "the loop and the step inside it" });
+
+      // nth(1), never first(): the first row IS the forEach, and this check is about a step INSIDE
+      // it. The step's value is already bound from the check above, and a bound field renders a
+      // chip rather than an editable box — the chip opens the same picker.
+      await steps().nth(1).click();
+      await panelPage.locator('.chip.bound, #ed-value').first()
+        .waitFor({ state: 'visible', timeout: 10000 });
+
+      // The editor asks the host for the loop's columns as it opens, so the first attempt can land
+      // before the answer does. Reopened rather than slept on, so the wait is for the thing the
+      // check is about.
+      let offered = [];
+      for (let attempt = 0; attempt < 8 && !offered.includes('row.sku'); attempt++) {
+        if (attempt > 0) {
+          await panelPage.keyboard.press('Escape');
+          await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+            { timeoutMs: 5000, label: 'the picker to close before retrying' });
+          await sleep(250);
+        }
+        if (await panelPage.locator('.chip.bound').count()) {
+          await panelPage.locator('.chip.bound').first().click();
+        } else {
+          await panelPage.locator('#ed-value').focus();
+          await panelPage.locator('.binding-toggle').click();
+        }
+        await panelPage.locator('#modal-list .action-pick').first()
+          .waitFor({ state: 'visible', timeout: 5000 });
+        offered = await panelPage.locator('#modal-list .action-pick b').allTextContents();
+      }
+
+      assertTrue(offered.includes('row.sku'),
+        `expected the loop's own column to be offered, got ${JSON.stringify(offered)}`);
+
+      await panelPage.locator('#modal-list .action-pick[data-value="column:sku"]').click();
+      await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"datasetColumn"'),
+        { timeoutMs: 5000, label: 'the column binding to reach disk' });
+    });
+
+    await group('branching: an otherwise reads as the other half of the if above it', async () => {
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const row = panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).nth(1);
+      await row.click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('if');
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"if"'),
+        { timeoutMs: 5000, label: 'the guard to reach disk' });
+
+      // A second step beside it, switched to `else`.
+      await clickRowOp(panelPage.locator(`.node.task[data-task="${flowTaskId}"]`), 'add-step');
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('else');
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"else"'),
+        { timeoutMs: 5000, label: 'the otherwise to reach disk' });
+
+      // It has no condition of its own, so the editor has to say what it pairs with — an empty
+      // editor reads as an unfinished step.
+      const note = await panelPage.locator('#editor .scope-note').first().innerText();
+      assertTrue(/if/i.test(note) && /above/i.test(note),
+        `the else editor should explain what it pairs with, got "${note}"`);
+      assertEqual(await panelPage.locator('#editor details.target').count(), 0,
+        'an else has no element to point at');
+
+      // And both rows are marked as branch rows, so the pair is visible in a flat list.
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
+      const branchRows = await panelPage.locator(
+        `.node.step[data-action="if"], .node.step[data-action="else"]`).count();
+      assertTrue(branchRows >= 2, `expected the if and the else to be marked, got ${branchRows}`);
+      if (process.env.AUTOMATA_SHOT) await panelPage.screenshot({ path: process.env.AUTOMATA_SHOT });
     });
 
     // ---- harvest (extractAll) ------------------------------------------------------------

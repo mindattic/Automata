@@ -381,6 +381,146 @@ public class GherkinFlowTests
         Assert.That(Shape(second.Tasks), Is.EqualTo(Shape(first.Tasks)), written.Text);
     }
 
+    // ---- otherwise -------------------------------------------------------------------------------
+    //
+    // Gherkin has no block syntax, so this codebase's rule is "a guard takes the rest of the
+    // scenario". `otherwise` is the one thing that splits that rest in two, and these pin which
+    // guard claims it — the answer that makes both shapes round-trip.
+
+    [Test]
+    public void OtherwiseSplitsAGuardIntoItsTwoHalves()
+    {
+        var result = Compile("""
+            Feature: F
+
+              Scenario Outline: Fill it in when there is one
+                Given I open "https://x.example"
+                And row.Name is present
+                And I type "<Name>" into "Name"
+                But otherwise
+                And I click "Skip"
+
+                Examples: roster.json
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        var steps = result.Tasks[0].Steps[0].Children;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps[^2].Action, Is.EqualTo(StepAction.If));
+            Assert.That(steps[^2].Condition!.Op, Is.EqualTo(ConditionOp.Exists));
+            Assert.That(steps[^2].Children, Has.Count.EqualTo(1));
+            Assert.That(steps[^1].Action, Is.EqualTo(StepAction.Else),
+                "the otherwise is the guard's SIBLING, not one of its children");
+            Assert.That(steps[^1].Children, Has.Count.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void AGuardWithAnOtherwiseRoundTrips()
+    {
+        var source = """
+            Feature: F
+
+              Scenario Outline: Fill it in when there is one
+                Given I open "https://x.example"
+                And row.Name is present
+                And I type "<Name>" into "Name"
+                But otherwise
+                And I click "Skip"
+
+                Examples: roster.json
+            """;
+
+        var first = Compile(source);
+        Assert.That(first.HasErrors, Is.False, Errors(first));
+
+        var written = GherkinWriter.Write(first.Collection!, first.Tasks);
+        Assert.That(written.IsLossy, Is.False, string.Join(" | ", written.Reasons));
+        Assert.That(written.Text, Does.Contain("But otherwise"));
+
+        var second = Compile(written.Text);
+        Assert.That(second.HasErrors, Is.False, Errors(second) + "\n---\n" + written.Text);
+        Assert.That(Shape(second.Tasks), Is.EqualTo(Shape(first.Tasks)), written.Text);
+    }
+
+    /// <summary>
+    /// The rule that decides ownership: the search for an `otherwise` stops at the next guard,
+    /// because that guard takes everything after itself anyway. So the INNER one claims it — and
+    /// the shape has to survive being written back out and read again.
+    /// </summary>
+    [Test]
+    public void AnOtherwiseBelongsToTheInnermostGuardStillOpen()
+    {
+        var source = """
+            Feature: F
+
+              Scenario Outline: Two guards deep
+                Given I open "https://x.example"
+                And row.Role is present
+                And I click "Start"
+                And row.Name is not present
+                And I click "Skip"
+                But otherwise
+                And I type "<Name>" into "Name"
+
+                Examples: roster.json
+            """;
+
+        var first = Compile(source);
+        Assert.That(first.HasErrors, Is.False, Errors(first));
+
+        var outer = first.Tasks[0].Steps[0].Children[^1];
+        Assert.Multiple(() =>
+        {
+            Assert.That(outer.Action, Is.EqualTo(StepAction.If), "the outer guard");
+            Assert.That(outer.Children[^2].Action, Is.EqualTo(StepAction.If), "the inner guard");
+            Assert.That(outer.Children[^1].Action, Is.EqualTo(StepAction.Else),
+                "and the otherwise sits beside the INNER guard, inside the outer one");
+        });
+
+        var written = GherkinWriter.Write(first.Collection!, first.Tasks);
+        var second = Compile(written.Text);
+        Assert.That(second.HasErrors, Is.False, Errors(second) + "\n---\n" + written.Text);
+        Assert.That(Shape(second.Tasks), Is.EqualTo(Shape(first.Tasks)), written.Text);
+    }
+
+    [Test]
+    public void AnOtherwiseWithNoGuardBeforeItIsRefused()
+    {
+        var result = Compile("""
+            Feature: F
+
+              Scenario: Nothing to be the other half of
+                Given I open "https://x.example"
+                But otherwise
+                And I click "Skip"
+            """);
+
+        Assert.That(result.HasErrors, Is.True);
+        Assert.That(Errors(result), Does.Contain("no 'if' before it"));
+    }
+
+    [Test]
+    public void PresenceReadsBackAsPresence()
+    {
+        var result = Compile("""
+            Feature: F
+
+              Scenario Outline: Ragged
+                Given I open "https://x.example"
+                And row.Name is not present
+                And I click "Skip"
+
+                Examples: roster.json
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        Assert.That(result.Tasks[0].Steps[0].Children[^1].Condition!.Op, Is.EqualTo(ConditionOp.NotExists),
+            "'is not present' must not be read as 'is present' with a stray word");
+    }
+
     [Test]
     public void AnOutlineRoundTripsAsAnOutline()
     {

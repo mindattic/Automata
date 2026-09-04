@@ -110,7 +110,10 @@ public static class ServiceCollectionExtensions
             rootPath: Environment.GetEnvironmentVariable("AUTOMATA_LIVE_ROOT")));
         services.AddSingleton(sp => new DemoSeeder(
             sp.GetRequiredService<CollectionStore>(),
-            demoRoot: Environment.GetEnvironmentVariable("AUTOMATA_DEMOS_ROOT")));
+            demoRoot: Environment.GetEnvironmentVariable("AUTOMATA_DEMOS_ROOT"),
+            // The roster example iterates a ragged JSON list, and a list is an asset rather than a
+            // page — so the generator needs somewhere to put it.
+            datasets: sp.GetRequiredService<DatasetStore>()));
         // The workflow engine wraps the replay engine rather than replacing it: it owns the tree
         // walk so control-flow steps can decide whether and how often their children run.
         services.AddSingleton(sp => new FlowAuthoringService(

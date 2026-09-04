@@ -203,6 +203,7 @@ export const ACTION_INFO = {
     wait: 'Pause for a duration, until a time of day, or until a condition holds',
     forEach: 'Repeat the substeps once per row of a dataset',
     if: 'Run the substeps only when a condition holds',
+    else: 'Run the substeps when the "if" above did not',
     runTask: 'Run another task from here',
     writeDataset: 'Append a row to a CSV or JSON file',
     extractAll: 'Read every matching row off this page into a dataset',
@@ -216,7 +217,8 @@ export const ACTION_INFO = {
 // most of it happens to be — `setZoom` is not flow control, and a list whose name only fits some
 // of its members is a list people stop adding to correctly.
 export const ADVANCED_ACTIONS = [
-    'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom', 'aggregate',
+    'wait', 'if', 'else', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
+    'aggregate',
 ];
 
 // Everything a step's action dropdown may show, including actions created elsewhere (imported,

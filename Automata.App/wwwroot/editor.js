@@ -7,7 +7,8 @@ import {
 import { openConfirmModal } from './modal.js';
 import { addStep } from './tree.js';
 import { openScopedSettings } from './scoped-settings.js';
-import { fieldControlHtml, openBindingPicker } from './binding-field.js';
+import { fieldControlHtml, openBindingPicker, loopDatasetsInScope
+} from './binding-field.js';
 import {
     flowFieldsHtml, waitNeedsCondition, waitConditionHtml, commitFlowFields, wireFlowFields,
 } from './flow-fields.js';
@@ -15,7 +16,7 @@ import {
 // Steps that act on the page need an element; control-flow steps act on the run.
 var NEEDS_TARGET = {
     navigate: false, group: false, wait: false,
-    if: false, forEach: false, runTask: false, writeDataset: false,
+    if: false, else: false, forEach: false, runTask: false, writeDataset: false,
     // A harvest's rows come from a picked set selector, not from a single-element
     // fingerprint, so the ordinary target box would be a second, contradictory answer.
     extractAll: false,
@@ -227,6 +228,16 @@ export function renderEditor() {
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
         });
     });
+
+    // The binding picker offers the columns of whatever loop this step is inside, and it can only
+    // offer what the host has told us about. Asked for HERE rather than when the picker opens,
+    // because the picker is built synchronously from a click — a fetch started then would arrive
+    // after the list it was meant to fill. Only when something is actually missing, so the answer
+    // arriving cannot ask again.
+    var unknown = loopDatasetsInScope(task, step).filter(function (name) {
+        return !(state.datasets || []).some(function (d) { return d.name === name; });
+    });
+    if (unknown.length) post('getDatasets');
 
     wireFlowFields(editorEl, task, step, function () { saveTask(task); });
 

@@ -43,6 +43,31 @@ public static class DemoPages
     /// <summary>The level the zoom example zooms out to.</summary>
     public const int ZoomedTo = 25;
 
+    /// <summary>The dataset the roster example iterates, and the file it is written to.</summary>
+    public const string RosterDataset = "roster.json";
+
+    /// <summary>
+    /// A deliberately RAGGED list: two of the three rows carry a name and one does not.
+    /// <para>
+    /// Ragged is the normal shape of a JSON blob that came out of somewhere else, and it is the
+    /// case a spreadsheet cannot produce — a CSV gives every row every column because it has one
+    /// header. It is written as an example ASSET rather than harvested, because a harvest fills
+    /// every column of every row and so could never produce the gap this example is about.
+    /// </para>
+    /// </summary>
+    public const string RosterJson = """
+        [
+          { "Name": "Ada", "Role": "engineer" },
+          { "Role": "unknown" },
+          { "Name": "Grace", "Role": "admiral" }
+        ]
+        """;
+
+    /// <summary>How many roster rows carry a name, and how many do not — asserted by the example
+    /// itself, so they are stated once.</summary>
+    public const int RosterNamed = 2;
+    public const int RosterUnnamed = 1;
+
     /// <summary>
     /// Price of product <paramref name="index"/> in whole cents. Twelve of these total 45750 —
     /// $457.50, the figure every correct run of the shop example has to arrive at.
@@ -73,7 +98,7 @@ public static class DemoPages
         var pages = new List<DemoPage>
         {
             Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(),
-            Shadow(), ShopSearch(),
+            Shadow(), Roster(), ShopSearch(),
         };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
@@ -473,6 +498,55 @@ public static class DemoPages
               '<p id="shadow-said"></p>';
             shadow.getElementById('in-shadow').addEventListener('click', function () {
               shadow.getElementById('shadow-said').textContent = 'the shadow root was clicked';
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// A roster form with an Add and a Skip, and a tally of which happened.
+    /// <para>
+    /// The tally is written by the click handlers — on demand, triggered by the automation itself.
+    /// A page in a browser lane is off-screen and therefore hidden, so anything on a timer, an
+    /// animation frame or a resize reports its load-time answer forever while appearing to work.
+    /// </para>
+    /// </summary>
+    private static DemoPage Roster() => new("roster.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — a list with gaps</title>{{Css}}</head>
+        <body>
+          <h1>Roster</h1>
+          <p class="lede">Add the people who have a name; skip the ones who do not.</p>
+          <label class="field" for="txtName"><span>Name</span>
+            <input id="txtName" type="text" value=""></label>
+          <button id="add">Add</button>
+          <button id="skip">Skip</button>
+          <p id="tally">added 0, skipped 0</p>
+          <ul id="log" class="results"></ul>
+          <script>
+            var added = 0, skipped = 0;
+
+            function record(text, cls) {
+              var li = document.createElement('li');
+              li.className = 'product' + (cls ? ' ' + cls : '');
+              li.textContent = text;
+              document.getElementById('log').appendChild(li);
+              document.getElementById('tally').textContent =
+                'added ' + added + ', skipped ' + skipped;
+            }
+
+            document.getElementById('add').addEventListener('click', function () {
+              var box = document.getElementById('txtName');
+              added++;
+              record('added ' + box.value);
+              box.value = '';
+            });
+
+            document.getElementById('skip').addEventListener('click', function () {
+              skipped++;
+              record('skipped a row with no name', 'pending');
             });
           </script>
         </body>

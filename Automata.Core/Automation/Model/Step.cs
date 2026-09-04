@@ -68,6 +68,20 @@ public enum StepAction
     /// <summary>Run <see cref="Step.Children"/> only when <see cref="Step.Condition"/> holds.</summary>
     If,
 
+    /// <summary>
+    /// Run <see cref="Step.Children"/> only when the <see cref="If"/> immediately before it did
+    /// NOT.
+    /// <para>
+    /// A sibling rather than a second child list on the <c>If</c>, for two reasons. It is how a
+    /// person sketches it — "if this, do that, otherwise do the other" is three things in a row,
+    /// not one thing with two insides — and it is what the sidebar's tree, its drag-and-drop and
+    /// its insert gaps already know how to render, because it is an ordinary step with ordinary
+    /// children. The cost is that an else can be dragged away from its if; the engine says so by
+    /// name rather than guessing what was meant.
+    /// </para>
+    /// </summary>
+    Else,
+
     /// <summary>Invoke another task inline.</summary>
     RunTask,
 

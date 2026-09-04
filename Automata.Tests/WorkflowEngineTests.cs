@@ -789,6 +789,188 @@ public class WorkflowEngineTests
         Assert.That(datasets.Read("seen.csv").Select(r => r["term"]), Is.EqualTo(new[] { "wolf", "otter" }));
     }
 
+    // ---- ragged data, presence, and otherwise -------------------------------------------------------
+
+    /// <summary>
+    /// A list where not every row carries every field — the normal shape of a JSON blob that came
+    /// out of somewhere else, and the one a spreadsheet cannot produce.
+    /// </summary>
+    private void SeedRagged() =>
+        File.WriteAllText(
+            Path.Combine(Directory.CreateDirectory(datasets.RootPath).FullName, "roster.json"),
+            """[ { "Name": "Ada" }, { "Role": "unknown" }, { "Name": "Grace" } ]""");
+
+    /// <summary>A loop that records which branch each row took, so both halves are checkable.</summary>
+    private static TaskDefinition Branching(ConditionOp op, bool withElse) => new()
+    {
+        Name = "T",
+        Steps =
+        [
+            new Step
+            {
+                Id = "loop", Action = StepAction.ForEach,
+                ForEach = new ForEachSpec
+                {
+                    Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "roster.json" },
+                    RowVariableName = "row",
+                },
+                Children =
+                [
+                    new Step
+                    {
+                        Id = "guard", Action = StepAction.If,
+                        Condition = new ConditionSpec
+                        {
+                            Left = new BindingRef { Kind = BindingKind.DatasetColumn, ColumnName = "Name" },
+                            Op = op,
+                        },
+                        Children = [Record("then", "then")],
+                    },
+                    .. withElse
+                        ? new[] { new Step { Id = "otherwise", Action = StepAction.Else, Children = [Record("else", "else")] } }
+                        : [],
+                ],
+            },
+        ],
+    };
+
+    private static Step Record(string id, string which) => new()
+    {
+        Id = id, Action = StepAction.WriteDataset,
+        WriteDataset = new DatasetWriteSpec
+        {
+            DatasetName = "took.csv",
+            Append = true,
+            Columns = new Dictionary<string, BindingRef>
+            {
+                ["branch"] = new() { Kind = BindingKind.Literal, Literal = which },
+            },
+        },
+    };
+
+    /// <summary>
+    /// The reason <c>Exists</c> had to exist. Asking whether an ABSENT value is empty fails the
+    /// run — deliberately, because a column that is not there is nearly always a mis-typed column
+    /// name — so a ragged list cannot be branched on with <c>NotEmpty</c> at all.
+    /// </summary>
+    [Test]
+    public async Task NotEmpty_OnARowThatLacksTheColumn_FailsRatherThanAnswering()
+    {
+        SeedRagged();
+
+        var events = await Run(Branching(ConditionOp.NotEmpty, withElse: false), Browser());
+
+        var failure = events.OfType<StepEvent.StepCompleted>().Last(e => e.Status == StepStatus.Failed);
+        Assert.That(failure.Message, Does.Contain("this row has no 'Name'"));
+        Assert.That(failure.Message, Does.Contain("exists"), "and it should say what to do instead");
+    }
+
+    [Test]
+    public async Task Exists_AnswersInsteadOfFailing_OnTheRowThatLacksTheColumn()
+    {
+        SeedRagged();
+
+        await Run(Branching(ConditionOp.Exists, withElse: false), Browser());
+
+        Assert.That(datasets.Read("took.csv"), Has.Count.EqualTo(2), "the two rows that have a Name");
+    }
+
+    [Test]
+    public async Task Otherwise_RunsExactlyWhenTheIfBeforeItDidNot()
+    {
+        SeedRagged();
+
+        await Run(Branching(ConditionOp.Exists, withElse: true), Browser());
+
+        Assert.That(datasets.Read("took.csv").Select(r => r["branch"]),
+            Is.EqualTo(new[] { "then", "else", "then" }),
+            "one branch per row, and the one the row's data called for");
+    }
+
+    /// <summary>
+    /// An `if` runs its children BEFORE anything looks at what it decided, so a nested one is the
+    /// last to have decided anything. Reading "the last verdict" would pair the outer else with
+    /// the inner if — silently, and only when a task happens to nest.
+    /// </summary>
+    [Test]
+    public async Task Otherwise_PairsWithItsOwnIf_NotWithANestedOne()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "outer", Action = StepAction.If,
+                    Condition = new ConditionSpec { Left = Literal("yes"), Op = ConditionOp.NotEmpty },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "inner", Action = StepAction.If,
+                            Condition = new ConditionSpec { Left = Literal(""), Op = ConditionOp.NotEmpty },
+                            Children = [Record("never", "inner-then")],
+                        },
+                    ],
+                },
+                new Step { Id = "otherwise", Action = StepAction.Else, Children = [Record("outer-else", "outer-else")] },
+            ],
+        };
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Exists("took.csv"), Is.False,
+            "the outer if held, so its otherwise must not run — whatever the inner one decided");
+    }
+
+    [Test]
+    public async Task Otherwise_WithNoIfBeforeIt_SaysSo()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "otherwise", Action = StepAction.Else, Children = [Record("x", "x")] }],
+        };
+
+        var events = await Run(task, Browser());
+
+        var done = events.OfType<StepEvent.StepCompleted>().First();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain("straight after an 'if'"));
+    }
+
+    /// <summary>Outside a loop the message is about the binding being in the wrong place, not about
+    /// the row — they are two different mistakes with two different fixes.</summary>
+    [Test]
+    public async Task AColumnBindingOutsideALoop_StillSaysItNeedsALoop()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "guard", Action = StepAction.If,
+                    Condition = new ConditionSpec
+                    {
+                        Left = new BindingRef { Kind = BindingKind.DatasetColumn, ColumnName = "Name" },
+                        Op = ConditionOp.NotEmpty,
+                    },
+                },
+            ],
+        };
+
+        var events = await Run(task, Browser());
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Message,
+            Does.Contain("needs an enclosing for-each"));
+    }
+
+    private static BindingRef Literal(string value) =>
+        new() { Kind = BindingKind.Literal, Literal = value };
+
     // ---- runTask -------------------------------------------------------------------------------
 
     [Test]

@@ -52,7 +52,8 @@ public sealed record DemoSeedReport(
 /// everything. Silent actions may not lose work; an explicit one, asked for in as many words, may.
 /// </para>
 /// </summary>
-public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = null)
+public sealed class DemoSeeder(
+    CollectionStore collections, string? demoRoot = null, DatasetStore? datasets = null)
 {
     public static string DefaultRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Demos");
@@ -114,6 +115,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
     {
         var before = Survey();
         var pages = WritePages();
+        WriteExampleData(overwrite: restoreEverything);
 
         var collection = collections.EnsureCollectionNamed(DemoTasks.CollectionName);
         if (string.IsNullOrEmpty(collection.Description))
@@ -203,6 +205,25 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
             written.Add(page.RelativePath);
         }
         return written;
+    }
+
+    /// <summary>
+    /// Writes the example ASSET — the ragged list the roster example iterates.
+    /// <para>
+    /// Unlike a page, this does NOT get rewritten on every launch. A dataset lives in the shared
+    /// Datasets folder among the user's own files, and a generated page is output nobody could
+    /// have edited on purpose while a data file plainly is. So it is written when it is absent, and
+    /// replaced only by an explicit regenerate — the same split as everything else here: the silent
+    /// path may not destroy work, the asked-for one may.
+    /// </para>
+    /// </summary>
+    private void WriteExampleData(bool overwrite)
+    {
+        if (datasets == null) return;
+        var path = datasets.PathFor(DemoPages.RosterDataset);
+        if (!overwrite && File.Exists(path)) return;
+        Directory.CreateDirectory(datasets.RootPath);
+        File.WriteAllText(path, DemoPages.RosterJson, new UTF8Encoding(false));
     }
 
     /// <summary>

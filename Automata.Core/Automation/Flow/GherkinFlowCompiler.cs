@@ -185,6 +185,13 @@ public static class GherkinFlowCompiler
     /// <summary>
     /// Flat-with-guards → nested. Everything after a guard becomes that guard's children, which is
     /// how idiomatic Gherkin expresses "only do the rest when…" without a block syntax.
+    /// <para>
+    /// An <c>otherwise</c> line splits that remainder in two: what the guard runs, and what runs
+    /// when it does not hold. It is claimed by the INNERMOST guard still open — so the search for
+    /// it stops at the next guard, because that one will take everything after itself anyway. That
+    /// rule is what makes both shapes round-trip: a plain if/otherwise at the top, and an
+    /// if/otherwise nested inside another guard's half.
+    /// </para>
     /// </summary>
     private static List<Step> BuildTree(
         List<(StepDraft Draft, Location Location)> drafts,
@@ -210,10 +217,44 @@ public static class GherkinFlowCompiler
                 if (draft.RawRight != null)
                     step.Condition.Right = Reference(draft.RawRight, outputs, insideLoop, location, diagnostics);
 
-                // Everything after the guard belongs to it.
-                step.Children = BuildTree(drafts.Skip(i + 1).ToList(), outputs, insideLoop, diagnostics);
+                // Everything after the guard belongs to it — up to its own `otherwise`, if it has
+                // one it can still claim.
+                var rest = drafts.Skip(i + 1).ToList();
+                var split = -1;
+                for (var k = 0; k < rest.Count; k++)
+                {
+                    var action = rest[k].Draft.Step.Action;
+                    // A nested guard takes the remainder including any otherwise in it, so this one
+                    // has already stopped being a candidate by the time we reach that word.
+                    if (action == StepAction.If) break;
+                    if (action == StepAction.Else) { split = k; break; }
+                }
+
+                if (split < 0)
+                {
+                    step.Children = BuildTree(rest, outputs, insideLoop, diagnostics);
+                    steps.Add(step);
+                    return steps;
+                }
+
+                step.Children = BuildTree(rest.Take(split).ToList(), outputs, insideLoop, diagnostics);
                 steps.Add(step);
+
+                var otherwise = rest[split].Draft.Step;
+                otherwise.Children = BuildTree(
+                    rest.Skip(split + 1).ToList(), outputs, insideLoop, diagnostics);
+                steps.Add(otherwise);
                 return steps;
+            }
+
+            // Reaching an `otherwise` HERE means no guard claimed it — there was none open. It is
+            // kept, so nothing is silently dropped, and named, because the alternative is a branch
+            // that never runs and never says why.
+            if (step.Action == StepAction.Else)
+            {
+                diagnostics.Add(new FlowDiagnostic(
+                    FlowSeverity.Error, location.Line, location.Column,
+                    "'otherwise' has no 'if' before it to be the other half of"));
             }
 
             foreach (var output in step.Outputs ?? [])

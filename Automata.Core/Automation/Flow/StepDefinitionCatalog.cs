@@ -65,6 +65,9 @@ public static class StepDefinitionCatalog
     [
         ("is not empty", ConditionOp.NotEmpty, true),
         ("is empty", ConditionOp.Empty, true),
+        // Negated first, so "is not present" is never read as "is present" with a stray word.
+        ("is not present", ConditionOp.NotExists, true),
+        ("is present", ConditionOp.Exists, true),
         ("is true", ConditionOp.IsTrue, true),
         ("is false", ConditionOp.IsFalse, true),
         ("is greater than", ConditionOp.GreaterThan, false),
@@ -173,6 +176,15 @@ public static class StepDefinitionCatalog
                 WriteDataset = new DatasetWriteSpec { DatasetName = m.Groups[1].Value, Append = true },
             }, rawAssignments: m.Groups[2].Value)),
         };
+
+        // The other half of a guard. A bare word rather than a phrase about a value, because it is
+        // not about a value — it is punctuation, closing the guard above it and opening its
+        // opposite. Gherkin has no block syntax, so this is the block end.
+        defs.Add(Def("otherwise", @"otherwise", _ => Draft(new Step
+        {
+            Action = StepAction.Else,
+            Label = "Otherwise",
+        })));
 
         // Guards come last, so `"total" contains "$"` is read as an assertion about the page
         // rather than a guard about a captured value. An assertion names an element; a guard names

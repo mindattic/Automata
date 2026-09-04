@@ -30,7 +30,29 @@ internal static class BindingResolver
         return (value, url, null);
     }
 
+    /// <summary>
+    /// The value, or the reason there is none — turning an ABSENT value into an error, which is
+    /// what every caller but a presence test wants. A column that is not in the row is nearly
+    /// always a mis-typed column name, and reporting it as an empty string would type nothing into
+    /// a field and call the step a success.
+    /// </summary>
     public static (string? Value, string? Error) Resolve(BindingRef binding, ReplayRunState state)
+    {
+        var (found, value, error) = Lookup(binding, state);
+        if (error != null) return (null, error);
+        if (!found) return (null, Missing(binding, state));
+        return (value, null);
+    }
+
+    /// <summary>
+    /// Three answers, not two: the value, or "legitimately absent", or "this binding is broken".
+    /// <para>
+    /// Only a presence test wants the middle one — see <see cref="Model.ConditionOp.Exists"/>.
+    /// Keeping it separate is what lets a ragged dataset be branched on without also making a
+    /// typo'd column name look like an empty one.
+    /// </para>
+    /// </summary>
+    public static (bool Found, string? Value, string? Error) Lookup(BindingRef binding, ReplayRunState state)
     {
         string? core;
         switch (binding.Kind)
@@ -45,36 +67,58 @@ internal static class BindingResolver
                 if (!state.Outputs.TryGetValue(
                         ReplayRunState.OutputKey(binding.SourceStepId, binding.OutputField), out core))
                 {
-                    return (null, $"'{binding.OutputField}' has not been produced yet — the step that publishes it must run first");
+                    return (false, null, null);
                 }
                 break;
 
             case BindingKind.DatasetColumn:
                 if (string.IsNullOrWhiteSpace(binding.ColumnName))
-                    return (null, "no column name set");
+                    return (false, null, "no column name set");
                 if (!state.Variables.TryGetValue(binding.ColumnName, out core))
-                    return (null, $"no value for '{binding.ColumnName}' here — this binding needs an enclosing for-each over a dataset");
+                    return (false, null, null);
                 break;
 
             case BindingKind.TaskInput:
                 if (string.IsNullOrWhiteSpace(binding.ParameterName))
-                    return (null, "no input name set");
+                    return (false, null, "no input name set");
                 core = state.Input(binding.ParameterName);
-                if (core == null)
-                    return (null, $"nothing supplied the input '{binding.ParameterName}', and it has no default");
+                if (core == null) return (false, null, null);
                 break;
 
             case BindingKind.EnvVar:
                 if (string.IsNullOrWhiteSpace(binding.EnvVarName))
-                    return (null, "no environment variable name set");
+                    return (false, null, "no environment variable name set");
                 core = Environment.GetEnvironmentVariable(binding.EnvVarName);
-                if (core == null) return (null, $"environment variable '{binding.EnvVarName}' is not set");
+                if (core == null) return (false, null, null);
                 break;
 
             default:
-                return (null, $"{binding.Kind} bindings are not supported yet");
+                return (false, null, $"{binding.Kind} bindings are not supported yet");
         }
 
-        return ((binding.Prefix ?? "") + core + (binding.Suffix ?? ""), null);
+        return (true, (binding.Prefix ?? "") + core + (binding.Suffix ?? ""), null);
     }
+
+    /// <summary>
+    /// Why a value that is not there is not there — worded for the mistake it usually is.
+    /// <para>
+    /// A dataset column gets two different messages, because they are two different mistakes. With
+    /// no enclosing loop the binding is in the wrong place entirely; inside one, the row simply
+    /// does not carry that column, and the fix is either the column's name or an <c>exists</c>
+    /// guard in front of it.
+    /// </para>
+    /// </summary>
+    private static string Missing(BindingRef binding, ReplayRunState state) => binding.Kind switch
+    {
+        BindingKind.StepOutput =>
+            $"'{binding.OutputField}' has not been produced yet — the step that publishes it must run first",
+        BindingKind.TaskInput =>
+            $"nothing supplied the input '{binding.ParameterName}', and it has no default",
+        BindingKind.DatasetColumn when !state.InRowScope =>
+            $"no value for '{binding.ColumnName}' here — this binding needs an enclosing for-each over a dataset",
+        BindingKind.DatasetColumn =>
+            $"this row has no '{binding.ColumnName}' — check the column name, or guard the step with 'exists'",
+        BindingKind.EnvVar => $"environment variable '{binding.EnvVarName}' is not set",
+        _ => $"{binding.Kind} has no value here",
+    };
 }

@@ -26,9 +26,34 @@ internal sealed class ReplayRunState
     /// a failed step's children never run, even when ContinueOnStepError keeps its siblings going.</summary>
     public StepStatus? LastStatus;
 
+    /// <summary>
+    /// What each <see cref="StepAction.If"/> decided, keyed by ITS OWN step id.
+    /// <para>
+    /// Keyed rather than "the last one", because an <c>if</c> runs its children before the walker
+    /// looks at the answer — so a nested <c>if</c> inside the then-branch would be the last one to
+    /// have decided anything, and the outer <c>else</c> would pair with the wrong verdict entirely.
+    /// </para>
+    /// </summary>
+    public readonly Dictionary<string, bool> IfVerdicts = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What the step IMMEDIATELY BEFORE the one now running decided, when that step was an
+    /// <see cref="StepAction.If"/>. Null in every other case, including two steps after an if —
+    /// which is what keeps an <see cref="StepAction.Else"/> paired with its own if rather than
+    /// with whichever one happened to run last.
+    /// </summary>
+    public bool? PreviousIfHeld;
+
     /// <summary>Values published by steps that have already run, keyed by step id + output name.
     /// Step ids are GUIDs, so this stays unambiguous even when a RunTask pulls in another task.</summary>
     public readonly Dictionary<string, string> Outputs = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True inside a for-each row. It is what separates "this binding is in the wrong place" from
+    /// "this row does not carry that column" — the same absent value, two entirely different
+    /// mistakes, and only one of them has 'exists' as its answer.
+    /// </summary>
+    public bool InRowScope;
 
     /// <summary>
     /// Row variables from an enclosing ForEach. Each column is published twice — bare
@@ -141,6 +166,7 @@ internal sealed class ReplayRunState
         // The freshened set is passed by reference, not copied: it is the one thing rows must
         // agree on, or every row would think itself the first and clear the dataset again.
         var child = new ReplayRunState(freshened);
+        child.InRowScope = true;
         foreach (var (key, value) in Outputs) child.Outputs[key] = value;
         foreach (var (key, value) in Variables) child.Variables[key] = value;
         foreach (var taskId in TaskStack) child.TaskStack.Add(taskId);

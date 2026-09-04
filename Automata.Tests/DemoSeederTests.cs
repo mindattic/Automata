@@ -22,7 +22,8 @@ public class DemoSeederTests
     {
         root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
         collections = new CollectionStore(Path.Combine(root, "collections"));
-        seeder = new DemoSeeder(collections, Path.Combine(root, "demos"));
+        seeder = new DemoSeeder(
+            collections, Path.Combine(root, "demos"), new DatasetStore(Path.Combine(root, "datasets")));
     }
 
     [TearDown]

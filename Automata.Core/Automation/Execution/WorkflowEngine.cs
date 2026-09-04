@@ -162,6 +162,12 @@ public sealed partial class WorkflowEngine
         Walk walk,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // Whether the `if` immediately before the step being walked held — the ONE piece of state
+        // an `else` needs, and it is local to this list because that is exactly how far the pairing
+        // reaches. Null means the step before was not an `if` at all, which is what makes an
+        // orphaned `else` a failure with a name rather than a branch that quietly never runs.
+        bool? previousIfHeld = null;
+
         // While resuming, everything before the parked wait's branch already ran in an earlier
         // pass. -1 during an ordinary walk, which starts at 0 and skips nothing.
         var resumeIndex = walk.Resume is { Count: > 0 } ? walk.Resume[0] : -1;
@@ -180,8 +186,11 @@ public sealed partial class WorkflowEngine
                 continue;
             }
 
+            state.PreviousIfHeld = previousIfHeld;
             await foreach (var evt in RunStepAsync(steps[index], scope, state, walk.Into(index, tail), ct))
                 yield return evt;
+            previousIfHeld = steps[index].Action == StepAction.If
+                && state.IfVerdicts.TryGetValue(steps[index].Id, out var verdict) ? verdict : null;
             if (state.Stop) yield break;
         }
     }
@@ -337,7 +346,7 @@ public sealed partial class WorkflowEngine
     }
 
     private static bool IsOrchestrated(Step step) =>
-        step.Action is StepAction.If or StepAction.ForEach or StepAction.RunTask
+        step.Action is StepAction.If or StepAction.Else or StepAction.ForEach or StepAction.RunTask
             or StepAction.WriteDataset or StepAction.ExtractAll or StepAction.Aggregate
         || (step.Action == StepAction.Wait
             && step.Wait?.Mode is WaitMode.UntilCondition or WaitMode.UntilSignal);
@@ -354,16 +363,47 @@ public sealed partial class WorkflowEngine
             case StepAction.If:
             {
                 var (holds, error) = Evaluate(step.Condition, state);
-                if (error != null) { await foreach (var e in FailAsync(step, scope, state, error)) yield return e; yield break; }
+                if (error != null)
+                {
+                    // No verdict, so an `else` after this one has nothing to be the other half of.
+                    state.IfVerdicts.Remove(step.Id);
+                    await foreach (var e in FailAsync(step, scope, state, error)) yield return e;
+                    yield break;
+                }
 
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
                     holds ? "condition holds — running substeps" : "condition does not hold — substeps skipped", null);
                 state.LastStatus = StepStatus.Passed;
+                state.IfVerdicts[step.Id] = holds;
                 state.Passed++;
                 if (!holds) yield break;
 
                 // An `if` keeps the walk parkable: it is one branch taken once, so a wait inside
                 // it still has an address a checkpoint can name and a resume can re-enter.
+                await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                    yield return evt;
+                yield break;
+            }
+
+            case StepAction.Else:
+            {
+                if (state.PreviousIfHeld is not { } held)
+                {
+                    await foreach (var e in FailAsync(step, scope, state,
+                        "an 'otherwise' has to come straight after an 'if' — there is none before this one"))
+                        yield return e;
+                    yield break;
+                }
+
+                yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
+                    held ? "the 'if' before this held — substeps skipped" : "the 'if' before this did not hold — running substeps",
+                    null);
+                state.LastStatus = StepStatus.Passed;
+                state.Passed++;
+                if (held) yield break;
+
+                // Parkable for the same reason an `if` is: one branch, taken once, at an address a
+                // checkpoint can name.
                 await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
                     yield return evt;
                 yield break;
@@ -790,6 +830,16 @@ public sealed partial class WorkflowEngine
     internal static (bool Result, string? Error) Evaluate(ConditionSpec? spec, ReplayRunState state)
     {
         if (spec == null) return (false, "no condition set");
+
+        // Asked BEFORE resolving, because these two are the only comparisons for which an absent
+        // value is an answer rather than a problem. Everything below still refuses to compare
+        // something that is not there — a mis-typed column name must not read as an empty one.
+        if (spec.Op is ConditionOp.Exists or ConditionOp.NotExists)
+        {
+            var (found, _, lookupError) = BindingResolver.Lookup(spec.Left, state);
+            if (lookupError != null) return (false, "left side: " + lookupError);
+            return (spec.Op == ConditionOp.Exists ? found : !found, null);
+        }
 
         var (left, leftError) = BindingResolver.Resolve(spec.Left, state);
         if (leftError != null) return (false, "left side: " + leftError);

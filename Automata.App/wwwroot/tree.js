@@ -131,6 +131,7 @@ function renderSteps(task, steps, depth, parentId) {
         html += '<div class="node step' + (sel ? ' selected' : '') + (status ? ' st-' + status : '') +
             '" role="treeitem" draggable="true" data-key="' + key + '" data-kind="step"' +
             ' data-step="' + s.id + '" data-task="' + task.id + '" data-parent="' + pid + '"' +
+            ' data-action="' + esc(s.action || '') + '"' +
             ' tabindex="' + tabIndexFor(key) + '" aria-level="' + (3 + depth) + '"' +
             ' aria-posinset="' + (i + 1) + '" aria-setsize="' + steps.length + '"' +
             (kids.length ? ' aria-expanded="true"' : '') +

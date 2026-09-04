@@ -296,6 +296,14 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
   background: var(--color-border);
 }
 
+/* A branch reads as a branch. `if` and `else` are the only steps whose meaning is about the step
+   NEXT to them, so they are the only ones that get an edge — it is what makes the pair visible as a
+   pair when the tree is a long flat list of rows. */
+.node.step[data-action="if"],
+.node.step[data-action="else"] { border-left-color: var(--color-info); }
+
+.node.step[data-action="else"] .name { font-style: italic; }
+
 .node .status { width: 18px; flex: none; text-align: center; }
 .node.st-running .status { color: var(--color-warning); }
 .node.st-passed .status, .node.st-healed .status { color: var(--color-success); }

@@ -7,6 +7,7 @@ import {
 } from './core.js';
 import { render, renderRecPreview } from './render.js';
 import { renderDatasets } from './data.js';
+import { renderEditor } from './editor.js';
 import { renderRuns } from './runs.js';
 import { renderLanes } from './lanes.js';
 import { renderSchedule, onSchedulePushed } from './schedule.js';
@@ -183,6 +184,10 @@ window.ssPanel = {
         state.datasets = (payload && payload.datasets) || [];
         state.datasetRoot = (payload && payload.root) || '';
         renderDatasets();
+        // The step editor asks for this when it needs a loop's columns, so the answer has to reach
+        // it. Safe from looping: the editor only asks for what is missing, and this is the arrival
+        // of exactly that.
+        renderEditor();
     },
     onSettings: function (s) {
         state.engineDefaults = (s && s.engineDefaults) || null;

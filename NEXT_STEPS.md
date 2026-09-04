@@ -945,6 +945,69 @@ OPAQUE origin, so one local file embedding another is cross-origin even in the s
 `srcdoc` frame inherits its embedder's origin, which is what a real same-origin embed looks like -
 and the file:// case being unreachable is itself the demonstration of the limit above.
 
+### Phase 19 - branching over a list with gaps in it (2026-09-04)
+
+One line of pseudo-code was the whole spec:
+
+    FORLOOP(stuff.json) | IF(item).HAS('Name') | Enter Item[x].Name into 'txtName' | ELSE()
+
+Three of its four parts did not exist. What follows is what each turned into, and the answer to
+`Item[x]` first, because it is the one that stays different: **there is no index and no whole-row
+value.** A loop hands each step ONE row, so the index is implicit; what a step binds to is a
+COLUMN, published bare (`Name`) and qualified (`row.Name`). `[x]` implies random access into the
+collection, which the model does not have.
+
+- **`ConditionOp.Exists` / `NotExists`** — the `HAS`. Not expressible before, and the nearest thing
+  was worse than missing: a JSON array is RAGGED (some objects carry a key, some do not), and
+  asking `is not empty` about an absent column **failed the run**. Proven before it was fixed, by a
+  throwaway run: `left side: no value for 'Name' here`. `BindingResolver` now has a three-answer
+  `Lookup` — the value, legitimately absent, or the binding is broken — and only a presence test
+  gets to treat absence as an answer. Everything else still refuses, because a column that is not
+  there is nearly always a mis-typed column name, and reading it as empty would type nothing into a
+  field and call the step a success. The message even changed to say which mistake it is: with no
+  enclosing loop, the binding is in the wrong place; inside one, "this row has no 'Name' — check the
+  column name, or guard the step with 'exists'".
+- **`StepAction.Else`** — the `ELSE`. A SIBLING of the `if`, not a second child list on it: it is
+  how a person sketches it (three things in a row, which is exactly how the line above reads), and
+  it is what the tree, its drag-and-drop and its insert gaps already know how to render. The verdict
+  is keyed **by the if's own step id**, because an `if` runs its children before anything looks at
+  what it decided — reading "the last verdict" would pair an outer `else` with a nested `if`,
+  silently, and only in tasks that happen to nest.
+- **Dataset columns in the binding picker.** The shop examples bind to `row.url`, but that was only
+  ever expressible in code: the picker offered captured outputs, task inputs and environment
+  variables, and no way to name a column of the row a loop is on. It now walks outward from the step
+  through every enclosing `forEach` and offers that dataset's columns by name — and the editor asks
+  the host for them as it opens, since a picker is built synchronously from a click and a fetch
+  started then would arrive after the list it was meant to fill.
+
+**Gherkin**, which was the part most likely to be quietly wrong:
+
+- `otherwise` is the block end Gherkin does not have. Rendered as **`But otherwise`** — `But` is
+  Gherkin's own word for the contrasting case — and compiled back by splitting the guard's
+  remainder in two. It is claimed by the INNERMOST guard still open, because the search for it stops
+  at the next guard, which takes everything after itself anyway. That rule is what makes both
+  shapes round-trip, and both are tested.
+- **A guard's operands are written bare now** (`row.Name`), not as the quoted placeholder
+  `"<Name>"`. The placeholder form belongs to a step VALUE, where Gherkin's own Scenario Outline
+  substitution gives it meaning; the guard grammar does not accept it, so a column guard rendered
+  to a line the compiler could not read back. A feature that printed and would not recompile.
+- **A step with no Gherkin form no longer takes its subtree with it.** `continue` skipped the
+  children, so a loop rendered as one comment line and the eight steps inside it vanished — with a
+  reason about the loop and nothing about them. They are written flat now, and the lossiness says
+  so.
+
+The example is **"Work through a list with gaps in it"**: `roster.json` — two rows with a name, one
+without — iterated, with `Role is present` outside and `Name is not present` / `otherwise` inside.
+Nested on purpose, because that is the shape the round-trip rule has to get right. The list is
+seeded as an example ASSET rather than harvested, since a harvest fills every column of every row
+and so could never produce the gap; it is written when absent and replaced only by an explicit
+regenerate, because a dataset sits among the user's own files and a generated page does not.
+
+Not fixed, and worth knowing: this example loops AND checks a tally once afterwards, and a Scenario
+Outline has no room for the second part — every step in an outline runs per row. So it renders as a
+plain Scenario with the loop as a comment, honestly flagged lossy. The clean-outline round-trip is
+proven separately on the same guard shape.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -979,6 +1042,13 @@ yet** below.
 - **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
   selector against the top document, so the one action that does not go through the resolver is the
   one action that still stops at the boundary.
+- **No row index, and no whole-row value.** A loop publishes a row's COLUMNS; there is no `row.#`
+  to bind to (the row number appears only in a log line) and `BindingKind.DatasetRow` still answers
+  "not supported yet" despite its doc promising the row as JSON. Neither has been needed yet, and
+  both are small — the index especially, since the walker already counts.
+- **Nested JSON is flat.** `ReadJsonArray` keeps a nested object as its raw JSON text in that
+  column, so `Address.City` is not reachable as a column. Flattening it at read time is the obvious
+  answer and the obvious risk (a name collision with a real column).
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
   running - a parallel for-each forks a state per row, and no other step is in flight. So it is

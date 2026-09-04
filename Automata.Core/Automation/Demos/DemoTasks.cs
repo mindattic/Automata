@@ -77,6 +77,7 @@ public static class DemoTasks
         Zoom(demoRoot),
         Invoices(demoRoot),
         Shadow(demoRoot),
+        Roster(demoRoot),
         Search(demoRoot),
         Chain(demoRoot),
         ShopPrices(demoRoot, parallel: false),
@@ -697,6 +698,124 @@ public static class DemoTasks
                 Value = "the frame was clicked",
             },
         ]);
+
+    // ---- a list with gaps in it -----------------------------------------------------------------
+
+    /// <summary>
+    /// The example for the shape a JSON blob from somewhere else actually has: a list where not
+    /// every row carries every field.
+    /// <para>
+    /// It is two guards, nested. The outer one is the everyday "only bother with rows that have a
+    /// role at all"; the inner one branches on the missing name, and its <c>otherwise</c> belongs
+    /// to it rather than to the outer guard — which is the rule the Gherkin round-trip has to get
+    /// right, and the reason this example is nested rather than flat.
+    /// </para>
+    /// <para>
+    /// <c>is not present</c> and not <c>is empty</c>: asking whether an absent value is empty FAILS
+    /// the run, deliberately, because a column that is not there is nearly always a mis-typed
+    /// column name. Presence is how you say you meant to ask.
+    /// </para>
+    /// </summary>
+    private static DemoTask Roster(string demoRoot) => new(
+        "roster",
+        "Work through a list with gaps in it",
+        $"Iterates {DemoPages.RosterDataset} — a list where {DemoPages.RosterNamed} of the "
+        + $"{DemoPages.RosterNamed + DemoPages.RosterUnnamed} rows have a name and "
+        + $"{DemoPages.RosterUnnamed} does not — and branches on it: type the name and add, or "
+        + "skip. This is what a JSON blob from a previous task looks like when you feed it to the "
+        + "next one.",
+        PageUrl(demoRoot, "roster.html"),
+        [
+            new Step
+            {
+                Id = "demo-roster-loop",
+                Action = StepAction.ForEach,
+                Label = "For every row of the list",
+                ForEach = new ForEachSpec
+                {
+                    Source = new BindingRef
+                    {
+                        Kind = BindingKind.DatasetRow,
+                        DatasetName = DemoPages.RosterDataset,
+                        Label = DemoPages.RosterDataset,
+                    },
+                    RowVariableName = "row",
+                },
+                Children =
+                [
+                    new Step
+                    {
+                        Id = "demo-roster-has-role",
+                        Action = StepAction.If,
+                        Label = "Only rows that have a role at all",
+                        Condition = new ConditionSpec { Left = Column("Role"), Op = ConditionOp.Exists },
+                        Children =
+                        [
+                            new Step
+                            {
+                                Id = "demo-roster-no-name",
+                                Action = StepAction.If,
+                                Label = "When the row has no name",
+                                Condition = new ConditionSpec { Left = Column("Name"), Op = ConditionOp.NotExists },
+                                Children =
+                                [
+                                    new Step
+                                    {
+                                        Id = "demo-roster-skip",
+                                        Action = StepAction.Click,
+                                        Label = "Skip it",
+                                        Target = Css("button", "#skip"),
+                                    },
+                                ],
+                            },
+                            new Step
+                            {
+                                Id = "demo-roster-otherwise",
+                                Action = StepAction.Else,
+                                Label = "Otherwise",
+                                Children =
+                                [
+                                    new Step
+                                    {
+                                        Id = "demo-roster-type",
+                                        Action = StepAction.SetValue,
+                                        Label = "Put the name in the box",
+                                        Target = Css("input", "#txtName"),
+                                        Bindings = new Dictionary<string, BindingRef>
+                                        {
+                                            ["Value"] = Column("Name"),
+                                        },
+                                    },
+                                    new Step
+                                    {
+                                        Id = "demo-roster-add",
+                                        Action = StepAction.Click,
+                                        Label = "Add them",
+                                        Target = Css("button", "#add"),
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+            new Step
+            {
+                Id = "demo-roster-tally",
+                Action = StepAction.AssertElement,
+                Label = "Confirm both branches were taken the right number of times",
+                Target = Css("p", "#tally"),
+                Value = $"added {DemoPages.RosterNamed}, skipped {DemoPages.RosterUnnamed}",
+            },
+        ]);
+
+    /// <summary>A binding to one column of the row an enclosing for-each is on.</summary>
+    private static BindingRef Column(string name) => new()
+    {
+        Kind = BindingKind.DatasetColumn,
+        ColumnName = name,
+        Label = "row." + name,
+    };
 
     // ---- a task run more than one way -----------------------------------------------------------
 

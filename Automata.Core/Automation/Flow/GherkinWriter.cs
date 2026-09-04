@@ -74,7 +74,8 @@ public static class GherkinWriter
     {
         foreach (var step in steps)
         {
-            var keyword = first ? "Given" : "And";
+            // `But` is Gherkin's own word for the contrasting case, which is exactly what this is.
+            var keyword = step.Action == StepAction.Else ? "But" : first ? "Given" : "And";
             first = false;
 
             var phrase = Phrase(step, reasons);
@@ -83,6 +84,18 @@ public static class GherkinWriter
                 sb.Append("    # ").Append(step.Label).Append(" — no Gherkin form for ")
                   .Append(step.Action).Append('\n');
                 reasons.Add($"'{step.Label}' ({step.Action}) has no Gherkin form");
+
+                // Its CHILDREN are still written. Skipping them used to take a whole subtree out
+                // of the feature with one comment line to show for it — a loop rendered as three
+                // lines while everything it did disappeared, and the only clue was a reason about
+                // the loop rather than about the eight steps that went with it.
+                if (step.Children.Count > 0)
+                {
+                    reasons.Add(
+                        $"'{step.Label}' has no Gherkin form, so the {step.Children.Count} step(s) " +
+                        "inside it are shown flat and lose their nesting");
+                    WriteSteps(sb, step.Children, task, reasons, first: false);
+                }
                 continue;
             }
 
@@ -90,7 +103,7 @@ public static class GherkinWriter
 
             if (step.Children.Count == 0) continue;
 
-            if (step.Action == StepAction.If)
+            if (step.Action is StepAction.If or StepAction.Else)
             {
                 WriteSteps(sb, step.Children, task, reasons, first: false);
             }
@@ -124,6 +137,7 @@ public static class GherkinWriter
                 => $"I extract text from {target} as {name}",
             StepAction.Wait => WaitPhrase(step),
             StepAction.If => GuardPhrase(step),
+            StepAction.Else => "otherwise",
             StepAction.RunTask => "I run task " + FlowValues.Quote(RunTaskName(step)),
             StepAction.WriteDataset => WritePhrase(step),
             _ => null,
@@ -150,11 +164,36 @@ public static class GherkinWriter
         var entry = StepDefinitionCatalog.Comparisons.FirstOrDefault(c => c.Op == condition.Op);
         if (entry.Phrase == null) return null;
 
-        var left = FlowValues.Write(null, condition.Left);
-        return entry.Unary
-            ? $"{Bare(left)} {entry.Phrase}"
-            : $"{Bare(left)} {entry.Phrase} {FlowValues.Write(null, condition.Right)}";
+        var left = GuardOperand(condition.Left);
+        if (left == null) return null;
+        if (entry.Unary) return $"{Bare(left)} {entry.Phrase}";
+
+        var right = GuardOperand(condition.Right);
+        return right == null ? null : $"{Bare(left)} {entry.Phrase} {right}";
     }
+
+    /// <summary>
+    /// A guard's operands are written in the BARE form the guard grammar reads back — <c>row.sku</c>,
+    /// <c>price</c>, <c>env.TOKEN</c>.
+    /// <para>
+    /// Not the quoted-placeholder form a step VALUE uses. <c>"&lt;sku&gt;"</c> is Gherkin's own
+    /// Scenario Outline substitution and means something there; the guard pattern does not accept
+    /// it, so writing a column guard that way produced a line the compiler could not read back —
+    /// a feature that rendered and then would not recompile.
+    /// </para>
+    /// <para>
+    /// Null for a binding with no guard form at all, which makes the caller record it as lossy
+    /// rather than write a line that says the wrong thing.
+    /// </para>
+    /// </summary>
+    private static string? GuardOperand(BindingRef? binding) => binding == null ? null : binding.Kind switch
+    {
+        BindingKind.DatasetColumn => "row." + binding.ColumnName,
+        BindingKind.StepOutput => binding.OutputField,
+        BindingKind.EnvVar => "env." + binding.EnvVarName,
+        BindingKind.Literal => FlowValues.Quote(binding.Literal),
+        _ => null,
+    };
 
     private static string? WritePhrase(Step step)
     {

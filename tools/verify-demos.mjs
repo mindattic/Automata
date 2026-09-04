@@ -55,7 +55,7 @@ function runner(...args) {
 
 /// Examples this check runs to completion, in the order a person would meet them.
 const RUNNABLE = [
-  'buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'shadow', 'search', 'chain',
+  'buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'shadow', 'roster', 'search', 'chain',
 ];
 
 /// Covered more strictly elsewhere, or not finishable on purpose.
@@ -146,6 +146,18 @@ try {
     'the parked run is waiting to be picked up',
     /Parked, waiting to resume/.test(runner('status').out),
     'status does not list it',
+  );
+
+  // ---- the ragged asset --------------------------------------------------------------------------
+  // The roster example is the one that reads a JSON blob nobody harvested — a list where not every
+  // row carries every field. Its own assertion checks the tally; this checks the asset really was
+  // put there, since a missing one would make the loop run zero times and pass.
+  const roster = JSON.parse(readFileSync(join(roots.AUTOMATA_DATASETS_ROOT, 'roster.json'), 'utf8'));
+  const named = roster.filter((r) => r.Name !== undefined).length;
+  check(
+    `the ragged list was seeded (${roster.length} rows, ${named} with a name)`,
+    roster.length > 0 && named > 0 && named < roster.length,
+    'a list with no gap in it would not exercise the branch',
   );
 
   // ---- a task run more than one way -------------------------------------------------------------

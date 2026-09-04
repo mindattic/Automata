@@ -57,6 +57,22 @@ public enum ConditionOp
     Contains,
     NotEmpty,
     Empty,
+
+    /// <summary>
+    /// The value is there at all — this row HAS that column, that step DID publish that output.
+    /// <para>
+    /// Distinct from <see cref="NotEmpty"/> on purpose, and the distinction is the whole point of
+    /// having it. A JSON array is ragged: some objects carry a key and some do not, and asking
+    /// whether a missing one is "empty" fails the run rather than answering, because a column that
+    /// is not there is normally a mis-typed column name and worth refusing. <c>Exists</c> is how
+    /// you say you MEANT to ask, so absence becomes an answer instead of an error.
+    /// </para>
+    /// </summary>
+    Exists,
+
+    /// <summary>The value is not there at all. The other half of <see cref="Exists"/>, so a ragged
+    /// list can be branched on either way round.</summary>
+    NotExists,
     GreaterThan,
     LessThan,
     IsTrue,

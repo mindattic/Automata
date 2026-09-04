@@ -161,6 +161,13 @@ export function flowFieldsHtml(step, task) {
         case 'extractAll':
             return harvestHtml(step);
 
+        case 'else':
+            // No fields: an else has no condition of its own, it has the one above it. What it
+            // does need is to say so, because a step with an empty editor reads as unfinished.
+            return '<p class="scope-note">Runs when the <b>if</b> directly above this step did ' +
+                'not. Move it away from that step and it has nothing to be the other half of — ' +
+                'the run says so rather than guessing.</p>';
+
         case 'aggregate': {
             var agg = step.aggregate || {};
             // The answer always lands under one name, so there is nothing to type and nothing for

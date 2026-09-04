@@ -9,7 +9,7 @@
 // Composition beyond "this source, optionally wrapped in a literal" is deliberately out of scope
 // here. That belongs to the authoring layer, not to a dropdown.
 
-import { esc, findStep } from './core.js';
+import { esc, findStep, state } from './core.js';
 import { openListPicker, openRenameModal, openInfoModal } from './modal.js';
 
 function flatten(steps, out) {
@@ -41,9 +41,48 @@ export function sourcesFor(task, step) {
     return sources;
 }
 
+/// The datasets a step is looping over, from every for-each it sits inside.
+///
+/// Walked from the step OUTWARDS rather than from the datasets inwards: what is in scope is a
+/// property of where the step IS, and a step outside every loop has no columns at all — which is
+/// exactly what the engine will tell it at run time, so the picker must not offer them either.
+export function loopDatasetsInScope(task, step) {
+    var found = [];
+
+    (function walk(steps, loops) {
+        (steps || []).forEach(function (s) {
+            var inner = loops;
+            if (s.action === 'forEach' && s.forEach && s.forEach.source
+                && s.forEach.source.datasetName) {
+                inner = loops.concat([s.forEach.source.datasetName]);
+            }
+            if (s === step) inner.forEach(function (n) { if (found.indexOf(n) < 0) found.push(n); });
+            walk(s.children, inner);
+        });
+    })(task && task.steps, []);
+
+    return found;
+}
+
+/// The column names of those datasets, as the host last reported them.
+function columnsInScope(task, step) {
+    var found = [];
+    var seen = {};
+    loopDatasetsInScope(task, step).forEach(function (name) {
+        var dataset = (state.datasets || []).filter(function (d) { return d.name === name; })[0];
+        (dataset && dataset.columns || []).forEach(function (c) {
+            if (seen[c]) return;
+            seen[c] = true;
+            found.push({ name: c, dataset: name });
+        });
+    });
+    return found;
+}
+
 export function describeBinding(binding) {
     if (!binding) return '';
     if (binding.label) return binding.label;
+    if (binding.kind === 'datasetColumn') return 'row.' + (binding.columnName || '?');
     if (binding.kind === 'envVar') return 'env: ' + (binding.envVarName || '?');
     if (binding.kind === 'taskInput') return 'input: ' + (binding.parameterName || '?');
     if (binding.kind === 'stepOutput') return binding.outputField || 'output';
@@ -79,8 +118,9 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
     var sources = sourcesFor(task, step);
 
     var inputs = (task.inputs || []).filter(function (i) { return i.name; });
+    var columns = columnsInScope(task, step);
 
-    if (!sources.length && !inputs.length && !current) {
+    if (!sources.length && !inputs.length && !columns.length && !current) {
         openInfoModal('Nothing to bind to yet',
             'A binding reuses a value an earlier step captured, or one this task takes from ' +
             'whoever runs it. Add an "extractText" step before this one and name its output, or ' +
@@ -95,6 +135,18 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
             detail: 'captured by an earlier step in this task',
         };
     });
+    // The columns of whatever row an enclosing loop is on. Offered by NAME, read from the dataset
+    // itself, because the whole point of the picker is that a reference cannot name something that
+    // is not there — and a column name is the one part of a loop a person would otherwise have to
+    // remember and re-type correctly.
+    columns.forEach(function (c) {
+        items.push({
+            value: 'column:' + c.name,
+            label: 'row.' + c.name,
+            detail: 'a column of ' + c.dataset + ', for the row this loop is on',
+        });
+    });
+
     // The task's own inputs — the answer to "the same task, run for a different search term".
     // Offered, never typed: a hand-written {{placeholder}} is a syntax nothing can check.
     inputs.forEach(function (i) {
@@ -131,6 +183,17 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
                         suffix: current ? current.suffix : null,
                     });
                 });
+            return;
+        }
+        if (choice.indexOf('column:') === 0) {
+            var column = choice.slice('column:'.length);
+            onCommit({
+                kind: 'datasetColumn',
+                columnName: column,
+                label: 'row.' + column,
+                prefix: current ? current.prefix : null,
+                suffix: current ? current.suffix : null,
+            });
             return;
         }
         if (choice.indexOf('input:') === 0) {
