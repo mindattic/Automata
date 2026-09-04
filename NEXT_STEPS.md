@@ -1008,6 +1008,67 @@ Outline has no room for the second part — every step in an outline runs per ro
 plain Scenario with the loop as a comment, honestly flagged lossy. The clean-outline round-trip is
 proven separately on the same guard shape.
 
+### Phase 20 - nestable, and obvious without knowing what an "if" is (2026-09-04)
+
+Phase 19 made branching WORK. This made it legible. Planning it turned up two ways it was quietly
+wrong, and those were fixed first.
+
+**A select that could not show its own value overwrote it.** `exists` and `notExists` reached the
+C# enum, the engine and the Gherkin vocabulary in phase 19 but not the editor's `OPS`. A `<select>`
+with no option for its own value does not fail — the browser reports the first one — and every
+field in that editor commits on `change`, so opening a guard that used `exists` and touching
+anything at all rewrote it to `is exactly` and gave it a right-hand operand. The roster example's
+own guards were subject to it. Fixed as a class: `optionsFor` always carries the value being
+displayed, which is the rule `datasetOptions` already followed. That also closed the same hole in
+the wait modes (`untilSignal` is deliberately not offered), the zoom levels (the engine accepts any
+25-500, the list offers seventeen) and a `runTask` pointing at a task no longer in the workspace.
+
+**A branch could change hands in silence.** The pairing between an `if` and its `otherwise` was pure
+adjacency, so deleting a guard could hand its branch to whichever one ended up in front — the task
+still ran, still passed, and took the wrong half. `Step.PairedIfId` records which guard the branch
+was written for; the compiler sets it at the split, the panel sets it on creation, the engine
+refuses a mismatch, and a step from before the field falls back to adjacency so nothing on disk
+broke. The quietest case of all was the action dropdown: an `else` that stops being an `else` KEEPS
+its children, and the engine runs an ordinary step's children unconditionally, so a conditional
+branch silently starts running every pass. That now asks first.
+
+Then the three things the user actually asked for:
+
+- **Rows say what the step is.** A label was written once at creation and never re-derived, so a row
+  could read `Click 'Alpha'` while its action had become `if`. `phrases.js` derives the row's text
+  from the record on every render — nothing to keep in sync, because there is no second copy. It is
+  deliberately NOT `GherkinWriter.Phrase`: that names an element selector-first because its output
+  must recompile, this one is read by a person and names it `Search` rather than
+  `textarea[name="q"]`. The stored label survives as a snapshot the panel refreshes, because the
+  HOST writes run-log lines from `Step.Label` and cannot run this derivation.
+- **A branch looks like a branch.** One hairline guide per ancestor level, absolutely positioned
+  inside each row AND each insert gap (a guide on the steps alone breaks the line at every gap),
+  chaining into a continuous rule because rows sit flush. A branch's guide is coloured *and dashed*,
+  since colour alone is the one distinction a colour-blind reader could not make. Branches and loops
+  close with a quiet end marker — not a tree item: no role, no data-key, unfocusable, the same shape
+  as an insert zone, so the ARIA tree and roving tabindex are untouched. An orphaned `otherwise`
+  shows the engine's verdict on the row, before anyone presses Run.
+- **Nesting is an affordance.** Each row's menu is built from what the step IS: a loop offers "Add a
+  step inside the loop", an `if` offers "Add an Otherwise", every step offers to nest inside the one
+  above or move out a level. All of them go through the action picker, which is now the ONLY way a
+  step gets created — no path left that makes a `click` step and hopes.
+
+Structural constraints that shaped all of it, each verified rather than assumed: the picker's top
+level stays at fifteen entries; the tree stays a flat list of rows (28 harness selectors depend on
+it, four using the sibling combinator), so nesting is drawn rather than structured; and every tree
+helper assumes exactly one `children` array per step, which is why `else` stayed a sibling rather
+than becoming `ElseChildren`.
+
+A guard against the first bug recurring: a check reads `ConditionOp` and `StepAction` out of the C#
+source and asserts the panel can express every value, with a documented exemption list. Nothing had
+been checking that — `DemoCoverageTests` proves an enum value has a DEMO, not that the editor can
+EDIT it.
+
+Also, scrollbars: everything that scrolls is thin, and nothing scrolls sideways at all — every
+`text-overflow: ellipsis` is gone and long text wraps. Row buttons moved out of the flow to absolute
+position, so revealing them cannot re-wrap a row; the "nothing moves when the buttons appear" check
+now holds for width as well as height, structurally rather than by luck.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
