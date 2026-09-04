@@ -6,7 +6,7 @@ import {
     ALL_ACTIONS, ACTION_LABEL,
 } from './core.js';
 import { openConfirmModal } from './modal.js';
-import { addStep } from './tree.js';
+import { addStepInside } from './tree.js';
 import { openScopedSettings } from './scoped-settings.js';
 import { phraseFor } from './phrases.js';
 import { fieldControlHtml, openBindingPicker, loopDatasetsInScope
@@ -318,7 +318,7 @@ export function renderEditor() {
 
     wireFlowFields(editorEl, task, step, function () { saveTask(task); });
 
-    $('ed-add-sub').addEventListener('click', function () { addStep(task.id, step.id); });
+    $('ed-add-sub').addEventListener('click', function () { addStepInside(task.id, step.id); });
     $('ed-settings').addEventListener('click', function () {
         openScopedSettings('step', {
             collectionId: state.sel.collectionId, taskId: task.id, stepId: step.id,

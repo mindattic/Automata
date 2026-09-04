@@ -1507,6 +1507,55 @@ async function main() {
         { timeoutMs: 5000, label: 'the fixture to be restored' });
     });
 
+    await group('nesting: the row that would hold a step offers to hold it', async () => {
+      // Putting a step inside another used to be a drag into the middle third of a row, or
+      // Alt+Right. Both work; neither is discoverable. The row that would hold it is the obvious
+      // place to ask, and an `if` is the obvious place to be offered its other half.
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopRow = panelPage.locator(`.node.step[data-action="forEach"]`).first();
+      await loopRow.waitFor({ state: 'visible', timeout: 10000 });
+
+      await loopRow.hover();
+      await loopRow.locator('[data-op="menu"]').click();
+      await panelPage.locator('.row-menu').waitFor({ state: 'visible', timeout: 5000 });
+      const offered = await panelPage.locator('.row-menu [role=menuitem]').allTextContents();
+      assertTrue(offered.some((o) => /inside the loop/i.test(o)),
+        `a loop should offer to hold a step, got ${JSON.stringify(offered)}`);
+
+      // And it asks what kind, rather than dropping in a click step to be corrected afterwards.
+      await panelPage.locator('.row-menu [data-op="add-inside"]').click();
+      await panelPage.locator('#modal-list .action-pick').first()
+        .waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('#modal-list details.pick-group summary').click();
+      await panelPage.locator('#modal-list .action-pick[data-value="if"]').click();
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"if"'),
+        { timeoutMs: 5000, label: 'the guard to be created inside the loop' });
+
+      // The new guard offers its own other half, and taking it makes a correctly paired branch.
+      const guard = panelPage.locator('.node.step[data-action="if"]').last();
+      await guard.hover();
+      await guard.locator('[data-op="menu"]').click();
+      await panelPage.locator('.row-menu [data-op="add-otherwise"]')
+        .waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('.row-menu [data-op="add-otherwise"]').click();
+
+      await waitFor(() => panelPage.locator('.node.step[data-action="else"]').count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the otherwise to appear' });
+      assertEqual(await panelPage.locator('.node.step[data-action="else"][data-orphaned]').count(), 0,
+        'a branch made this way must be correctly paired, not flagged as orphaned');
+
+      // Which means the pairing reached disk by id, not by luck of position.
+      const saved = JSON.parse(readFileSync(loopFile, 'utf8'));
+      const flat = [];
+      (function walk(list) {
+        (list || []).forEach(function (st) { flat.push(st); walk(st.children); });
+      })(saved.steps);
+      const otherwise = flat.filter((st) => st.action === 'else')[0];
+      const guards = flat.filter((st) => st.action === 'if');
+      assertTrue(!!otherwise && guards.some((g) => g.id === otherwise.pairedIfId),
+        `the otherwise should name a real guard, got ${JSON.stringify(otherwise && otherwise.pairedIfId)}`);
+    });
+
     await group('branching: an otherwise reads as the other half of the if above it', async () => {
       const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
       const row = panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).nth(1);
@@ -1517,9 +1566,13 @@ async function main() {
         { timeoutMs: 5000, label: 'the guard to reach disk' });
 
       // A second step beside it, switched to `else`.
+      // "Add a step" opens the action picker now rather than dropping in a click step to be
+      // corrected afterwards, so the kind is chosen here — from the collapsed Advanced group, which
+      // is where everything past the original fourteen lives.
       await clickRowOp(panelPage.locator(`.node.task[data-task="${flowTaskId}"]`), 'add-step');
+      await panelPage.locator('#modal-list details.pick-group summary').click();
+      await panelPage.locator('#modal-list .action-pick[data-value="else"]').click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
-      await panelPage.locator('#ed-action').selectOption('else');
       await waitFor(() => readFileSync(loopFile, 'utf8').includes('"else"'),
         { timeoutMs: 5000, label: 'the otherwise to reach disk' });
 
@@ -1583,12 +1636,14 @@ async function main() {
     });
 
     await group('harvest: picking one item in the page becomes the whole list', async () => {
-      // A fresh step on the flow fixture task, switched to extractAll through the editor's own
-      // action dropdown — "+ add step" creates a plain click step rather than opening the picker.
+      // A fresh step on the flow fixture task. "Add a step" opens the action picker, so the kind is
+      // chosen there — from the collapsed Advanced group, where everything past the original
+      // fourteen lives.
       await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
       await clickRowOp(panelPage.locator(`.node.task[data-task="${flowTaskId}"]`), 'add-step');
+      await panelPage.locator('#modal-list details.pick-group summary').click();
+      await panelPage.locator('#modal-list .action-pick[data-value="extractAll"]').click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
-      await panelPage.locator('#ed-action').selectOption('extractAll');
 
       await panelPage.locator('#ed-harvest-pick-row').waitFor({ state: 'visible', timeout: 10000 });
 

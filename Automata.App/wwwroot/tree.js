@@ -60,11 +60,46 @@ var TASK_MENU = [
     { op: 'del-task', glyph: '🗑', label: 'Delete…', danger: true },
 ];
 
-var STEP_MENU = [
-    { op: 'ins-after', glyph: '＋', label: 'Insert a step after this one' },
-    'separator',
-    { op: 'del-step', glyph: '🗑', label: 'Delete…', danger: true },
-];
+/// What this particular step offers.
+///
+/// Built per step rather than fixed, because putting a step INSIDE another one used to be a drag
+/// into the middle third of a row or Alt+Right — two gestures nobody discovers. The row that would
+/// hold the step is the obvious place to ask, and an `if` is the obvious place to be offered its
+/// other half.
+function stepMenuFor(task, step, loc) {
+    var inside =
+        step.action === 'forEach' ? 'Add a step inside the loop' :
+        step.action === 'if' || step.action === 'else' ? 'Add a step inside this branch' :
+        'Add a step inside this one';
+
+    var items = [
+        { op: 'add-inside', glyph: '↳', label: inside },
+        { op: 'ins-after', glyph: '＋', label: 'Insert a step after this one' },
+    ];
+
+    var list = siblingList(task, loc.parentId);
+    var after = list[loc.index + 1];
+    if (step.action === 'if' && !(after && after.action === 'else')) {
+        items.push({ op: 'add-otherwise', glyph: '⋔', label: 'Add an “Otherwise”' });
+    }
+
+    // Offered only when it would actually mend something: an `otherwise` sitting after an `if` it
+    // was not written for. Re-pointing it is the one-click version of what the warning describes.
+    var before = list[loc.index - 1];
+    if (step.action === 'else' && before && before.action === 'if' && step.pairedIfId !== before.id) {
+        items.push({ op: 'repair-pair', glyph: '🔗', label: 'Belongs to the “if” above' });
+    }
+
+    items.push('separator');
+    // Omitted rather than disabled when they cannot apply — a menu of greyed-out words is a menu
+    // you have to read twice.
+    if (loc.index > 0) items.push({ op: 'indent', glyph: '⇥', label: 'Nest inside the step above' });
+    if (loc.parentId) items.push({ op: 'outdent', glyph: '⇤', label: 'Move out one level' });
+
+    items.push('separator');
+    items.push({ op: 'del-step', glyph: '🗑', label: 'Delete…', danger: true });
+    return items;
+}
 
 export function renderTree() {
     // The tree is about to be rebuilt, so an open menu's anchor is about to stop existing.
@@ -251,7 +286,7 @@ function collectionOp(cid, op) {
 
 function taskOp(cid, tid, op) {
     if (op === 'run-task') { post('runTask', { taskId: tid, allowRepair: $('allow-repair').checked }); return; }
-    if (op === 'add-step') { addStep(tid, null); return; }
+    if (op === 'add-step') { addStepInside(tid, null); return; }
     if (op === 'ren-task') {
         var task = findTask(tid);
         openRenameModal('Rename task', task ? task.name : '', function (name) {
@@ -274,6 +309,42 @@ function taskOp(cid, tid, op) {
 }
 
 function stepOp(tid, sid, op) {
+    var task = findTask(tid);
+    var here = task && locateStep(task.steps, sid, null);
+
+    // Every one of these routes through the action picker rather than dropping in a `click` step
+    // and making the user go and change it — the child's action is chosen once, in the place they
+    // are already looking.
+    if (op === 'add-inside') { addStepInside(tid, sid); return; }
+
+    if (op === 'add-otherwise') {
+        if (!here) return;
+        // No dialog on this path, so nothing else would put focus back in the tree — the row menu
+        // closes without restoring it.
+        ui.pendingFocus = true;
+        // createStepAt records which `if` it belongs to, because the step before it is this one.
+        createStepAt(tid, here.parentId, here.index + 1, 'else');
+        return;
+    }
+
+    if (op === 'repair-pair') {
+        if (!task || !here) return;
+        var previous = siblingList(task, here.parentId)[here.index - 1];
+        var mine = findStep(task.steps, sid);
+        if (!previous || !mine || previous.action !== 'if') return;
+        mine.pairedIfId = previous.id;
+        // Without this a keyboard user is left on the document after the menu closes: closeRowMenu
+        // does not restore focus, and only the modal paths set this for themselves.
+        ui.pendingFocus = true;
+        saveTask(task);
+        return;
+    }
+
+    if (op === 'indent' || op === 'outdent') {
+        if (task) moveStep(task, sid, op);
+        return;
+    }
+
     if (op === 'del-step') {
         var task = findTask(tid);
         var step = task && findStep(task.steps, sid);
@@ -365,8 +436,10 @@ function wireTree() {
             if (op === 'menu') {
                 var t = findTask(tid);
                 var st = t && findStep(t.steps, sid);
-                openRowMenu(e.target, 'Actions for step ' + (st ? phraseFor(st, state.collections) : ''),
-                    STEP_MENU, function (picked) { stepOp(tid, sid, picked); });
+                var loc = t && locateStep(t.steps, sid, null);
+                if (!st || !loc) return;
+                openRowMenu(e.target, 'Actions for step ' + phraseFor(st, state.collections),
+                    stepMenuFor(t, st, loc), function (picked) { stepOp(tid, sid, picked); });
                 return;
             }
             if (op) { stepOp(tid, sid, op); return; }
@@ -516,8 +589,12 @@ function moveWord(how) {
 
 function nudgeStep(row, how) {
     var task = findTask(row.getAttribute('data-task'));
-    var sid = row.getAttribute('data-step');
-    if (!task) return;
+    if (task) moveStep(task, row.getAttribute('data-step'), how);
+}
+
+/// Moving a step, announced and saved. One definition, so the keyboard shortcut and the row menu
+/// cannot come to mean different things.
+function moveStep(task, sid, how) {
     var ok = how === 'indent' ? indentStep(task, sid)
         : how === 'outdent' ? outdentStep(task, sid)
         : reorderStep(task, sid, how);
@@ -695,21 +772,19 @@ function inlineRename(nodeEl, action, id) {
     input.addEventListener('blur', commit);
 }
 
-export function addStep(taskId, parentStepId) {
+/// Adds a step at the END of a task, or of another step's children — and asks what kind.
+///
+/// It used to drop in a `click` step called "New step" and leave the user to go and change it in
+/// the editor, which is two places to look for one decision. The action picker is the same one the
+/// insert gaps use, Record included, so there is one way to answer "what should this step do".
+export function addStepInside(taskId, parentStepId) {
     var task = findTask(taskId);
     if (!task) return;
-    var step = { id: newId(), action: 'click', label: '', children: [] };
-    step.label = phraseFor(step, state.collections);
-    if (parentStepId) {
-        var parent = findStep(task.steps, parentStepId);
-        if (!parent) return;
-        parent.children = parent.children || [];
-        parent.children.push(step);
-    } else {
-        task.steps = task.steps || [];
-        task.steps.push(step);
-    }
-    state.sel = { collectionId: state.sel.collectionId, taskId: taskId, stepId: step.id };
-    state.expanded[taskId] = true;
-    saveTask(task);
+    var list = parentStepId ? (findStep(task.steps, parentStepId) || {}).children : task.steps;
+    if (!list) return;
+    var at = list.length;
+    openActionPicker(function (action) {
+        if (action === '__record') beginRecordAtGap(taskId, parentStepId || null, at);
+        else createStepAt(taskId, parentStepId || null, at, action);
+    });
 }
