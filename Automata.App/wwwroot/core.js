@@ -98,6 +98,37 @@ export function findTask(taskId) {
     return null;
 }
 
+/// Puts one task where it belongs in the tree the panel already has, and says whether it could.
+///
+/// The delta half of the host protocol: a step edit changes one task, so the host sends that task
+/// rather than re-serialising every collection in the workspace (see PushTaskAsync). Everything
+/// else the panel holds — which row is selected, which are expanded, which has focus — is untouched
+/// by construction, because the tree object it hangs from is the same one.
+///
+/// Returns false when the task names a collection this panel has never seen, which is the one shape
+/// a delta cannot resolve. The caller answers that by asking for the whole state: a protocol that
+/// can say "I cannot apply this" is what makes the fast path safe to take.
+export function applyTask(collectionId, task) {
+    if (!task || !task.id) return false;
+    var target = findCollection(collectionId || '');
+    if (!target) return false;
+
+    // Removed from wherever it WAS first, so a task that changed collections does not end up in
+    // both — the host has already moved the file, and two rows for one task is worse than a
+    // stale one.
+    state.collections.forEach(function (c) {
+        var list = c.tasks || [];
+        var at = list.findIndex(function (t) { return t.id === task.id; });
+        if (at < 0) return;
+        if (c === target) list[at] = task;
+        else list.splice(at, 1);
+    });
+
+    target.tasks = target.tasks || [];
+    if (!target.tasks.some(function (t) { return t.id === task.id; })) target.tasks.push(task);
+    return true;
+}
+
 export function findStep(steps, stepId) {
     for (var i = 0; i < (steps || []).length; i++) {
         if (steps[i].id === stepId) return steps[i];

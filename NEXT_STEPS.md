@@ -1141,6 +1141,41 @@ already allowed one — `row.Contact.Email` loses its `row.` prefix like any col
 offers it because `Columns` reads through the same flattening. The roster example carries a
 `Contact` object now and binds one, so the capability has somewhere to be seen working.
 
+### Phase 23 - a step edit pushes one task, not the workspace (2026-09-04)
+
+Phase 17 stopped a save re-reading the workspace to find one file. This is the other half: the host
+answered every mutation by serialising every collection and every task BACK to the panel, for an
+edit that touched one field — and a step edit is the thing that happens most.
+
+`PushTaskAsync` sends the one task, after the store has had it: `SaveTask` mutates what it is given
+(the collection an unassigned task lands in, the timestamp, the name it is allowed to keep when a
+sibling file already has that one), so sending the object the panel supplied would show the user a
+name the store did not accept. The panel splices it into the tree it already holds, which is why
+selection, expansion and focus survive by construction rather than by being restored — the object
+they hang off is the same one. Used by the three paths that change exactly one task: a save, a
+rename, and a self-heal writing fingerprints back after a run. Everything structural — creating,
+deleting, moving, importing, seeding — still sends the whole state, because the shape of the tree
+is what changed.
+
+The one case a delta cannot resolve is a task naming a collection the panel has never seen, and the
+panel answers it by asking for the whole state. A protocol that can say "I cannot apply this" is
+what makes the fast path safe to take.
+
+**What the user actually sees.** The echo re-renders the editor, and the editor rebuilt itself from
+scratch every time — so opening the Target section and editing one of its fields snapped the
+section shut underneath the person doing it, every commit. The editor now remembers what it holds
+in the DOM rather than in the model (which sections are open, which field has focus, where the
+caret is, where it is scrolled) across a rebuild, the same way `renderTree` has always remembered
+its focused row. Reading the caret is guarded rather than type-tested, because Chrome THROWS on
+`selectionStart` for a number input and the editor has two of them.
+
+**A note on the debugging, because it will happen again.** The new check wrapped the two bridge
+functions to count pushes and then deleted the counter it had left them reading, so every later
+push threw INSIDE the bridge. WebView2 swallows an exception thrown in host-injected script — it
+never reaches `window.onerror` — so the panel silently stopped re-rendering and fourteen unrelated
+checks failed as timeouts with nothing to point at. `verify-ui` now prints `pageerror` and console
+errors from the panel, which would not have caught this one, but will catch its cousins.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1187,8 +1222,3 @@ yet** below.
   context - but it is undocumented anywhere except the `chain` example, which navigates explicitly
   before each call and says why in its description. Worth either honouring the callee's start URL
   behind a flag or naming the rule in the editor.
-- **Pushing only the affected subtree.** The id→path index landed in phase 17, so a save no
-  longer re-reads the workspace to find one file — but `PushStateAsync` still serialises the WHOLE
-  store to the panel after every mutation, and that is the remaining half. It needs a push protocol
-  that can say "this one task changed" and a panel that can apply it without losing selection,
-  expansion or focus, which is a protocol change rather than a caching one.

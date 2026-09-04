@@ -55,7 +55,72 @@ function outputName(step) {
     return step.outputs && step.outputs.length ? step.outputs[0].name || '' : '';
 }
 
+/// What a field is called, for putting focus back on the same one after a rebuild.
+///
+/// An id where there is one, and the attribute that identifies it where there is not — the target
+/// fields and the operand boxes are addressed by `data-tgt` / `data-operand`, not by id.
+function fieldKey(el) {
+    if (!el || !editorEl.contains(el)) return null;
+    return el.id || el.getAttribute('data-tgt') || el.getAttribute('data-operand')
+        || el.getAttribute('data-column') || null;
+}
+
+/// The state the editor holds in the DOM rather than in the model: which disclosure sections are
+/// open, and where the caret is.
+///
+/// This exists for the same reason renderTree remembers its focused row. A render happens for
+/// reasons that have nothing to do with the user — the host echoes a task back after every save,
+/// and every field in this editor commits on `change` — so opening the Target section and editing
+/// one of its fields used to snap the section shut underneath the person doing it.
+function captureEditorUiState() {
+    var active = document.activeElement;
+    var key = fieldKey(active);
+    var caret = key ? caretOf(active) : null;
+    return {
+        open: [...editorEl.querySelectorAll('details')]
+            .filter(function (d) { return d.open; })
+            .map(function (d) { return d.className; }),
+        focusKey: key,
+        start: caret ? caret.start : null,
+        end: caret ? caret.end : null,
+        scrollTop: editorEl.scrollTop,
+    };
+}
+
+/// Where the caret is, or null for a control that does not have one.
+///
+/// Guarded rather than tested by type: Chrome THROWS on `selectionStart` for a number input, and an
+/// exception thrown here would take the whole render down with it — every row, every panel, for the
+/// rest of the session. The editor has two number fields (timeout, wait duration), so this is not
+/// hypothetical.
+function caretOf(el) {
+    try {
+        return el.selectionStart == null ? null : { start: el.selectionStart, end: el.selectionEnd };
+    } catch {
+        return null;
+    }
+}
+
+function restoreEditorUiState(was) {
+    editorEl.querySelectorAll('details').forEach(function (d) {
+        if (was.open.indexOf(d.className) >= 0) d.open = true;
+    });
+    editorEl.scrollTop = was.scrollTop;
+    if (!was.focusKey) return;
+
+    var again = [...editorEl.querySelectorAll('input, select, textarea, [data-operand]')]
+        .find(function (el) { return fieldKey(el) === was.focusKey; });
+    if (!again) return;
+    again.focus();
+    // Put the caret back where it was, rather than at the end — a field that reorders itself
+    // under a typist is worse than one that does not keep focus at all.
+    if (was.start != null && again.setSelectionRange) {
+        try { again.setSelectionRange(was.start, was.end); } catch { /* not a text input */ }
+    }
+}
+
 export function renderEditor() {
+    var was = captureEditorUiState();
     var task = selectedTask();
     var step = task && state.sel.stepId ? findStep(task.steps, state.sel.stepId) : null;
     if (!task || !step) {
@@ -333,4 +398,8 @@ export function renderEditor() {
                 saveTask(task);
             });
     });
+
+    // Last, after every listener is attached: focus lands on the finished editor, not on a control
+    // that is about to be replaced.
+    restoreEditorUiState(was);
 }

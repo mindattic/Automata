@@ -3,7 +3,8 @@
 // outbound half.
 
 import {
-    $, logEl, state, post, announce, findTask, findCollection, findStep, spliceStepsAt, saveTask,
+    $, logEl, state, post, announce, applyTask, findTask, findCollection, findStep, spliceStepsAt,
+    saveTask,
 } from './core.js';
 import { render, renderRecPreview } from './render.js';
 import { renderDatasets } from './data.js';
@@ -62,6 +63,25 @@ window.ssPanel = {
         if (state.sel.collectionId && !findCollection(state.sel.collectionId)) state.sel.collectionId = null;
         render();
         maybeStartTutorial();
+        advanceTutorial();
+    },
+    /// One task, after a change that touched only that task — the host's delta push.
+    ///
+    /// Deliberately NOT a merge: the task that arrives replaces the one held, whole. The store
+    /// normalises what it is given (the collection an unassigned task lands in, the name it is
+    /// allowed to keep when a sibling file already has that one), so the version that came back is
+    /// the only one worth showing.
+    onTaskChanged: function (payload) {
+        var task = payload && payload.task;
+        if (!task) return;
+        if (!applyTask(payload.collectionId, task)) {
+            // A collection this panel has never seen. Rather than invent one, ask for the truth —
+            // one extra round trip on a case that should not happen beats a tree that disagrees
+            // with the disk.
+            post('getState');
+            return;
+        }
+        render();
         advanceTutorial();
     },
     // A harvest pick, answered by the target pane. state.harvestPick says which step and which

@@ -208,24 +208,32 @@ public sealed class AutomationController
             case "saveTask":
             {
                 var taskNode = msg["task"];
-                if (taskNode != null)
+                var task = taskNode == null
+                    ? null
+                    : JsonSerializer.Deserialize<TaskDefinition>(taskNode.ToJsonString(), AutomataJson.Options);
+                if (task == null)
                 {
-                    var task = JsonSerializer.Deserialize<TaskDefinition>(taskNode.ToJsonString(), AutomataJson.Options);
-                    if (task != null) store.SaveTask(task);
+                    // Nothing was saved, so nothing is known to have changed — re-send the truth
+                    // rather than echo a task that may not be what is on disk.
+                    await PushStateAsync();
+                    return true;
                 }
-                await PushStateAsync();
+                store.SaveTask(task);
+                await PushTaskAsync(task);
                 return true;
             }
 
             case "renameTask":
             {
                 var task = store.GetTask(Str(msg, "id") ?? "");
-                if (task != null)
+                if (task == null)
                 {
-                    task.Name = Str(msg, "name") ?? task.Name;
-                    store.SaveTask(task);
+                    await PushStateAsync();
+                    return true;
                 }
-                await PushStateAsync();
+                task.Name = Str(msg, "name") ?? task.Name;
+                store.SaveTask(task);
+                await PushTaskAsync(task);
                 return true;
             }
 
@@ -804,7 +812,7 @@ public sealed class AutomationController
         {
             store.SaveTask(task);
             await logAsync("Self-healed fingerprints saved back into the task.");
-            await PushStateAsync();
+            await PushTaskAsync(task);
         }
 
         // Keep runActive/"running" true while a gap-recording session is now armed (mid-tree
@@ -1048,6 +1056,33 @@ public sealed class AutomationController
         var json = JsonSerializer.Serialize(
             new { collections = tree, demoCollectionId }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onState({json})");
+    }
+
+    /// <summary>
+    /// One task, after a change that touched only that task.
+    /// <para>
+    /// <see cref="PushStateAsync"/> serialises every collection and every task in the workspace,
+    /// which is the right answer when the shape of the tree changed and a needlessly expensive one
+    /// when a single step was edited — and a step edit is the thing that happens most. The panel
+    /// splices this into the tree it already has.
+    /// </para>
+    /// <para>
+    /// The task is sent AFTER <see cref="CollectionStore.SaveTask"/>, which mutates it: the
+    /// collection an unassigned task landed in, the timestamp, and the name it was given if
+    /// another file already had that one. Sending the object the panel supplied would show the
+    /// user a name the store did not accept.
+    /// </para>
+    /// <para>
+    /// A task that arrives for a collection the panel does not know about is the one case a delta
+    /// cannot apply, and the panel answers it by asking for the whole state — so the protocol can
+    /// always fall back to the truth rather than guess.
+    /// </para>
+    /// </summary>
+    public Task PushTaskAsync(TaskDefinition task)
+    {
+        var json = JsonSerializer.Serialize(
+            new { collectionId = task.CollectionId, task }, AutomataJson.Options);
+        return execPanelScript($"window.ssPanel.onTaskChanged({json})");
     }
 
     private Task PushRecordedPreviewAsync()

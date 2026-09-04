@@ -519,6 +519,12 @@ async function main() {
     const panelPage = await firstPage(panelBrowser);
     const targetPage = await firstPage(targetBrowser);
     await panelPage.waitForLoadState('domcontentloaded');
+    // An uncaught error in the panel takes the whole render down and every later check fails as a
+    // timeout with nothing to point at. Surfaced here so the cause is on screen next to the effect.
+    panelPage.on('pageerror', (err) => console.log(`[PANEL ERROR] ${err.message}`));
+    panelPage.on('console', (m) => {
+      if (m.type() === 'error') console.log(`[PANEL CONSOLE] ${m.text()}`);
+    });
     useNudgePage(panelPage);
 
     // Runs before anything is clicked, and needs no browser: it compares two source files.
@@ -1253,6 +1259,68 @@ async function main() {
       await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"bindings"'),
         { timeoutMs: 5000, label: 'the binding to be removed from disk' });
       await editorReady('#ed-value');
+    });
+
+    await group('a step edit pushes one task, and leaves the editor where it was', async () => {
+      // Two halves of the same change. The host used to answer every mutation by serialising the
+      // WHOLE workspace back — every collection, every task, every step — for an edit that touched
+      // one field. And because that echo re-renders the editor, opening the Target section and
+      // editing one of its fields snapped the section shut underneath the person doing it.
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+
+      // Whatever the step already is — this check is about the push, not about the action, and
+      // the fixture is shared with every group after this one.
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('details.target').waitFor({ state: 'attached', timeout: 5000 });
+
+      // Counted at the bridge, which is where the difference actually is: a full push and a task
+      // push both end in a re-render, so only the message tells them apart.
+      // The originals are kept ON the counter so unwrapping cannot be forgotten. Leaving a wrapper
+      // installed that reads a counter someone deleted throws inside the bridge on every later push
+      // — and WebView2 swallows an exception thrown in host-injected script, so the panel simply
+      // stops re-rendering with nothing on screen to say why.
+      await panelPage.evaluate(() => {
+        window.__pushes = { state: 0, task: 0, was: {} };
+        ['onState', 'onTaskChanged'].forEach((name) => {
+          const original = window.ssPanel[name];
+          window.__pushes.was[name] = original;
+          window.ssPanel[name] = function (...args) {
+            window.__pushes[name === 'onState' ? 'state' : 'task']++;
+            return original.apply(this, args);
+          };
+        });
+      });
+
+      await panelPage.locator('details.target > summary').click();
+      assertTrue(await panelPage.locator('details.target').evaluate((d) => d.open),
+        'the target section should be open after clicking its summary');
+
+      await panelPage.locator('input[data-tgt="ariaLabel"]').fill('Search box');
+      await panelPage.locator('input[data-tgt="ariaLabel"]').dispatchEvent('change');
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('Search box'),
+        { timeoutMs: 5000, label: 'the target edit to reach disk' });
+
+      const pushes = await panelPage.evaluate(() => window.__pushes);
+      assertTrue(pushes.task >= 1,
+        `a step edit should push the one task that changed, got ${JSON.stringify(pushes)}`);
+      assertEqual(pushes.state, 0,
+        'a step edit must not re-serialise the whole workspace');
+
+      assertTrue(await panelPage.locator('details.target').evaluate((d) => d.open),
+        'the echo re-renders the editor, so what the user had open has to survive it');
+
+      await panelPage.evaluate(() => {
+        Object.keys(window.__pushes.was).forEach((name) => {
+          window.ssPanel[name] = window.__pushes.was[name];
+        });
+        delete window.__pushes;
+      });
+
+      // Put the fixture back.
+      await panelPage.locator('input[data-tgt="ariaLabel"]').fill('');
+      await panelPage.locator('input[data-tgt="ariaLabel"]').dispatchEvent('change');
+      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('Search box'),
+        { timeoutMs: 5000, label: 'the fixture to be restored' });
     });
 
     await group('flow: a forEach step runs its substeps once per dataset row', async () => {
