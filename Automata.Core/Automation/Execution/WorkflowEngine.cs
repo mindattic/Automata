@@ -299,13 +299,15 @@ public sealed partial class WorkflowEngine
             }).ToList(),
             new Dictionary<string, string>(state.Variables, StringComparer.Ordinal),
             state.Passed,
-            state.Healed);
+            state.Healed,
+            state.ClaimedDatasets());
 
     private static void Restore(ReplayRunState state, ParkCheckpoint checkpoint)
     {
         foreach (var output in checkpoint.Outputs)
             state.Outputs[ReplayRunState.OutputKey(output.StepId, output.Field)] = output.Value;
         foreach (var (name, value) in checkpoint.Variables) state.Variables[name] = value;
+        state.RestoreClaims(checkpoint.FreshenedDatasets);
         state.Passed = checkpoint.Passed;
         state.Healed = checkpoint.Healed;
     }
@@ -484,9 +486,19 @@ public sealed partial class WorkflowEngine
                     row[column] = value ?? "";
                 }
 
-                datasets.Write(spec.DatasetName, [row], spec.Append);
-                yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
-                    $"{(spec.Append ? "appended to" : "wrote")} {spec.DatasetName}", null);
+                // The claim is made inside the dataset's write lock, not here, so two rows
+                // finishing at once cannot both be told they are the first writer of the run.
+                var startedFresh = false;
+                datasets.Write(spec.DatasetName, [row], spec.Append,
+                    spec.ResetOnFirstWrite
+                        ? () => startedFresh = state.ClaimFirstWrite(spec.DatasetName)
+                        : null);
+
+                var what =
+                    startedFresh ? $"started {spec.DatasetName} fresh for this run and wrote the first row" :
+                    spec.Append ? $"appended to {spec.DatasetName}" :
+                    $"wrote {spec.DatasetName}";
+                yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, what, null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
                 yield break;

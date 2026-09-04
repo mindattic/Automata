@@ -445,6 +445,9 @@ public static class DemoTasks
                     DatasetName = OrderChecksDataset,
                     Format = "csv",
                     Append = true,
+                    // Nine writes, one dataset, one run: the first replaces and the rest add to it,
+                    // so the file afterwards is this run's nine checks rather than every run's.
+                    ResetOnFirstWrite = true,
                     Columns = new Dictionary<string, BindingRef>
                     {
                         ["check"] = Literal(slug),
@@ -645,6 +648,10 @@ public static class DemoTasks
                                 DatasetName = parallel ? ParallelPricesDataset : SequentialPricesDataset,
                                 Format = "csv",
                                 Append = true,
+                                // Every row appends to the same file, so the loop has to say which
+                                // write starts it — otherwise a second run of the example reports
+                                // twenty-four products and double the money.
+                                ResetOnFirstWrite = true,
                                 Columns = new Dictionary<string, BindingRef>
                                 {
                                     ["sku"] = new()

@@ -97,4 +97,22 @@ public sealed class DatasetWriteSpec
     public Dictionary<string, BindingRef> Columns { get; set; } = [];
 
     public bool Append { get; set; } = true;
+
+    /// <summary>
+    /// Start the dataset fresh the first time THIS RUN writes to it, then append for the rest of
+    /// the run. Only consulted when <see cref="Append"/> is set.
+    /// <para>
+    /// Without it a collecting loop is not repeatable: every run adds its rows to the ones the
+    /// last run left, so running a task twice doubles its results and the only way back is to
+    /// delete the file by hand. Clearing it before the loop is not expressible either — a for-each
+    /// isolates each row deliberately, so no step inside one can know whether it is the first.
+    /// </para>
+    /// <para>
+    /// "First write of the run" is a property of the RUN, not of the row or the step, which is why
+    /// the claim lives on the run state and is settled inside the dataset's own write lock: two
+    /// rows finishing at once on different lanes must not both believe they are first, and the one
+    /// that is must not replace a file the other has already appended to.
+    /// </para>
+    /// </summary>
+    public bool ResetOnFirstWrite { get; set; }
 }

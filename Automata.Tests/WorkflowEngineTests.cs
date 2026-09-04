@@ -421,6 +421,116 @@ public class WorkflowEngineTests
         Assert.That(datasets.Exists("bought.csv"), Is.False, "a failed write must not leave a partial row");
     }
 
+    /// <summary>
+    /// The footgun this exists for: a collecting loop that appends is not repeatable, so running a
+    /// task twice leaves it holding both runs' rows and reporting nothing wrong.
+    /// </summary>
+    [Test]
+    public async Task WriteDataset_WithoutResetOnFirstWrite_DoublesItsRowsOnASecondRun()
+    {
+        datasets.Write("rows.csv", [Row("a"), Row("b")], append: false);
+        var task = CollectingLoop(reset: false);
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("collected.csv"), Has.Count.EqualTo(2));
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("collected.csv"), Has.Count.EqualTo(4),
+            "an appending loop keeps what the last run left — this is the behaviour reset exists to fix");
+    }
+
+    /// <summary>
+    /// With it, the first write of each run replaces and the rest append, so the dataset holds one
+    /// run's results however many times the task is run.
+    /// </summary>
+    [Test]
+    public async Task WriteDataset_WithResetOnFirstWrite_HoldsOneRunsResultsHoweverOftenItRuns()
+    {
+        datasets.Write("rows.csv", [Row("a"), Row("b"), Row("c")], append: false);
+        var task = CollectingLoop(reset: true);
+
+        await Run(task, Browser());
+        await Run(task, Browser());
+        var rows = datasets.Read("collected.csv");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rows, Has.Count.EqualTo(3), "every row of the loop is still there");
+            Assert.That(rows.Select(r => r["key"]).OrderBy(k => k), Is.EqualTo(new[] { "a", "b", "c" }),
+                "and they are this run's rows, not a mix of two runs");
+        });
+    }
+
+    /// <summary>
+    /// The reset is claimed once per RUN, not once per step or once per row — a second write step
+    /// aimed at the same dataset must add to what the loop collected, not wipe it.
+    /// </summary>
+    [Test]
+    public async Task WriteDataset_ResetIsClaimedOncePerRunNotOncePerWrite()
+    {
+        datasets.Write("rows.csv", [Row("a"), Row("b")], append: false);
+        var task = CollectingLoop(reset: true);
+        task.Steps.Add(new Step
+        {
+            Id = "footer", Action = StepAction.WriteDataset,
+            WriteDataset = new DatasetWriteSpec
+            {
+                DatasetName = "collected.csv",
+                Append = true,
+                ResetOnFirstWrite = true,
+                Columns = new Dictionary<string, BindingRef>
+                {
+                    ["key"] = new() { Kind = BindingKind.Literal, Literal = "total" },
+                },
+            },
+        });
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("collected.csv"), Has.Count.EqualTo(3),
+            "the second write step cleared what the loop had collected");
+    }
+
+    /// <summary>One row of a source dataset for the loop to fan out over.</summary>
+    private static Dictionary<string, string> Row(string key) => new(StringComparer.Ordinal) { ["key"] = key };
+
+    /// <summary>A for-each over rows.csv that writes one row of collected.csv per source row.</summary>
+    private static TaskDefinition CollectingLoop(bool reset) => new()
+    {
+        Name = "T",
+        Steps =
+        [
+            new Step
+            {
+                Id = "loop", Action = StepAction.ForEach,
+                ForEach = new ForEachSpec
+                {
+                    Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "rows.csv" },
+                    RowVariableName = "row",
+                },
+                Children =
+                [
+                    new Step
+                    {
+                        Id = "save", Action = StepAction.WriteDataset,
+                        WriteDataset = new DatasetWriteSpec
+                        {
+                            DatasetName = "collected.csv",
+                            Append = true,
+                            ResetOnFirstWrite = reset,
+                            Columns = new Dictionary<string, BindingRef>
+                            {
+                                ["key"] = new() { Kind = BindingKind.DatasetColumn, ColumnName = "key" },
+                            },
+                        },
+                    },
+                ],
+            },
+        ],
+    };
+
     // ---- runTask -------------------------------------------------------------------------------
 
     [Test]

@@ -110,7 +110,13 @@ export function flowFieldsHtml(step, task) {
                 '<input type="text" id="ed-write-name" aria-label="Dataset file to write"' +
                 ' placeholder="results.csv" value="' + esc(w.datasetName || '') + '" />' +
                 '<label class="inline"><input type="checkbox" id="ed-write-append"' +
-                (w.append === false ? '' : ' checked') + ' /> append</label></div>' +
+                (w.append === false ? '' : ' checked') + ' /> append</label>' +
+                // Only meaningful alongside append: without it the write replaces every time
+                // anyway, so offering "start fresh" would be offering the same thing twice.
+                '<label class="inline"' + (w.append === false ? ' hidden' : '') +
+                ' id="ed-write-reset-row"><input type="checkbox" id="ed-write-reset"' +
+                (w.resetOnFirstWrite ? ' checked' : '') +
+                ' /> start fresh each run</label></div>' +
                 '<div class="field"><span>Columns</span><div class="column-list">' +
                 (names.length
                     ? names.map(function (n) {
@@ -230,6 +236,7 @@ export function commitFlowFields(step) {
         var spec = Object.assign({ format: 'csv' }, step.writeDataset);
         spec.datasetName = (($('ed-write-name') || {}).value || '').trim();
         spec.append = ($('ed-write-append') || {}).checked !== false;
+        spec.resetOnFirstWrite = spec.append && ($('ed-write-reset') || {}).checked === true;
         spec.columns = readColumns(spec.columns || {});
         step.writeDataset = spec;
     } else if (step.action === 'extractAll') {
@@ -336,6 +343,17 @@ export function wireFlowFields(root, task, step, onChange) {
             onChange();
         });
     });
+
+    // "Start fresh each run" only means anything alongside append, so it appears and disappears
+    // with it rather than sitting there greyed out saying nothing.
+    var append = $('ed-write-append');
+    var resetRow = $('ed-write-reset-row');
+    if (append && resetRow) {
+        append.addEventListener('change', function () {
+            resetRow.hidden = !append.checked;
+            if (!append.checked) $('ed-write-reset').checked = false;
+        });
+    }
 
     wireHarvestFields(root, task, step, onChange);
 }

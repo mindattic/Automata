@@ -149,6 +149,16 @@ try {
     `${checks.length} row(s): ${checks.map((r) => r.check).join(', ')}`,
   );
 
+  // A collecting task has to be repeatable, or every example quietly needs a fresh workspace and
+  // the first thing a new user does twice looks broken. This is what resetOnFirstWrite buys.
+  const again = runner('run', '--task', tasksByKey.order.id);
+  const twice = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'order-checks.csv'));
+  check(
+    'running it a second time replaces its rows rather than doubling them',
+    again.code === 0 && twice.length === 9,
+    `${twice.length} row(s) after two runs`,
+  );
+
   // The oracle for what those rows should say is the generated page, not the run: each recorded
   // value has to be a fact that is actually printed on order.html.
   const orderHtml = readFileSync(join(roots.AUTOMATA_DEMOS_ROOT, 'order.html'), 'utf8');

@@ -113,6 +113,36 @@ public class DatasetConcurrencyTests
     }
 
     /// <summary>
+    /// "Start fresh each run" under concurrency. The claim decides who replaces and who appends,
+    /// and it is settled inside the write lock — decided outside it, the winner would replace a
+    /// file the losers had already appended to, and a parallel loop would come back holding only
+    /// the rows written after the last replace.
+    /// </summary>
+    [Test]
+    public void StartingFreshUnderConcurrencyClearsOnceAndKeepsEveryRow()
+    {
+        const int writers = 24;
+        datasets.Append("prices.csv", Row(999)); // last run's leftovers
+
+        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool Claim()
+        {
+            lock (claimed) return claimed.Add("prices.csv");
+        }
+
+        Parallel.For(0, writers, new ParallelOptions { MaxDegreeOfParallelism = 8 },
+            i => datasets.Write("prices.csv", [Row(i)], append: true, claimFirstWrite: Claim));
+
+        var rows = datasets.Read("prices.csv");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rows, Has.Count.EqualTo(writers), "a row was lost to the reset");
+            Assert.That(rows.Any(r => r["sku"] == "SKU-999"), Is.False,
+                "the previous run's rows survived, so nothing was cleared");
+        });
+    }
+
+    /// <summary>
     /// The lock has to be per file, or every dataset in the workspace would queue behind whichever
     /// one is busiest — and a parallel run writing two datasets would serialise for no reason.
     /// </summary>

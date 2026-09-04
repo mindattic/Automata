@@ -683,6 +683,37 @@ Two limitations the examples made plain, both recorded under **Not done yet**: a
 only ever hold immediately or time out, and a called task starts on whatever page the caller left
 open.
 
+### Phase 11 - a collecting loop can start its dataset fresh (2026-09-04)
+
+An appending loop was not repeatable: running the shop example twice left it holding twenty-four
+products and double the money, and the only way back was deleting the file by hand.
+`verify-shop.mjs` had been sidestepping it with a fresh scratch workspace every time, which is
+exactly the kind of workaround that hides a real defect from everyone except the person who wrote
+it.
+
+**`DatasetWriteSpec.ResetOnFirstWrite`**: the first write of the RUN replaces the dataset and every
+write after it appends. Not the first write of the step, and not the first row - a for-each isolates
+each row on purpose, so no step inside one can know whether it is the first, and a second write step
+aimed at the same dataset must add to what the loop collected rather than wipe it.
+
+The claim lives on `ReplayRunState` in a set that is **shared by reference with every forked row
+state** - deliberately the one thing a fork does not isolate, because "has this run started this
+dataset yet?" is a question about the run and no other scope can answer it. It is settled **inside
+the dataset's own write lock**, not by the caller: decided outside, two rows finishing at once on
+different lanes would both be told they were first, or the one that was would replace a file the
+other had already appended to. `DatasetIO.Write` takes an optional `claimFirstWrite` for exactly
+that reason.
+
+The checkpoint carries the claimed names across a park (`ParkCheckpoint.FreshenedDatasets`, optional
+so older checkpoints still load). "First write of the run" has to mean the whole run including the
+half that happens nine hours later - a resumed run that forgot would clear a dataset it had spent
+the first half filling and still report success.
+
+Both shop examples and the new order example now set it, so running any of them twice gives the
+same answer as running it once; `verify-demos.mjs` runs the order example a second time and checks
+the row count did not move. The editor shows "start fresh each run" beside "append" and withdraws
+it when append is unticked, because without append it would be offering the same thing twice.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -702,12 +733,6 @@ yet** below.
   (`{{query}}`) in step values.
 - **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing. (File locking for
   multi-instance is DONE - see `ExclusiveFileLock` under phase 9.)
-- **A collecting loop cannot clear its dataset first.** The shop examples append, so running one
-  twice doubles its rows; `verify-shop.mjs` sidesteps this by working in a fresh scratch workspace
-  every time. Expressing it needs run-scoped state that survives the per-row fork (`ForkForRow`
-  isolates each row deliberately, so "am I the first writer this run?" is not answerable from
-  inside a row) - most likely a `resetOnFirstWrite` flag on `DatasetWriteSpec` plus a set of
-  freshened dataset names owned by the run rather than the row.
 - **No `Aggregate` step.** Summing a harvested column happens in `verify-shop.mjs`, not in the
   product, which was a deliberate call to keep the step model closed - no arithmetic, no expression
   language. If it is ever wanted in-product it is one action plus a picker (sum/count/min/max/avg

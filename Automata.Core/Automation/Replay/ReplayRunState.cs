@@ -13,6 +13,10 @@ namespace Automata.Core.Automation.Replay;
 /// </summary>
 internal sealed class ReplayRunState
 {
+    public ReplayRunState() : this(new HashSet<string>(StringComparer.OrdinalIgnoreCase)) { }
+
+    private ReplayRunState(HashSet<string> freshened) => this.freshened = freshened;
+
     public bool Stop;
     public bool Failed;
     public int Passed;
@@ -37,10 +41,42 @@ internal sealed class ReplayRunState
     public readonly HashSet<string> TaskStack = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Datasets a "start fresh each run" write has already claimed. <b>Shared by reference with
+    /// every forked row state</b> — deliberately the one thing a fork does not isolate, because
+    /// "has this run started this dataset yet?" is a question about the run and there is no other
+    /// scope that can answer it. Guarded, since a parallel for-each asks from several lanes at once.
+    /// </summary>
+    private readonly HashSet<string> freshened;
+
+    /// <summary>
     /// Set when a long wait checkpointed the run instead of holding a browser through it. Non-null
     /// means the walk stopped early and the run is neither passed nor failed — it is unfinished.
     /// </summary>
     public Execution.ParkCheckpoint? Parked;
+
+    /// <summary>
+    /// True the FIRST time this run is asked about a dataset and false every time after, including
+    /// from another row running at the same moment. The caller acts on it, so it is a claim rather
+    /// than a question — asking twice would report two firsts.
+    /// </summary>
+    public bool ClaimFirstWrite(string datasetName)
+    {
+        lock (freshened) return freshened.Add(datasetName);
+    }
+
+    /// <summary>The datasets claimed so far, for a checkpoint to carry across a park.</summary>
+    public IReadOnlyList<string> ClaimedDatasets()
+    {
+        lock (freshened) return [.. freshened];
+    }
+
+    /// <summary>Re-seeds the claims a parked run had already made. A resumed run that forgot them
+    /// would clear a dataset it had spent the first half of the run filling.</summary>
+    public void RestoreClaims(IEnumerable<string>? names)
+    {
+        if (names == null) return;
+        lock (freshened) foreach (var name in names) freshened.Add(name);
+    }
 
     public static string OutputKey(string? stepId, string? field) => stepId + "\0" + field;
 
@@ -63,7 +99,9 @@ internal sealed class ReplayRunState
     /// </summary>
     public ReplayRunState ForkForRow(string rowVariable, IReadOnlyDictionary<string, string> row)
     {
-        var child = new ReplayRunState();
+        // The freshened set is passed by reference, not copied: it is the one thing rows must
+        // agree on, or every row would think itself the first and clear the dataset again.
+        var child = new ReplayRunState(freshened);
         foreach (var (key, value) in Outputs) child.Outputs[key] = value;
         foreach (var (key, value) in Variables) child.Variables[key] = value;
         foreach (var taskId in TaskStack) child.TaskStack.Add(taskId);

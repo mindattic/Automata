@@ -36,8 +36,17 @@ public sealed class DatasetStore
     public void Append(string datasetName, IReadOnlyDictionary<string, string> row) =>
         DatasetIO.Write(PathFor(datasetName), [row], append: true);
 
-    public void Write(string datasetName, IEnumerable<IReadOnlyDictionary<string, string>> rows, bool append) =>
-        DatasetIO.Write(PathFor(datasetName), rows, append);
+    /// <summary>
+    /// Writes rows. <paramref name="claimFirstWrite"/> is evaluated inside the dataset's write
+    /// lock and, when it returns true, makes this write replace rather than append — see
+    /// <see cref="Model.DatasetWriteSpec.ResetOnFirstWrite"/>.
+    /// </summary>
+    public void Write(
+        string datasetName,
+        IEnumerable<IReadOnlyDictionary<string, string>> rows,
+        bool append,
+        Func<bool>? claimFirstWrite = null) =>
+        DatasetIO.Write(PathFor(datasetName), rows, append, claimFirstWrite);
 
     /// <summary>Dataset file names, for the picker. Empty when nothing has been added yet — the
     /// folder is not created until something writes to it.</summary>

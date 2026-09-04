@@ -263,6 +263,58 @@ public class ParkAndResumeTests
             "a value captured before the wait has to survive it, or every binding after the wait breaks");
     }
 
+    /// <summary>
+    /// "First write of the run" has to mean the whole run, including the half that happens hours
+    /// later. A resumed run that forgot which datasets it had already started fresh would clear one
+    /// it spent the first half filling — and the run would report success while holding half its
+    /// results.
+    /// </summary>
+    [Test]
+    public async Task ACheckpoint_CarriesTheDatasetsTheRunHadAlreadyStartedFresh()
+    {
+        var task = new TaskDefinition { Name = "T", Steps = [Collect("first"), LongWait()] };
+
+        var events = await Run(task, Browser());
+
+        Assert.That(events.OfType<StepEvent.RunParked>().Single().Checkpoint.FreshenedDatasets,
+            Does.Contain("collected.csv"));
+    }
+
+    [Test]
+    public async Task Resuming_DoesNotClearADatasetTheRunHadAlreadyStartedFresh()
+    {
+        var task = new TaskDefinition { Name = "T", Steps = [Collect("first"), LongWait(), Collect("second")] };
+
+        var parked = await Run(task, Browser());
+        var checkpoint = parked.OfType<StepEvent.RunParked>().Single().Checkpoint;
+        Assert.That(datasets.Read("collected.csv"), Has.Count.EqualTo(1), "the first half wrote its row");
+
+        await Run(task, Browser(), Options(), checkpoint);
+
+        var rows = datasets.Read("collected.csv");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rows, Has.Count.EqualTo(2), "resuming cleared what the run had already collected");
+            Assert.That(rows.Select(r => r["half"]), Is.EqualTo(new[] { "first", "second" }));
+        });
+    }
+
+    /// <summary>A writeDataset step that starts collected.csv fresh on the run's first write.</summary>
+    private static Step Collect(string half) => new()
+    {
+        Id = half, Action = StepAction.WriteDataset, Label = $"Record the {half} half",
+        WriteDataset = new DatasetWriteSpec
+        {
+            DatasetName = "collected.csv",
+            Append = true,
+            ResetOnFirstWrite = true,
+            Columns = new Dictionary<string, BindingRef>
+            {
+                ["half"] = new() { Kind = BindingKind.Literal, Literal = half },
+            },
+        },
+    };
+
     // ---- resuming -------------------------------------------------------------------------------
 
     [Test]

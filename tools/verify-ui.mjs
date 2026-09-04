@@ -1048,6 +1048,31 @@ async function main() {
         `expected the loop's steps to pass, got ${JSON.stringify(statuses)}`);
     });
 
+    await group('flow: a collecting write can start its dataset fresh each run', async () => {
+      // The footgun this option closes: a loop that appends keeps the last run's rows, so running
+      // a task twice doubles its results and says nothing.
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('writeDataset');
+      await panelPage.locator('#ed-write-append').waitFor({ state: 'visible', timeout: 10000 });
+
+      assertTrue(await panelPage.locator('#ed-write-reset').isVisible(),
+        'the reset option belongs beside append, where the decision is being made');
+
+      await panelPage.locator('#ed-write-reset').check();
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"resetOnFirstWrite": true'),
+        { timeoutMs: 5000, label: 'the reset flag to reach disk' });
+
+      // It only means anything alongside append, so it goes away with it rather than sitting there
+      // ticked and inert.
+      await panelPage.locator('#ed-write-append').uncheck();
+      await waitFor(() => panelPage.locator('#ed-write-reset-row').isHidden(),
+        { timeoutMs: 5000, label: 'the reset option to withdraw with append' });
+      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"resetOnFirstWrite": true'),
+        { timeoutMs: 5000, label: 'the reset flag to be cleared on disk' });
+    });
+
     // ---- harvest (extractAll) ------------------------------------------------------------
     // The point of these is that NOTHING here is typed. A harvest is built by clicking one
     // example in the page, and what that click resolved to is shown back as a count — so these

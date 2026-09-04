@@ -43,9 +43,20 @@ public static class DatasetIO
     /// for-each where several rows finish at once.
     /// </para>
     /// </summary>
-    public static void Write(string path, IEnumerable<IReadOnlyDictionary<string, string>> rows, bool append = false)
+    /// <param name="claimFirstWrite">
+    /// Optional, and settled INSIDE the lock: when it returns true this write replaces the file
+    /// instead of appending to it. That is what "start fresh each run" means, and it has to be
+    /// decided here rather than by the caller — two rows finishing at once would otherwise both be
+    /// told they are first, or the one that is would replace a file the other had just appended to.
+    /// </param>
+    public static void Write(
+        string path,
+        IEnumerable<IReadOnlyDictionary<string, string>> rows,
+        bool append = false,
+        Func<bool>? claimFirstWrite = null)
     {
         using var _ = ExclusiveFileLock.Acquire(path);
+        if (append && claimFirstWrite != null && claimFirstWrite()) append = false;
         if (IsJson(path)) WriteJsonArray(path, rows, append);
         else WriteCsv(path, rows, append);
     }
