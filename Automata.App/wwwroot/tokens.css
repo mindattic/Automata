@@ -59,6 +59,10 @@
   --color-pick-bg: #2e2e2e;
 
   /* ---- spacing ---- */
+  /* The gutter a field's label sits in, so the label column and the hanging indent that lines
+     wrapped controls up with it are one number rather than two that drift. */
+  --field-label-w: 92px;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

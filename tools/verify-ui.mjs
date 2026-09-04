@@ -1366,6 +1366,28 @@ async function main() {
         { timeoutMs: 5000, label: 'the reset flag to be cleared on disk' });
     });
 
+    await group('a control too wide for its row moves to the next line, it is not squeezed', async () => {
+      // The step editor is a sidebar someone can make narrow, so a row running out of width is
+      // normal rather than an edge case — and the row used to answer it by squeezing. A flex item's
+      // automatic minimum is its longest WORD, so "start fresh each run" became a 40px column four
+      // words tall next to a checkbox. There is unlimited vertical space here; the row scrolls.
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('writeDataset');
+      await panelPage.locator('#ed-write-append').waitFor({ state: 'visible', timeout: 10000 });
+
+      const tall = await panelPage.locator('#editor label.inline, #editor .timeout')
+        .evaluateAll((els) => els
+          .filter((el) => el.offsetHeight > parseFloat(getComputedStyle(el).lineHeight) * 1.6)
+          .map((el) => el.textContent.trim()));
+      assertEqual(JSON.stringify(tall), '[]',
+        `these controls wrapped their own text instead of moving to the next line: ${JSON.stringify(tall)}`);
+
+      // And the row still fits: wrapping is only an answer if nothing overflows sideways.
+      const overflow = await panelPage.locator('#editor').evaluate((el) => el.scrollWidth - el.clientWidth);
+      assertTrue(overflow <= 1, `the editor overflows its width by ${overflow}px`);
+    });
+
     await group('flow: a step can zoom the page, chosen from the levels a browser offers', async () => {
       const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
       await panelPage.locator('#tree .node.step').first().click();

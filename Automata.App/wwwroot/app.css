@@ -476,26 +476,57 @@ input.rename {
   padding: var(--space-2);
 }
 
+/* A field is a label and its controls on one line — and on two when one line is not enough.
+   The panel is a sidebar someone can make narrow, so "not enough" is normal rather than an edge
+   case, and the old row squeezed instead: "start fresh each run" became a 40px column four words
+   tall. Wrapping is the whole fix, but only once nothing can be squeezed below its own text — a
+   flex item's automatic minimum is its longest WORD, which is exactly how that happened. */
 .field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  row-gap: var(--space-1);
   margin-bottom: 6px;
+  /* A hanging indent, so a wrapped line starts under the CONTROLS rather than under the label —
+     the label keeps its gutter and everything after it keeps one left edge. */
+  padding-left: calc(var(--field-label-w) + var(--space-2));
 }
 
-.field > span {
-  width: 92px;
+/* The label, and only the label: a span later in the row is a unit or a group of its own, and
+   giving those the label column's width is what made "ms" 92px wide. */
+.field > span:first-child {
+  width: var(--field-label-w);
+  margin-left: calc(-1 * (var(--field-label-w) + var(--space-2)));
   flex: none;
   font-size: var(--text-xs);
   color: var(--color-fg-muted);
 }
 
-.field.checks { gap: 14px; }
+/* Controls share what is left and wrap when there is not enough of it, rather than each being
+   crushed. `width: auto` overrides the 100% every input gets by default, which as a flex item
+   would claim a whole line to itself and push its neighbours down even when they would fit. */
+.field > input,
+.field > select,
+.field > textarea {
+  flex: 1 1 160px;
+  width: auto;
+  min-width: 120px;
+}
+
+/* No label to hang, so no gutter to reserve. */
+.field.checks {
+  gap: 14px;
+  padding-left: 0;
+}
 
 label.inline {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  /* Never squeezed: a checkbox and its words move to the next line together or not at all. */
+  flex: none;
+  white-space: nowrap;
   text-transform: none;
   letter-spacing: 0;
   font-size: var(--text-sm);
@@ -507,11 +538,14 @@ label.inline {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  flex: none;
+  width: auto;
+  white-space: nowrap;
   font-size: var(--text-xs);
   color: var(--color-fg-muted);
 }
 
-.timeout input { width: 80px; }
+.timeout input { width: 80px; flex: none; }
 
 details.target summary {
   cursor: pointer;
@@ -712,7 +746,7 @@ button.mini.binding-toggle { display: none; }
 
 .column-list { flex-direction: column; align-items: stretch; }
 .column-row { min-height: var(--target-min); }
-.column-row .column-name { width: 92px; flex: none; }
+.column-row .column-name { width: var(--field-label-w); flex: none; }
 .condition-row .operand,
 .column-row .operand { flex: 1; min-width: 70px; }
 .condition-row select { width: auto; flex: none; }
