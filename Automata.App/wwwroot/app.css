@@ -27,6 +27,30 @@ section, nav, header, details {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* ---- scrolling ----
+   Thin scrollbars everywhere, and no horizontal one anywhere. A sidebar is narrow by definition:
+   a chunky OS scrollbar eats width the content needs, and a horizontal scrollbar hides content
+   behind a gesture nobody thinks to try. Long text wraps and the row grows downwards instead.
+   `scrollbar-width`/`scrollbar-color` are the standard properties — no ::-webkit- prefixing, which
+   this Chromium has not needed for some time. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+/* Everything that scrolls, scrolls one way. Belt and braces alongside the wrapping rules below:
+   a stray wide child should clip rather than add a sideways scrollbar to the whole panel. */
+html, body, #tree, #log, #rec-steps, #modal-list, #modal-form, .modal-box,
+#view-build, #view-runs, #view-data, #view-schedule {
+  overflow-x: hidden;
+}
+
+/* Long unbroken things — a URL, a selector, a step id — are the usual cause of sideways overflow,
+   and they are exactly what this app is full of. */
+#log, .scope-note, .key-status, .demo-warning, .lane-meta, .dataset-columns {
+  overflow-wrap: anywhere;
+}
+
 /* Full-bleed tree rows: an outset ring is clipped by the tree's overflow container and by the
    sidebar's own edge, so it goes inside the row instead. */
 .node:focus-visible {
@@ -224,14 +248,20 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
   min-height: 28px;
   cursor: pointer;
   border-left: 2px solid transparent;
-  white-space: nowrap;
+  /* Wraps rather than clipping. A step's text is a whole sentence now, and an ellipsis in a
+     sidebar hides the end of exactly the sentences that are worth reading. */
+  white-space: normal;
   overflow: hidden;
+  /* Room for the wrench, always — see the absolute positioning below. */
+  padding-right: 32px;
+  position: relative;
 }
 
 .node:hover { background: var(--color-bg-3); }
 .node.selected { background: var(--color-bg-sel); border-left-color: var(--color-accent); }
 
-.node .name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+/* min-width:0 is what actually lets a flex child wrap instead of forcing the row wider. */
+.node .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .node.collection .name { font-weight: 600; }
 .node.task { padding-left: 20px; color: var(--color-fg-task); }
 .node.step { font-size: var(--text-sm); color: var(--color-fg-step); }
@@ -239,6 +269,13 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
 .node .twist { width: 12px; color: var(--color-fg-subtle); flex: none; }
 .node .icon { width: 16px; flex: none; text-align: center; }
 .node-btns { display: none; gap: 3px; flex: none; }
+
+/* Taken out of the flow, so revealing it cannot re-wrap the row's text. The row already reserves
+   its width with padding-right, so the layout is identical whether the wrench is showing or not —
+   which is what the "nothing moves when the buttons appear" check is about, and it now holds for
+   width as well as height. Scoped to `.node >` so the section-head and schedule-row copies, which
+   are ordinary inline buttons, are untouched. */
+.node > .node-btns { position: absolute; right: 6px; top: 2px; }
 
 /* :focus-within is what makes the row actions keyboard-reachable — a display:none button can't
    take focus, so the row gaining focus has to reveal them before Tab can get there. */
@@ -275,7 +312,8 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
   font: inherit;
   text-align: left;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .row-menu [role="menuitem"]:hover,
@@ -548,9 +586,8 @@ button.mini.binding-toggle { display: none; }
   color: var(--color-fg);
   font-size: var(--text-sm);
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   max-width: 100%;
 }
 
@@ -600,15 +637,16 @@ button.mini.binding-toggle { display: none; }
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   white-space: pre-wrap;
-  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 
+/* pre-wrap, not pre: a feature file's indentation is meaningful and is kept, but a long line wraps
+   rather than running off the side of a panel this narrow. */
 #draft-feature, #feature-text {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ---- control-flow editors ---- */
@@ -636,14 +674,13 @@ button.mini.binding-toggle { display: none; }
 .harvest-rows { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
 .harvest-rows code { word-break: break-all; }
 
-/* The element a column was picked from, shown so it can be recognised without re-picking.
-   Truncated rather than wrapped: a long path must not push the row's controls out of reach. */
+/* The element a column was picked from, shown so it can be recognised without re-picking. It wraps
+   now: the original fear was a long path forcing the row wider and pushing its controls out of
+   reach, which `min-width` plus wrapping prevents — the row grows downwards instead. */
 .harvest-where {
   flex: 1;
   min-width: 60px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .column-row .harvest-source,
@@ -686,7 +723,7 @@ button.mini.binding-toggle { display: none; }
   border-bottom: none;
 }
 
-.run-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.run-row .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .run-row .status { width: 18px; flex: none; text-align: center; }
 .run-row.st-running .status { color: var(--color-warning); }
 .run-row.st-parked .status { color: var(--color-info); }
@@ -718,7 +755,7 @@ button.mini.binding-toggle { display: none; }
   border-bottom: none;
 }
 
-.sched-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sched-row .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .sched-row .status { width: 18px; flex: none; text-align: center; color: var(--color-info); }
 .sched-row.off { color: var(--color-fg-subtle); }
 .sched-row.off .status { color: var(--color-fg-subtle); }
@@ -817,19 +854,19 @@ button.mini.binding-toggle { display: none; }
   background: var(--color-bg-1);
   border: 1px solid var(--color-accent);
   border-bottom: none;
-  white-space: nowrap;
-  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .lane-row:last-child { border-bottom: 1px solid var(--color-accent); }
 .lane-row .status { width: 18px; flex: none; text-align: center; color: var(--color-warning); }
-.lane-row .name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.lane-row .name { flex: none; max-width: 40%; min-width: 0; overflow-wrap: anywhere; }
 
 /* What the lane is doing right this second - the part worth reading, so it gets the space. */
 .lane-step {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--text-sm);
   color: var(--color-fg-link);
 }
@@ -856,7 +893,7 @@ button.mini.binding-toggle { display: none; }
   border-bottom: none;
 }
 
-.dataset-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.dataset-row .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .dataset-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
 
 .dataset-columns {

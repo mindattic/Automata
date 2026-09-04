@@ -521,6 +521,59 @@ async function main() {
     await panelPage.waitForLoadState('domcontentloaded');
     useNudgePage(panelPage);
 
+    // Runs before anything is clicked, and needs no browser: it compares two source files.
+    //
+    // The bug it exists for: `exists` and `notExists` were added to the C# ConditionOp, to the
+    // engine and to the Gherkin vocabulary, but not to the editor's OPS list. A <select> that
+    // cannot represent its own value does not fail — the browser reports the first option and the
+    // next commit writes it back — so opening a guard that used `exists` and touching anything
+    // silently turned it into `is exactly`. Nothing caught that, because DemoCoverageTests proves
+    // an enum value has a DEMO, not that the editor can EDIT it.
+    await group('the panel can edit every value of the enums the engine accepts', async () => {
+      const enumMembers = (file, name) => {
+        const src = readFileSync(path.join(repoRoot, file), 'utf8');
+        const start = src.indexOf(`public enum ${name}`);
+        assertTrue(start >= 0, `could not find enum ${name} in ${file}`);
+        const body = src.slice(src.indexOf('{', start) + 1, src.indexOf('\n}', start));
+        return [...body.matchAll(/^\s{4}([A-Z]\w*)\s*,/gm)].map((m) => m[1])
+          .map((n) => n[0].toLowerCase() + n.slice(1));
+      };
+      // Two shapes: OPS is a list of objects keyed by `value`, ACTIONS is a list of bare strings.
+      // Matched separately and precisely — a checker that can pass because a human-readable LABEL
+      // happened to contain the missing word would be worse than no checker at all.
+      const jsList = (file, name, keyed) => {
+        const src = readFileSync(path.join(repoRoot, file), 'utf8');
+        const at = src.indexOf(name);
+        assertTrue(at >= 0, `could not find ${name} in ${file}`);
+        const block = src.slice(at, src.indexOf('];', at));
+        const pattern = keyed ? /value:\s*'([a-zA-Z]\w*)'/g : /'([a-zA-Z]\w*)'/g;
+        return [...block.matchAll(pattern)].map((m) => m[1]);
+      };
+
+      // Values the panel deliberately does not offer, each with the reason. Same discipline as
+      // DemoCoverageTests.NotDemonstrable: an exemption is a line of code somebody has to justify.
+      const notOffered = {
+        // The engine refuses it outright — "waiting for a signal needs the scheduler, which is not
+        // built yet" — so offering it would offer a wait that never ends. The editor still PRESERVES
+        // it when a task carries one; that is what optionsFor is for.
+        untilSignal: 'WaitMode',
+      };
+
+      const conditionOps = enumMembers('Automata.Core/Automation/Model/ControlFlow.cs', 'ConditionOp');
+      const editable = jsList('Automata.App/wwwroot/flow-fields.js', 'var OPS = [', true);
+      const missingOps = conditionOps.filter((o) => !editable.includes(o) && !notOffered[o]);
+      assertEqual(JSON.stringify(missingOps), '[]',
+        `the condition editor cannot express ${JSON.stringify(missingOps)} — a guard using one ` +
+        'would be silently rewritten the moment the step is edited');
+
+      const actions = enumMembers('Automata.Core/Automation/Model/Step.cs', 'StepAction');
+      const offered = jsList('Automata.App/wwwroot/core.js', 'export const ACTIONS = [')
+        .concat(jsList('Automata.App/wwwroot/core.js', 'export const ADVANCED_ACTIONS = ['));
+      const missingActions = actions.filter((a) => !offered.includes(a) && !notOffered[a]);
+      assertEqual(JSON.stringify(missingActions), '[]',
+        `the action picker does not offer ${JSON.stringify(missingActions)}`);
+    });
+
     // The fixture task exists but starts collapsed/unselected — select it to expand its step
     // tree (mirrors a user clicking the task row).
     await waitFor(() => panelPage.locator(`.node.task[data-task="${taskId}"]`).count().then((n) => n > 0),
@@ -776,6 +829,39 @@ async function main() {
       await panelPage.keyboard.press('Escape');
       await waitFor(() => panelPage.locator('.row-menu').count().then((n) => n === 0),
         { timeoutMs: 5000, label: 'the keyboard-opened menu to close' });
+    });
+
+    await group('nothing scrolls sideways, and what scrolls down does it thinly', async () => {
+      // A sidebar is narrow by definition. A horizontal scrollbar there hides content behind a
+      // gesture nobody thinks to try, and a chunky scrollbar spends width the content needs.
+      const sideways = await panelPage.evaluate(() => {
+        const bad = [];
+        for (const el of document.querySelectorAll('*')) {
+          const style = getComputedStyle(el);
+          const scrollable = style.overflowX === 'auto' || style.overflowX === 'scroll';
+          // > 1 rather than > 0: sub-pixel layout rounding is not a scrollbar.
+          if (scrollable && el.scrollWidth - el.clientWidth > 1) {
+            bad.push(`${el.tagName.toLowerCase()}#${el.id}.${el.className} ` +
+              `(${el.scrollWidth} > ${el.clientWidth})`);
+          }
+        }
+        return bad;
+      });
+      assertEqual(JSON.stringify(sideways), '[]',
+        `these scroll sideways instead of wrapping: ${JSON.stringify(sideways)}`);
+
+      const pageWide = await panelPage.evaluate(() =>
+        document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assertTrue(pageWide <= 1, `the panel itself scrolls sideways by ${pageWide}px`);
+
+      // The gutter a vertical scrollbar takes. A default one is ~15-17px here; "thin" is ~11.
+      const gutters = await panelPage.evaluate(() => ['tree', 'log'].map((id) => {
+        const el = document.getElementById(id);
+        return { id, gutter: el.offsetWidth - el.clientWidth };
+      }));
+      for (const { id, gutter } of gutters) {
+        assertTrue(gutter <= 12, `#${id}'s scrollbar takes ${gutter}px — expected a thin one`);
+      }
     });
 
     await group('hover gap: hr-line appears, and nothing around it moves', async () => {
@@ -1350,6 +1436,45 @@ async function main() {
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
       await waitFor(() => readFileSync(loopFile, 'utf8').includes('"datasetColumn"'),
         { timeoutMs: 5000, label: 'the column binding to reach disk' });
+    });
+
+    await group('guards: an operator the editor once could not show survives being edited', async () => {
+      // The regression this pins. `exists` was in the engine and the Gherkin vocabulary but not in
+      // the editor's OPS, so its <select> had no option for it, the browser reported the first one
+      // (`equals`), and every field in the editor commits on change — so opening the step and
+      // touching anything at all rewrote the guard to "is exactly", silently.
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const steps = () => panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`);
+
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
+      await waitFor(() => steps().count().then((n) => n >= 2),
+        { timeoutMs: 10000, label: 'the loop and the step inside it' });
+      await steps().nth(1).click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('if');
+      await panelPage.locator('#ed-cond-op').waitFor({ state: 'visible', timeout: 10000 });
+
+      const offered = await panelPage.locator('#ed-cond-op option')
+        .evaluateAll((els) => els.map((el) => el.value));
+      assertTrue(offered.includes('exists') && offered.includes('notExists'),
+        `the editor must be able to express presence, got ${JSON.stringify(offered)}`);
+
+      await panelPage.locator('#ed-cond-op').selectOption('exists');
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"op": "exists"'),
+        { timeoutMs: 5000, label: 'the chosen operator to reach disk' });
+
+      // Now touch something with nothing to do with the condition.
+      await panelPage.locator('#ed-pause').check();
+      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"pauseForUser": true'),
+        { timeoutMs: 5000, label: 'the unrelated edit to commit' });
+
+      assertTrue(readFileSync(loopFile, 'utf8').includes('"op": "exists"'),
+        'editing an unrelated field must not rewrite the guard');
+
+      // Put the fixture back.
+      await panelPage.locator('#ed-pause').uncheck();
+      await waitFor(() => !readFileSync(loopFile, 'utf8').includes('"pauseForUser": true'),
+        { timeoutMs: 5000, label: 'the fixture to be restored' });
     });
 
     await group('branching: an otherwise reads as the other half of the if above it', async () => {

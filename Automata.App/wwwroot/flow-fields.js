@@ -16,13 +16,40 @@ var OPS = [
     { value: 'lessThan', label: 'is less than' },
     { value: 'notEmpty', label: 'has any value' },
     { value: 'empty', label: 'is empty' },
+    // Presence, which is a different question from emptiness: a row of a ragged list may not carry
+    // the column at all, and asking whether that is "empty" fails the run rather than answering.
+    { value: 'exists', label: 'has a value at all' },
+    { value: 'notExists', label: 'is missing' },
     { value: 'isTrue', label: 'is true' },
     { value: 'isFalse', label: 'is false' },
 ];
 
 // Operators that take no right-hand side; showing an inert box beside them would invite a value
 // that is silently ignored.
-var UNARY = ['notEmpty', 'empty', 'isTrue', 'isFalse'];
+var UNARY = ['notEmpty', 'empty', 'exists', 'notExists', 'isTrue', 'isFalse'];
+
+/// Options for a select built from a fixed list, ALWAYS including whatever the step currently holds.
+///
+/// A select that cannot represent its own value does not fail — the browser reports the first
+/// option instead, and the next commit writes that back over the real one. Every field in this
+/// editor commits on `change`, so merely opening a step and touching something unrelated is enough.
+/// That is exactly how a guard using `exists` turned into `is exactly`: the operator was added to
+/// the engine and the Gherkin vocabulary but not to OPS, so the select had nothing to show for it.
+///
+/// `datasetOptions` below already had this guard for dataset names. This is the same rule for every
+/// other fixed list, so the failure cannot come back through a different select.
+function optionsFor(choices, selected, keptNote) {
+    var value = selected == null ? '' : String(selected);
+    var list = choices.some(function (c) { return String(c.value) === value; }) || value === ''
+        ? choices
+        : choices.concat([{ value: value, label: value + (keptNote || ' — kept as it is') }]);
+    return list.map(function (c) {
+        return '<option value="' + esc(String(c.value)) + '"' +
+            (String(c.value) === value ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+    }).join('');
+}
+
+export { optionsFor };
 
 function isBound(ref) {
     return !!ref && ref.kind && ref.kind !== 'literal';
@@ -49,11 +76,7 @@ function conditionHtml(condition) {
     return '<div class="field"><span>When</span>' +
         '<div class="condition-row">' +
         operandHtml('left', 'The value to test', c.left) +
-        '<select id="ed-cond-op" aria-label="Comparison">' +
-        OPS.map(function (o) {
-            return '<option value="' + o.value + '"' + (o.value === op ? ' selected' : '') + '>' +
-                esc(o.label) + '</option>';
-        }).join('') + '</select>' +
+        '<select id="ed-cond-op" aria-label="Comparison">' + optionsFor(OPS, op) + '</select>' +
         (UNARY.indexOf(op) >= 0 ? '' : operandHtml('right', 'The value to compare against', c.right)) +
         '</div></div>';
 }
@@ -78,14 +101,23 @@ function findTaskById(id) {
 
 function taskOptions(currentTaskId, selected) {
     var options = ['<option value="">(choose a task)</option>'];
+    var found = false;
     (state.collections || []).forEach(function (c) {
         (c.tasks || []).forEach(function (t) {
             // A task calling itself is caught at run time too, but not offering it is kinder.
             if (t.id === currentTaskId) return;
+            if (t.id === selected) found = true;
             options.push('<option value="' + esc(t.id) + '"' + (t.id === selected ? ' selected' : '') + '>' +
                 esc(c.name + ' / ' + t.name) + '</option>');
         });
     });
+    // A reference to a task that is not in this list — deleted, or not loaded — is kept rather than
+    // quietly nulled by the select reporting "(choose a task)" on the next commit. The run says
+    // plainly that the task is missing; the editor must not erase the evidence first.
+    if (selected && !found) {
+        options.push('<option value="' + esc(selected) + '" selected>' +
+            esc(selected) + ' — no longer in this workspace</option>');
+    }
     return options.join('');
 }
 
@@ -174,10 +206,7 @@ export function flowFieldsHtml(step, task) {
             // a binding to get wrong — the same shape as a harvest's "count".
             return '<div class="field"><span>Work out</span>' +
                 '<select id="ed-agg-op" aria-label="What to work out">' +
-                AGGREGATE_OPS.map(function (o) {
-                    return '<option value="' + o.value + '"' +
-                        ((agg.op || 'sum') === o.value ? ' selected' : '') + '>' + o.label + '</option>';
-                }).join('') + '</select></div>' +
+                optionsFor(AGGREGATE_OPS, agg.op || 'sum') + '</select></div>' +
                 '<div class="field"><span>Of column</span>' +
                 '<input type="text" id="ed-agg-column" aria-label="Dataset column to work out"' +
                 ' placeholder="price" value="' + esc(agg.columnName || '') + '" /></div>' +
@@ -195,10 +224,9 @@ export function flowFieldsHtml(step, task) {
             // anybody actually wants.
             return '<div class="field"><span>Zoom to</span>' +
                 '<select id="ed-zoom" aria-label="Zoom level for the page">' +
-                ZOOM_LEVELS.map(function (z) {
-                    return '<option value="' + z + '"' + (z === pct ? ' selected' : '') + '>' +
-                        z + '%' + (z === 100 ? ' (normal)' : '') + '</option>';
-                }).join('') + '</select>' +
+                optionsFor(ZOOM_LEVELS.map(function (z) {
+                    return { value: z, label: z + '%' + (z === 100 ? ' (normal)' : '') };
+                }), pct, '% — kept as it is') + '</select>' +
                 '<p class="scope-note">Stays until another step changes it, and is re-applied ' +
                 'after a navigation. Each lane of a parallel loop starts at 100%.</p></div>';
         }

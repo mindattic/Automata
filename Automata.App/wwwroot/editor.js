@@ -10,7 +10,7 @@ import { openScopedSettings } from './scoped-settings.js';
 import { fieldControlHtml, openBindingPicker, loopDatasetsInScope
 } from './binding-field.js';
 import {
-    flowFieldsHtml, waitNeedsCondition, waitConditionHtml, commitFlowFields, wireFlowFields,
+    flowFieldsHtml, waitNeedsCondition, waitConditionHtml, commitFlowFields, wireFlowFields, optionsFor
 } from './flow-fields.js';
 
 // Steps that act on the page need an element; control-flow steps act on the run.
@@ -125,10 +125,16 @@ export function renderEditor() {
         var spec = s.wait || {};
         var mode = spec.mode || 'duration';
         return '<div class="field"><span>Wait for</span>' +
+            // untilSignal is deliberately absent — the engine refuses it ("waiting for a signal
+            // needs the scheduler, which is not built yet"), so offering it would offer a wait that
+            // never ends. optionsFor keeps it when a task already carries it, rather than letting
+            // the select silently rewrite that step to a fixed duration.
             '<select id="ed-wait-mode" aria-label="What this step waits for">' +
-            '<option value="duration"' + (mode === 'duration' ? ' selected' : '') + '>a fixed duration</option>' +
-            '<option value="untilTimeOfDay"' + (mode === 'untilTimeOfDay' ? ' selected' : '') + '>until a time of day</option>' +
-            '<option value="untilCondition"' + (mode === 'untilCondition' ? ' selected' : '') + '>until a condition holds</option>' +
+            optionsFor([
+                { value: 'duration', label: 'a fixed duration' },
+                { value: 'untilTimeOfDay', label: 'until a time of day' },
+                { value: 'untilCondition', label: 'until a condition holds' },
+            ], mode, ' — not editable here') +
             '</select></div>' +
             (mode === 'untilTimeOfDay'
                 ? '<div class="field"><span>Time</span>' +
