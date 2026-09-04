@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using Automata.Browser;
 using Automata.Core.Operator;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
         settingsStore = App.Services
             .GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>();
         RestoreSidebarWidth();
+        ApplyWindowTheme();
 
         controller = new AutomationController(
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.CollectionStore>(),
@@ -72,6 +74,28 @@ public partial class MainWindow : Window
         if (double.IsNaN(saved) || saved <= 0) return;
         var clamped = Math.Clamp(saved, SidebarColumn.MinWidth, SidebarColumn.MaxWidth);
         SidebarColumn.Width = new GridLength(clamped, GridUnitType.Pixel);
+    }
+
+    /// <summary>
+    /// Paints the parts of the window that are NOT the panel — the splitter, and the ground the
+    /// panes are mounted on.
+    /// <para>
+    /// The two WebView2 panes carry their own palette in CSS, but the splitter between them is
+    /// WPF's, and a dark bar down the middle of a light window is the one seam a theme cannot
+    /// hide. Read from the same setting the panel reads, so there is one answer to "which theme".
+    /// </para>
+    /// </summary>
+    private void ApplyWindowTheme()
+    {
+        var light = Automata.Core.Automation.Storage.AutomataSettings.Themes.Coerce(
+            settingsStore.Load().Theme)
+            == Automata.Core.Automation.Storage.AutomataSettings.Themes.Light;
+
+        // The same values as --color-border / --color-bg-2 in each theme's tokens.css.
+        var edge = light ? "#D0D4D8" : "#333333";
+        var ground = light ? "#ECEEF0" : "#1E1E1E";
+        SidebarSplitter.Background = (Brush)new BrushConverter().ConvertFromString(edge)!;
+        Background = (Brush)new BrushConverter().ConvertFromString(ground)!;
     }
 
     /// <summary>
@@ -134,6 +158,29 @@ public partial class MainWindow : Window
         ControlPanel.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "automata.local", wwwroot, CoreWebView2HostResourceAccessKind.Allow);
         ControlPanel.CoreWebView2.WebMessageReceived += OnControlPanelMessage;
+
+        // Stamped BEFORE the document exists, so a light-theme user never sees a frame of the dark
+        // default. The panel applies the same value again when settings arrive; this is only about
+        // the first paint, which is the one the settings round trip is too late for.
+        var theme = Automata.Core.Automation.Storage.AutomataSettings.Themes.Coerce(
+            settingsStore.Load().Theme);
+        // Document-created runs after the global object exists but BEFORE <html> is parsed, so
+        // documentElement is still null at that moment — hence the observer rather than a one-line
+        // assignment. It disconnects as soon as the root appears, which is before anything paints.
+        await ControlPanel.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync($$"""
+            (function () {
+              var set = function () {
+                if (!document.documentElement) return false;
+                document.documentElement.dataset.theme = '{{theme}}';
+                return true;
+              };
+              if (!set()) {
+                var watch = new MutationObserver(function () { if (set()) watch.disconnect(); });
+                watch.observe(document, { childList: true, subtree: true });
+              }
+            })();
+            """);
+
         ControlPanel.CoreWebView2.Navigate("https://automata.local/panel.html");
     }
 

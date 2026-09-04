@@ -84,4 +84,75 @@
 
   /* ---- pointer targets (SC 2.5.8 minimum) ---- */
   --target-min: 24px;
+
+  /* ---- overlays ---- */
+  /* Tokens because a scrim and a drop shadow are colour decisions like any other, and a theme
+     that could not change them would put a shadow tuned for a dark surface onto a light one. */
+  --color-scrim: rgba(0, 0, 0, 0.55);
+  --shadow-overlay: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- light ----------------------------------------------------------------------------------
+
+   Dark is the default and stays in :root above: a theme nobody has chosen yet is the one this app
+   has always had. This block redefines the COLOUR tokens and nothing else — every space, size and
+   type value is a property of the layout, not of the palette, and duplicating them here is how the
+   two drift apart.
+
+   Every ratio below is recomputed against ITS OWN surfaces rather than inherited from the dark
+   set. The same rule applies as above: a *-bg carries white text and needs 4.5:1 against WHITE,
+   while a plain accent or status colour is drawn ON a light surface and needs 4.5:1 against THAT.
+   The two families do not swap places when the theme does.
+
+   The surface roles invert rather than the numbers: bg-1 (the tree and the editor) is the surface
+   that stands FORWARD of the body in both themes — darker than the body in dark, lighter in light.
+   Reading the dark values as "0 is darkest" and flipping them would put the tree behind the body. */
+:root[data-theme="light"] {
+  --color-bg-0: #f4f5f6;          /* #log */
+  --color-bg-1: #ffffff;          /* #tree, #editor */
+  --color-bg-2: #eceef0;          /* body */
+  --color-bg-3: #e3e6e9;          /* modal box, node hover */
+  --color-bg-4: #ffffff;          /* form controls */
+  --color-bg-sel: #d6e3f7;        /* selected row / drop-into — 12.77:1 with --color-fg */
+  --color-bg-fail: #fbe3e3;       /* failed row tint */
+  --color-bg-rec: #fbeaea;        /* recording preview */
+
+  --color-border: #d0d4d8;        /* decorative container edges */
+  --color-border-strong: #767c84; /* form-control edges — 3.62:1 on bg-2, 4.21:1 on bg-1 (1.4.11) */
+  --color-border-modal: #c2c7cc;
+
+  --color-fg-strong: #101317;     /* 16.01:1 on bg-2 */
+  --color-fg: #1b1f24;            /* 14.24:1 on bg-2, 16.56:1 on bg-1 */
+  --color-fg-soft: #2b3138;       /* 10.48:1 on bg-3 */
+  --color-fg-task: #2b3138;       /* 13.13:1 on bg-1 */
+  --color-fg-step: #3a4149;       /* 10.33:1 on bg-1 */
+  --color-fg-muted: #5a626b;      /* 5.32:1 on bg-2, 6.19:1 on bg-1 */
+  --color-fg-subtle: #5f6771;     /* 4.93:1 on bg-2 — twists, empty states */
+  --color-fg-link: #1a4fa0;       /* 6.28:1 on bg-3, 7.87:1 on bg-1 */
+
+  --color-accent: #1f5fd0;        /* 5.01:1 on bg-2 */
+  --color-accent-bg: #1f5fd0;     /* 5.82:1 with white 13px text */
+  --color-accent-bg-hover: #1a52b8;
+
+  --color-success: #157a37;       /* 4.66:1 on bg-2 */
+  --color-warning: #8a5a00;       /* 5.10:1 on bg-2 */
+  --color-danger: #b3261e;        /* 5.62:1 on bg-2, 5.35:1 on bg-fail */
+  --color-info: #6b3fbf;          /* 5.85:1 on bg-2 */
+  --color-insert: #a15200;        /* 5.64:1 on bg-1 — insert-gap hairline (non-text, needs 3:1) */
+
+  --color-danger-bg: #b3261e;     /* 6.54:1 with white */
+  --color-info-bg: #6b3fbf;       /* 6.80:1 with white */
+  --color-disabled-bg: #b4b8bd;
+
+  --color-mini-bg: #e2e5e8;
+  --color-mini-bg-hover: #d5d9dd;
+  --color-mini-fg: #2b3138;       /* 10.38:1 on --color-mini-bg */
+  --color-pick-bg: #eef1f4;
+
+  --focus-ring-color: #1a5fd0;    /* 5.03:1 on bg-2, 5.85:1 on bg-1 — clears the 3:1 minimum */
+
+  /* Lighter than the dark theme's, because the same shadow that reads as depth against #1e1e1e
+     reads as dirt against #ececec. */
+  --color-scrim: rgba(0, 0, 0, 0.35);
+  --shadow-overlay: 0 6px 20px rgba(15, 20, 30, 0.18);
 }

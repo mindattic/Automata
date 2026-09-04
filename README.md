@@ -167,6 +167,9 @@ The **⚙ Settings** fold-out in the sidebar holds:
   (Claude Code OAuth session → shared MindAttic credential store) for the AI paths. The escape
   hatch when the OAuth session is rate-limited or out of quota. Saved to
   `%APPDATA%\MindAttic\Automata\settings.json`; takes effect on the next run, no restart.
+- **Theme** — **Dark** (default) or **Light**, applied the moment it is chosen and remembered
+  across launches. Both palettes are checked against WCAG 2.2 AA by `tools/verify-ui.mjs`, which
+  runs the same axe-core pass over each.
 - **Border radius** — 0–10px slider (default 5) rounding every button and input, applied live.
 
 ## Free-text AI mode (advanced)

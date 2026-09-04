@@ -89,6 +89,12 @@ document.querySelectorAll('[data-clear]').forEach(function (btn) {
         post('saveSettings', { clearKey: btn.getAttribute('data-clear') });
     });
 });
+$('set-theme').addEventListener('change', function () {
+    // Applied here rather than waiting for the host to echo it back: a theme switch that lags a
+    // round trip reads as a control that did not work.
+    document.documentElement.dataset.theme = $('set-theme').value === 'light' ? 'light' : 'dark';
+    post('saveSettings', { theme: $('set-theme').value });
+});
 $('set-radius').addEventListener('input', function () {
     var radius = parseInt($('set-radius').value, 10) || 0;
     document.documentElement.style.setProperty('--radius', radius + 'px');

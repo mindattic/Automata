@@ -212,6 +212,12 @@ window.ssPanel = {
     onSettings: function (s) {
         state.engineDefaults = (s && s.engineDefaults) || null;
         state.engineFloor = (s && s.engineFloor) || null;
+        // The host stamps this onto <html> before the document is created too, so a light-theme
+        // user never sees a frame of dark on launch. Applied again here because this is what makes
+        // the choice take effect the moment it is made.
+        document.documentElement.dataset.theme = (s && s.theme) === 'light' ? 'light' : 'dark';
+        $('set-theme').value = document.documentElement.dataset.theme;
+
         var radius = (s && s.borderRadius != null) ? s.borderRadius : 5;
         document.documentElement.style.setProperty('--radius', radius + 'px');
         $('set-radius').value = radius;

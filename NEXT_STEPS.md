@@ -1176,6 +1176,40 @@ never reaches `window.onerror` — so the panel silently stopped re-rendering an
 checks failed as timeouts with nothing to point at. `verify-ui` now prints `pageerror` and console
 errors from the panel, which would not have caught this one, but will catch its cousins.
 
+### Phase 24 - a light theme, and a row that wraps instead of squeezing (2026-09-04)
+
+Two things the user asked for while phase 23 was landing, both about the panel being usable at the
+width someone actually gives it.
+
+**Controls that will not fit move down.** The step editor is a sidebar someone can make narrow, so
+a row running out of width is normal rather than an edge case — and the row answered by squeezing
+every control to its longest word, which turned "start fresh each run" into a 40px column four
+lines tall beside its checkbox. Rows wrap now, and nothing can be crushed below its own text: a
+flex item's automatic minimum IS its longest word, which is exactly how that happened. A wrapped
+line hangs under the controls rather than under the label, so the row keeps one left edge. There is
+unlimited vertical space here — the panel scrolls.
+
+**Light and dark, dark by default.** Every colour was already a token in one file, so the palette
+is a second block of the same names and nothing else: no space, size or type value is repeated,
+because those belong to the layout rather than to the theme. The surface ROLES invert rather than
+the numbers — `bg-1` (the tree and the editor) is the surface that stands forward of the body in
+both, which means darker in dark and lighter in light; reading the dark values as "0 is darkest"
+and flipping them would have put the tree behind the body.
+
+Every ratio in the light block was computed against its own surfaces rather than inherited, and
+`verify-ui` runs the SAME axe-core pass over the light palette that the dark baseline gets — the
+numbers written into `tokens.css` are a claim, and that is what checks it. Three things fell out of
+building it: the modal scrim and the drop shadow were hardcoded (a shadow tuned for `#1e1e1e`
+reads as dirt on `#ececec`), a `.key-status` colour was a hand-picked `#8a9`, and the theme has to
+be stamped onto `<html>` before the document is parsed or a light-theme user sees a frame of dark
+on every launch — which means a MutationObserver, because at document-created time
+`document.documentElement` does not exist yet.
+
+The light axe pass also found something that had nothing to do with colour: `#log` scrolls and was
+not keyboard-focusable, so its content was mouse-only (SC 2.1.1). Invisible to the existing axe
+check because that one runs against the untouched first render, when the log is empty and does not
+overflow. Running the same pass late, with the app in a used state, is what saw it.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

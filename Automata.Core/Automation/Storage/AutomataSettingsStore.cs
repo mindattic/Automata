@@ -7,6 +7,18 @@ namespace Automata.Core.Automation.Storage;
 /// <summary>App-level user settings, editable from the sidebar's Settings section.</summary>
 public sealed class AutomataSettings
 {
+    /// <summary>The themes the app ships, and the one place their names are spelled.</summary>
+    public static class Themes
+    {
+        public const string Dark = "dark";
+        public const string Light = "light";
+
+        /// <summary>The name if it is one this app knows, and the default if it is not — a
+        /// hand-edited settings file must not be able to leave the panel unstyled.</summary>
+        public static string Coerce(string? name) =>
+            string.Equals(name, Light, StringComparison.OrdinalIgnoreCase) ? Light : Dark;
+    }
+
     /// <summary>Which LLM drives the AI task / LLM-repair paths:
     /// "claude" | "openai" | "gemini" | "kimi". The others remain fallbacks in case the
     /// selected one has no usable credentials.</summary>
@@ -30,6 +42,16 @@ public sealed class AutomataSettings
 
     /// <summary>Corner rounding (px, 0–10) applied to the sidebar's buttons and inputs.</summary>
     public int BorderRadius { get; set; } = 5;
+
+    /// <summary>
+    /// <c>"dark"</c> or <c>"light"</c>. Dark is the default because it is the only look this app
+    /// has ever had, and a stored preference should be the thing that changes it.
+    /// <para>
+    /// A string rather than a bool: the third value is coming — following the OS — and a
+    /// <c>bool IsLight</c> would have to be replaced rather than extended when it does.
+    /// </para>
+    /// </summary>
+    public string Theme { get; set; } = Themes.Dark;
 
     /// <summary>
     /// Width of the sidebar column in device-independent pixels, restored on launch and saved

@@ -388,6 +388,9 @@ public sealed class AutomationController
                 if (msg["borderRadius"] != null)
                     settings.BorderRadius = Math.Clamp(msg["borderRadius"]!.GetValue<int>(), 0, 10);
 
+                if (Str(msg, "theme") is { } theme)
+                    settings.Theme = AutomataSettings.Themes.Coerce(theme);
+
                 // The panel always sends a whole override object; ParseOverride collapses one that
                 // overrides nothing back to null, so "reset everything to the floor" needs no
                 // separate message.
@@ -1137,6 +1140,9 @@ public sealed class AutomationController
         {
             provider = settings.Provider,
             borderRadius = settings.BorderRadius,
+            // Coerced on the way out as well as on the way in: the file on disk is hand-editable,
+            // and a name the panel does not know would leave it with no palette at all.
+            theme = AutomataSettings.Themes.Coerce(settings.Theme),
             // The outermost link of the settings chain, plus the floor beneath it. The floor is
             // sent rather than mirrored in JS so there is exactly one definition of it.
             engineDefaults = settings.EngineDefaults,

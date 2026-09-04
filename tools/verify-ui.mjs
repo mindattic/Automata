@@ -1046,6 +1046,51 @@ async function main() {
         'Fail Task became selected (onTaskStarted fired for it) — Cancel did not stop the collection before task 2 began');
     });
 
+    await group('theme: light is a real palette, not a dark one with the lights turned up', async () => {
+      // Dark is the default and always has been. A second theme is only worth having if it clears
+      // the same bar, so this runs the SAME axe pass the dark baseline runs, on the same panel,
+      // with the palette swapped — the contrast ratios written into tokens.css are a claim, and
+      // this is what checks it.
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#set-theme').waitFor({ state: 'visible', timeout: 5000 });
+
+      await panelPage.locator('#set-theme').selectOption('light');
+      await waitFor(() => panelPage.evaluate(() => document.documentElement.dataset.theme === 'light'),
+        { timeoutMs: 5000, label: 'the light palette to be applied' });
+
+      // The body's own background has to move, or the tokens are defined and nothing reads them.
+      const ground = await panelPage.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      assertTrue(/^rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)$/.test(ground),
+        `expected a light body background, got ${ground}`);
+
+      await panelPage.locator('#settings-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'settings modal to close' });
+
+      await panelPage.addScriptTag({ path: axeCorePath });
+      const violations = await panelPage.evaluate(async () => {
+        const res = await window.axe.run(document, {
+          resultTypes: ['violations'],
+          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
+        });
+        return res.violations
+          .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+          .map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
+      });
+      assertTrue(violations.length === 0,
+        `light theme axe violations: ${JSON.stringify(violations, null, 2)}`);
+
+      // Back to the default, so every later check sees the palette it was written against.
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#set-theme').waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('#set-theme').selectOption('dark');
+      await waitFor(() => panelPage.evaluate(() => document.documentElement.dataset.theme === 'dark'),
+        { timeoutMs: 5000, label: 'the dark palette to be restored' });
+      await panelPage.locator('#settings-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'settings modal to close' });
+    });
+
     await group('Settings modal opens, is interactable, and closes without saving', async () => {
       await panelPage.locator('#btn-settings').click();
       await panelPage.locator('#llm-claude').waitFor({ state: 'visible', timeout: 5000 });
