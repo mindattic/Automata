@@ -138,7 +138,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
             {
                 case DemoState.Missing:
                 {
-                    var fresh = Build(factory, collection.Id, null, UniqueName(factory.Name, existing));
+                    var fresh = Build(factory, collection.Id, UniqueName(factory.Name, existing));
                     collections.SaveTask(fresh);
                     existing.Add(fresh);
                     added.Add(fresh.Name);
@@ -152,7 +152,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
                 // Its NAME is left as it is: renaming a demo is not editing it, and imposing the
                 // factory name back could collide with another task that already has it.
                 case DemoState.Stale:
-                    collections.SaveTask(Build(factory, collection.Id, match!.Id, match.Name));
+                    Reidentify(Build(factory, collection.Id, match!.Name), match.Id);
                     refreshed.Add(match.Name);
                     break;
 
@@ -164,22 +164,26 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
                     switch (choice)
                     {
                         case DemoResolution.Revert:
-                            collections.SaveTask(Build(factory, collection.Id, match!.Id, match.Name));
+                            Reidentify(Build(factory, collection.Id, match!.Name), match.Id);
                             reverted.Add(match.Name);
                             break;
 
                         // Their work stays exactly where it is and keeps its name; what it loses is
-                        // the demo marker, because it is their task now, not a copy of ours. The
-                        // pristine version arrives beside it under a free name and takes over the
-                        // marker — so the reference material is present, nothing was destroyed, and
-                        // the next regenerate has nothing left to ask about.
+                        // the demo marker AND the factory id, because it is their task now, not a
+                        // copy of ours — and an id, like the marker, names the demo rather than
+                        // what somebody built on top of it. The pristine version arrives beside it
+                        // under a free name and takes both over, so the reference material is
+                        // present, nothing was destroyed, and the next regenerate has nothing left
+                        // to ask about.
                         case DemoResolution.Clone:
                             var theirs = match!;
+                            var theirPreviousId = theirs.Id;
                             theirs.Demo = null;
-                            collections.SaveTask(theirs);
+                            if (theirs.Id == factory.TaskId) theirs.Id = StoreUtil.NewId();
+                            Reidentify(theirs, theirPreviousId);
 
                             var clone = Build(
-                                factory, collection.Id, null, UniqueName(factory.Name, existing));
+                                factory, collection.Id, UniqueName(factory.Name, existing));
                             collections.SaveTask(clone);
                             existing.Add(clone);
                             cloned.Add(clone.Name);
@@ -209,7 +213,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
         {
             var path = Path.Combine(RootPath, page.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, page.Html, new UTF8Encoding(false));
+            File.WriteAllText(path, page.Content, new UTF8Encoding(false));
             written.Add(page.RelativePath);
         }
         return written;
@@ -233,8 +237,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
         }
     }
 
-    private static TaskDefinition Build(
-        DemoTask factory, string collectionId, string? existingId, string name)
+    private static TaskDefinition Build(DemoTask factory, string collectionId, string name)
     {
         var task = new TaskDefinition
         {
@@ -244,11 +247,31 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
             StartUrl = factory.StartUrl,
             Steps = factory.Steps,
             Settings = factory.Settings,
+            // Fixed, not generated — see DemoTasks. A runTask step names a task by id, so a demo
+            // that called another demo could not be written at all if the callee's id were only
+            // decided at seed time.
+            Id = factory.TaskId,
         };
-        if (existingId != null) task.Id = existingId;
 
         task.Demo = new DemoOrigin { Key = factory.Key, FactoryHash = HashOf(task) };
         return task;
+    }
+
+    /// <summary>
+    /// Saves a task whose id is not the one the store currently files it under.
+    /// <para>
+    /// The store keys a task file by the id INSIDE it, so writing a changed id straight over the
+    /// old file looks like a different task landing on an occupied name — and the store would
+    /// dutifully keep both, under "name" and "name (2)". Dropping the old identity first is what
+    /// makes this one task with a new id rather than two tasks with one name. It is a no-op in the
+    /// ordinary case, where the id has not moved at all.
+    /// </para>
+    /// </summary>
+    private void Reidentify(TaskDefinition task, string previousId)
+    {
+        if (!string.Equals(previousId, task.Id, StringComparison.Ordinal))
+            collections.DeleteTask(previousId);
+        collections.SaveTask(task);
     }
 
     /// <summary>

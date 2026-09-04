@@ -627,6 +627,62 @@ v2. It was found by measurement, not by reading, which is the second time this h
 both times the test that found it was one that compared against an independent oracle rather than
 against another run.
 
+### Phase 10 - an example of everything, enforced by the build (2026-09-04)
+
+The demo batch stopped being three examples and became the coverage checklist. **Adding a
+`StepAction`, `WaitMode` or `ConditionOp` now fails the build until a seeded example demonstrates
+it** (`DemoCoverageTests`) - the same mechanical trick as the sidebar's floor check, aimed at a
+different failure. A capability with no example is one nobody finds: it ships, it is never used,
+and it rots until the day somebody tries it.
+
+Five new examples and four new generated pages fill the gaps that check exposed:
+
+- **Fill in a form** (`form.html`) - one of every input control on one page, so the ten actions
+  that touch a field all have somewhere to be seen: keystrokes, a direct value set, the Enter key
+  with no target (it goes to whatever has focus, the way a search box wants), a box ticked, a box
+  unticked, a radio, a dropdown, and a file attached. `notes.txt` is generated beside the pages so
+  the upload has something real to attach - an example that told the user to go and find a file of
+  their own would not run. The summary appears 900ms after submit, deliberately, so there is
+  something to wait for.
+- **Wait for a page that is not ready** (`slow.html`) - the three shapes of waiting: a flat
+  duration, an element that does not exist yet, and a condition over a value already read.
+- **Check an order before shipping** (`order.html`) - nine `if` steps, one per comparison the
+  picker offers. Each check that holds writes its own row to `order-checks.csv`, which is what
+  makes the example self-evidencing: **nine rows means all nine branches were taken**, and a
+  condition that quietly did not hold is otherwise indistinguishable from a task that passed.
+- **Run two other examples** - `runTask`, which is why the next item had to change.
+- **Start at a set time** - the one example that deliberately does not finish. Parking is the
+  property being shown, and there is no way to show "hours pass with nothing held open" in two
+  seconds.
+
+**Demo task ids are now fixed** (`demo-<key>`), for exactly the reason step ids already were: a
+`runTask` step names a task BY id, so an id decided at seed time would leave the demo that calls
+another demo unwritable. The seeder gained `Reidentify` for the consequence - the store keys a task
+file by the id inside it, so writing a changed id straight over the old file reads as a different
+task landing on an occupied name and the store would dutifully keep BOTH. Cloning an edited demo
+now hands the fixed id to the pristine copy along with the marker: an id, like the marker, names
+the demo rather than the work somebody built on top of it.
+
+`WaitMode.UntilSignal` is the single entry in `NotDemonstrable`, with its reason in code: the
+engine refuses it outright ("waiting for a signal needs the scheduler, which is not built yet"), so
+an example of it would be an example that hangs. A stale exemption fails too - once something IS
+demonstrated, its exemption has to go.
+
+**`tools/verify-demos.mjs`** is the fourth gate. `DemoCoverageTests` can only prove an example was
+*written*; this one runs every example in a real browser and checks what it left behind - nine
+distinct rows in `order-checks.csv`, every recorded value one that `order.html` actually prints,
+and the parking example parking rather than ploughing on. It also fails when a new example is added
+with no entry saying where it is covered. The shop pair is skipped by name because `verify-shop.mjs`
+already checks their answers against an oracle, which is a stronger claim than exiting zero.
+
+One harness fix fell out of the bigger demo tree: the hover-gap geometry check now scrolls the gap
+into view *before* its baseline snapshot. Hovering was scrolling it there itself, and every row
+shifting by the same 133px is the tree scrolling, not the gap pushing its neighbours around.
+
+Two limitations the examples made plain, both recorded under **Not done yet**: a condition wait can
+only ever hold immediately or time out, and a called task starts on whatever page the caller left
+open.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -656,11 +712,18 @@ yet** below.
   product, which was a deliberate call to keep the step model closed - no arithmetic, no expression
   language. If it is ever wanted in-product it is one action plus a picker (sum/count/min/max/avg
   over a dataset column into an output), still a record rather than a formula.
-- **No enum-coverage test for the demo batch.** The intent is that adding a `StepAction`,
-  `WaitMode` or `ConditionOp` FAILS the build until some seeded example exercises it, the same
-  mechanical trick the floor-check group uses. Only three examples exist so far (buttons,
-  sequential shop, parallel shop), so the demo pages for form controls, late-rendering elements and
-  a conditional banner have to land before that test could pass.
+- **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
+  `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
+  running - a parallel for-each forks a state per row, and no other step is in flight. So it is
+  really an assertion with a timeout, not a wait. Making it a wait means either re-reading the page
+  each poll (a condition over a live element, not over a captured output) or letting a signal or a
+  sibling lane write into run state. The `slow` example uses it in the only shape that currently
+  works, as a guard on a value already read.
+- **A called task starts on whatever page the caller left open.** `runTask` runs the callee's steps
+  and ignores its `StartUrl`, which is defensible - a subtask usually belongs in its caller's
+  context - but it is undocumented anywhere except the `chain` example, which navigates explicitly
+  before each call and says why in its description. Worth either honouring the callee's start URL
+  behind a flag or naming the rule in the editor.
 - **Known perf cleanup** (fine at current scale, flagged by code review): every panel mutation
   re-scans the whole store (`PushStateAsync` → `LoadCollections` + per-collection `LoadTasks`,
   each id lookup re-enumerating directories). Fix when stores get large: an id→path index

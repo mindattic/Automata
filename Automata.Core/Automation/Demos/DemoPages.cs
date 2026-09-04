@@ -1,7 +1,14 @@
 namespace Automata.Core.Automation.Demos;
 
-/// <summary>One generated demo page: a file name under the demo root, and its whole content.</summary>
-public sealed record DemoPage(string RelativePath, string Html);
+/// <summary>
+/// One generated demo file: a path under the demo root, and its whole content.
+/// <para>
+/// Usually a page. Not always — <c>notes.txt</c> is the file the form example attaches to its
+/// upload field, and a demo that told the user to go and find a file of their own would be a demo
+/// that does not run.
+/// </para>
+/// </summary>
+public sealed record DemoPage(string RelativePath, string Content);
 
 /// <summary>
 /// The HTML the demo generator writes to disk.
@@ -21,6 +28,9 @@ public static class DemoPages
 {
     /// <summary>How many products the generated shop holds.</summary>
     public const int ProductCount = 12;
+
+    /// <summary>The file the form example attaches, written beside the pages so it always exists.</summary>
+    public const string AttachmentFile = "notes.txt";
 
     /// <summary>
     /// Price of product <paramref name="index"/> in whole cents. Twelve of these total 45750 —
@@ -46,10 +56,10 @@ public static class DemoPages
 
     public static string ProductName(int index) => $"Wolf Tshirt — {Colours[index % Colours.Length]}";
 
-    /// <summary>Every page the generator writes, in no particular order.</summary>
+    /// <summary>Every file the generator writes, in no particular order.</summary>
     public static IReadOnlyList<DemoPage> All()
     {
-        var pages = new List<DemoPage> { Buttons(), ShopSearch() };
+        var pages = new List<DemoPage> { Buttons(), Form(), Attachment(), Slow(), Order(), ShopSearch() };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
     }
@@ -70,6 +80,19 @@ public static class DemoPages
           .sku { color: #777; font-size: 13px; }
           button { font: inherit; padding: 6px 14px; margin-right: 8px; }
           .clicked { margin-top: 8px; color: #157f3d; }
+          .field { display: block; margin: 0 0 12px; }
+          .field > span { display: block; font-weight: 600; margin-bottom: 2px; }
+          input[type=text], input[type=email], input[type=search], select {
+            font: inherit; padding: 5px 7px; min-width: 260px; }
+          fieldset { border: 1px solid #d4d4d4; border-radius: 6px; margin: 0 0 12px; }
+          .echo { color: #157f3d; min-height: 1.4em; margin: 0 0 12px; }
+          .summary { border: 1px solid #157f3d; border-radius: 6px; padding: 12px; margin-top: 16px; }
+          .summary dt { font-weight: 600; }
+          .summary dd { margin: 0 0 8px; }
+          .facts { margin: 0 0 16px; }
+          .facts dt { font-weight: 600; }
+          .facts dd { margin: 0 0 8px; }
+          .pending { color: #a05000; }
         </style>
         """;
 
@@ -100,6 +123,188 @@ public static class DemoPages
                 document.body.appendChild(marker);
                 document.title = 'clicked:' + btn.id;
               });
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>The file the form example uploads. Plain text, so it is obvious in Explorer what
+    /// the demo attached and why.</summary>
+    private static DemoPage Attachment() => new(AttachmentFile, """
+        This file exists so the form example has something real to attach.
+        Automata attaches it through the browser's own file input — there is no native
+        file picker to click, which is why an upload step can run unattended.
+        """);
+
+    /// <summary>
+    /// One of every input control, on one page, plus a summary that only appears once the form is
+    /// submitted — so a task has something to wait for and something to assert against.
+    /// <para>
+    /// The form suppresses its own submission: pressing Enter in a text field would otherwise
+    /// reload the page out from under the run, and the point of the search box here is to show
+    /// Enter reaching the page rather than to navigate anywhere.
+    /// </para>
+    /// </summary>
+    private static DemoPage Form() => new("form.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — one of every field</title>{{Css}}</head>
+        <body>
+          <h1>One of every field</h1>
+          <p class="lede">Text, a search box that answers the Enter key, checkboxes, radios, a
+             dropdown and a file — then a summary that takes a moment to appear.</p>
+
+          <form id="signup" onsubmit="return false">
+            <label class="field" for="full-name"><span>Full name</span>
+              <input id="full-name" name="fullName" type="text"></label>
+
+            <label class="field" for="email"><span>Email</span>
+              <input id="email" name="email" type="email"></label>
+
+            <label class="field" for="search"><span>Search (press Enter)</span>
+              <input id="search" name="search" type="search" placeholder="type, then Enter"></label>
+            <p id="search-echo" class="echo"></p>
+
+            <label class="field" for="terms">
+              <input id="terms" name="terms" type="checkbox"> I accept the terms</label>
+
+            <label class="field" for="newsletter">
+              <input id="newsletter" name="newsletter" type="checkbox" checked> Send me the newsletter</label>
+
+            <fieldset>
+              <legend>Shipping</legend>
+              <label class="field" for="ship-standard">
+                <input id="ship-standard" name="shipping" type="radio" value="Standard" checked> Standard</label>
+              <label class="field" for="ship-express">
+                <input id="ship-express" name="shipping" type="radio" value="Express"> Express</label>
+            </fieldset>
+
+            <label class="field" for="size"><span>Size</span>
+              <select id="size" name="size">
+                <option>Small</option>
+                <option>Medium</option>
+                <option>Large</option>
+              </select></label>
+
+            <label class="field" for="attachment"><span>Attachment</span>
+              <input id="attachment" name="attachment" type="file"></label>
+
+            <button id="submit" type="button">Submit</button>
+          </form>
+
+          <div id="summary-slot"></div>
+
+          <script>
+            document.getElementById('search').addEventListener('keydown', function (e) {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              document.getElementById('search-echo').textContent = 'searched: ' + e.target.value;
+            });
+
+            document.getElementById('submit').addEventListener('click', function () {
+              var slot = document.getElementById('summary-slot');
+              slot.innerHTML = '<p class="pending" id="submitting">Submitting…</p>';
+
+              // Deliberately late. A summary that appeared instantly would let a task pass
+              // without ever waiting for anything, and waiting is the thing being demonstrated.
+              setTimeout(function () {
+                var shipping = document.querySelector('input[name=shipping]:checked');
+                var file = document.getElementById('attachment').files[0];
+                var choices = [
+                  document.getElementById('size').value,
+                  shipping ? shipping.value : 'none',
+                  document.getElementById('terms').checked ? 'terms accepted' : 'terms not accepted',
+                  document.getElementById('newsletter').checked ? 'newsletter on' : 'newsletter off'
+                ].join(', ');
+
+                slot.innerHTML =
+                  '<dl class="summary" id="summary">' +
+                  '<dt>Name</dt><dd id="summary-name"></dd>' +
+                  '<dt>Email</dt><dd id="summary-email"></dd>' +
+                  '<dt>Choices</dt><dd id="summary-choices"></dd>' +
+                  '<dt>Attachment</dt><dd id="summary-file"></dd>' +
+                  '</dl>';
+                document.getElementById('summary-name').textContent =
+                  document.getElementById('full-name').value;
+                document.getElementById('summary-email').textContent =
+                  document.getElementById('email').value;
+                document.getElementById('summary-choices').textContent = choices;
+                document.getElementById('summary-file').textContent = file ? file.name : 'none';
+              }, 900);
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// A page that finishes rendering itself long after it has loaded — the ordinary case on any
+    /// modern site, and the reason a step waits for its element instead of assuming it is there.
+    /// </summary>
+    private static DemoPage Slow() => new("slow.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — a page that takes its time</title>{{Css}}</head>
+        <body>
+          <h1>A page that takes its time</h1>
+          <p class="lede">The status settles after a moment, and the panel below does not exist
+             yet at all — it is added a second later.</p>
+          <div id="status" class="pending">starting</div>
+          <div id="slot"></div>
+          <script>
+            setTimeout(function () {
+              var status = document.getElementById('status');
+              status.textContent = 'ready';
+              status.className = '';
+            }, 300);
+
+            setTimeout(function () {
+              var late = document.createElement('div');
+              late.id = 'late';
+              late.className = 'summary';
+              late.textContent = 'The late panel is here.';
+              document.getElementById('slot').appendChild(late);
+            }, 1200);
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// One order, described in the plainest possible facts — a word, a number, two booleans and a
+    /// blank field — so that every comparison the condition picker offers has something on this
+    /// page it can honestly be asked about.
+    /// <para>
+    /// The note is an INPUT rather than an empty div: an element with no content has no box to
+    /// resolve against, and "the note is blank" is a question about a field somebody left empty,
+    /// not about markup that is missing.
+    /// </para>
+    /// </summary>
+    private static DemoPage Order() => new("order.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — order 4021</title>{{Css}}</head>
+        <body>
+          <h1>Order 4021</h1>
+          <p class="lede">Everything the shipping desk checks before it lets an order go.</p>
+          <dl class="facts">
+            <dt>Status</dt><dd id="status">Ready to ship</dd>
+            <dt>In stock</dt><dd id="stock">12</dd>
+            <dt>Express</dt><dd id="express">true</dd>
+            <dt>Fragile</dt><dd id="fragile">false</dd>
+          </dl>
+          <label class="field" for="note"><span>Note left by the packer</span>
+            <input id="note" type="text" value=""></label>
+          <button id="ship">Ship it</button>
+          <div id="shipped"></div>
+          <script>
+            document.getElementById('ship').addEventListener('click', function () {
+              var done = document.createElement('div');
+              done.className = 'summary';
+              done.id = 'shipped-notice';
+              done.textContent = 'shipped: order 4021';
+              document.getElementById('shipped').appendChild(done);
             });
           </script>
         </body>

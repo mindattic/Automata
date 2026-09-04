@@ -164,6 +164,12 @@ public class DemoSeederTests
     /// <summary>
     /// Cloning is the option that has to lose nothing: their work survives verbatim, the pristine
     /// copy shows up beside it, and nothing is left in a state that will ask again next time.
+    /// <para>
+    /// What their copy does NOT keep is the demo's identity — the marker and the fixed id both
+    /// move to the pristine version, because a demo's id is what a <c>runTask</c> step points at
+    /// and two tasks cannot answer to one id. Their task keeps everything that is theirs: its
+    /// name, its steps, its place on disk.
+    /// </para>
     /// </summary>
     [Test]
     public void CloningKeepsTheirVersionAndAddsAPristineOneBesideIt()
@@ -179,16 +185,17 @@ public class DemoSeederTests
             new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Clone });
 
         var all = collections.LoadTasks(collectionId);
-        var theirs = all.First(t => t.Id == task.Id);
+        var theirs = all.First(t => t.Name == "My price run");
         var clone = all.First(t => t.Demo?.Key == Key);
 
         Assert.Multiple(() =>
         {
             Assert.That(report.Cloned, Is.Not.Empty);
             Assert.That(theirs.Steps, Is.Empty, "their edit survives exactly as it was");
-            Assert.That(theirs.Name, Is.EqualTo("My price run"), "and keeps its name");
             Assert.That(theirs.Demo, Is.Null, "it is their task now, not a tracked copy of ours");
-            Assert.That(clone.Id, Is.Not.EqualTo(task.Id));
+            Assert.That(theirs.Id, Is.Not.EqualTo(clone.Id), "one id cannot name two tasks");
+            Assert.That(clone.Id, Is.EqualTo(DemoTask.TaskIdFor(Key)),
+                "the pristine copy takes the fixed id back, so a runTask step still finds it");
             Assert.That(clone.Steps, Is.Not.Empty);
         });
     }
@@ -215,6 +222,67 @@ public class DemoSeederTests
                 Is.EqualTo(all.Count));
             Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Current),
                 "nothing is left for the next regenerate to ask about");
+        });
+    }
+
+    // ---- identity ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// A demo's id is part of the demo, not something the store decides — which is what lets one
+    /// example call another by name in the editor and by id on disk.
+    /// </summary>
+    [Test]
+    public void EverySeededDemoCarriesItsFixedId()
+    {
+        seeder.SeedMissing();
+
+        foreach (var status in seeder.Survey())
+            Assert.That(status.TaskId, Is.EqualTo(DemoTask.TaskIdFor(status.Key)), status.Name);
+    }
+
+    /// <summary>Every runTask step in the batch resolves — the reason the ids are fixed at all.</summary>
+    [Test]
+    public void ExamplesThatCallOtherExamplesResolve()
+    {
+        seeder.SeedMissing();
+        var collectionId = collections.LoadCollections().First(c => c.Name == DemoTasks.CollectionName).Id;
+        var calls = collections.LoadTasks(collectionId)
+            .SelectMany(t => t.Steps)
+            .Where(s => s.Action == StepAction.RunTask)
+            .ToList();
+
+        Assert.That(calls, Is.Not.Empty, "no example calls another, so nothing proves the ids work");
+        foreach (var call in calls)
+            Assert.That(collections.GetTask(call.RunTaskId!), Is.Not.Null, call.Label);
+    }
+
+    /// <summary>
+    /// An install seeded before demo ids were fixed carries a generated one. The store keys a task
+    /// file by the id inside it, so writing the fixed id straight over that file would read as a
+    /// different task landing on an occupied name — and the store would keep BOTH, leaving a
+    /// "(2)" copy behind and two tasks claiming the same demo.
+    /// </summary>
+    [Test]
+    public void ADemoSeededWithAGeneratedIdIsReplacedRatherThanDuplicated()
+    {
+        seeder.SeedMissing();
+        var task = Task(Key);
+        var collectionId = task.CollectionId;
+        var name = task.Name;
+
+        collections.DeleteTask(task.Id);
+        task.Id = Guid.NewGuid().ToString("n");
+        task.Steps.Clear();
+        collections.SaveTask(task);
+
+        seeder.Regenerate(new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Revert });
+
+        var all = collections.LoadTasks(collectionId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(all.Count(t => t.Demo?.Key == Key), Is.EqualTo(1), "one task claims the demo");
+            Assert.That(all.Count(t => t.Name == name), Is.EqualTo(1), "and nothing was left behind as a copy");
+            Assert.That(all.First(t => t.Demo?.Key == Key).Id, Is.EqualTo(DemoTask.TaskIdFor(Key)));
         });
     }
 

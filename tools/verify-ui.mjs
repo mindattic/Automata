@@ -683,6 +683,10 @@ async function main() {
             return [Math.round(r.top), Math.round(r.left), Math.round(r.width), Math.round(r.height)].join(',');
           }).join(' | '));
 
+      // Scrolled into view FIRST: hovering would otherwise scroll it there itself, and every row
+      // would shift by the same amount. A uniform shift is the tree scrolling, not the gap pushing
+      // its neighbours around — which is the only thing this check is about.
+      await gap.scrollIntoViewIfNeeded();
       await panelPage.mouse.move(0, 0);
       await panelPage.evaluate(() => {
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
