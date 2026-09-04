@@ -342,6 +342,54 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
 
 .node.step[data-action="else"] .name { font-style: italic; }
 
+/* ---- nesting guides ----
+
+   The tree is one flat list of rows — no element wraps a nesting level, because drag-and-drop, the
+   insert gaps, the ARIA tree and a great many selectors all address rows as siblings. So depth is
+   drawn rather than structured: one hairline per ancestor level, absolutely positioned inside each
+   row and each gap, chaining into a continuous line because the rows sit flush.
+
+   Decorative only. Real nesting is carried by aria-level, which assistive tech already reads. */
+.rails { position: absolute; inset: 0; pointer-events: none; }
+
+.rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border-strong);
+}
+
+/* A branch's own line is coloured AND dashed. Colour alone would be the one distinction a
+   colour-blind reader could not make, and this whole tree is otherwise monochrome. */
+.rail-branch {
+  background: none;
+  background-image: repeating-linear-gradient(
+    var(--color-info) 0 4px, transparent 4px 7px);
+}
+
+/* Where a branch or a loop stops. Indentation says where one starts and nothing says where it ends,
+   which is exactly what makes a long task hard to read. Quiet on purpose: it is punctuation. */
+.branch-end {
+  position: relative;
+  min-height: 14px;
+  padding-top: 1px;
+  padding-bottom: 3px;
+  font-size: var(--text-xs);
+  color: var(--color-fg-subtle);
+  pointer-events: none;
+}
+
+.branch-end > span {
+  border-top: 1px solid var(--color-border);
+  padding-right: var(--space-2);
+}
+
+/* An `otherwise` that no longer follows the `if` it was written for. The engine refuses to run it;
+   this is the same verdict, reached before anyone presses Run. Glyph as well as colour. */
+.node.step[data-orphaned] { border-left-color: var(--color-danger); }
+.flag.broken { color: var(--color-danger); }
+
 .node .status { width: 18px; flex: none; text-align: center; }
 .node.st-running .status { color: var(--color-warning); }
 .node.st-passed .status, .node.st-healed .status { color: var(--color-success); }

@@ -1536,7 +1536,6 @@ async function main() {
       const branchRows = await panelPage.locator(
         `.node.step[data-action="if"], .node.step[data-action="else"]`).count();
       assertTrue(branchRows >= 2, `expected the if and the else to be marked, got ${branchRows}`);
-      if (process.env.AUTOMATA_SHOT) await panelPage.screenshot({ path: process.env.AUTOMATA_SHOT });
     });
 
     // ---- harvest (extractAll) ------------------------------------------------------------
@@ -2230,6 +2229,24 @@ async function main() {
       const label = await panelPage.locator('#btn-help').getAttribute('aria-label');
       assertTrue(!!label && label.trim().length > 0, 'the help button needs an accessible name');
     });
+
+    // Not a check — a way to LOOK at the thing. Opt-in via AUTOMATA_SHOT, and pointed at the roster
+    // example because it is the only seeded task with a genuinely nested branch: a loop, a guard
+    // inside it, a second guard inside that, and an otherwise.
+    if (process.env.AUTOMATA_SHOT) {
+      await group('screenshot: the roster example, expanded', async () => {
+        const task = panelPage.locator('#tree .node.task', {
+          has: panelPage.locator('.name', { hasText: /list with gaps/ }),
+        });
+        await task.locator('.name').click();
+        await waitFor(() => panelPage.locator('#tree .node.step[data-action="else"]').count()
+          .then((n) => n > 0), { timeoutMs: 10000, label: 'the roster branch to render' });
+        await panelPage.locator('#tree .node.step[data-action="else"]').first().scrollIntoViewIfNeeded();
+        await panelPage.mouse.move(0, 0);
+        await sleep(200);
+        await panelPage.screenshot({ path: process.env.AUTOMATA_SHOT });
+      });
+    }
   } finally {
     try { await panelBrowser?.close(); } catch { /* CDP-attached browsers may already be gone */ }
     try { await targetBrowser?.close(); } catch { /* same */ }
