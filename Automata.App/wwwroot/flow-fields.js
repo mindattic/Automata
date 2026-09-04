@@ -135,6 +135,26 @@ export function flowFieldsHtml(step, task) {
         case 'extractAll':
             return harvestHtml(step);
 
+        case 'aggregate': {
+            var agg = step.aggregate || {};
+            // The answer always lands under one name, so there is nothing to type and nothing for
+            // a binding to get wrong — the same shape as a harvest's "count".
+            return '<div class="field"><span>Work out</span>' +
+                '<select id="ed-agg-op" aria-label="What to work out">' +
+                AGGREGATE_OPS.map(function (o) {
+                    return '<option value="' + o.value + '"' +
+                        ((agg.op || 'sum') === o.value ? ' selected' : '') + '>' + o.label + '</option>';
+                }).join('') + '</select></div>' +
+                '<div class="field"><span>Of column</span>' +
+                '<input type="text" id="ed-agg-column" aria-label="Dataset column to work out"' +
+                ' placeholder="price" value="' + esc(agg.columnName || '') + '" /></div>' +
+                '<div class="field"><span>In dataset</span>' +
+                '<select id="ed-agg-dataset" aria-label="Dataset to read">' +
+                datasetOptions(agg.datasetName) + '</select>' +
+                '<p class="scope-note">Publishes its answer as <code>value</code>, for a later ' +
+                'step to bind to.</p></div>';
+        }
+
         case 'setZoom': {
             var pct = step.zoomPercent || 100;
             // The browser's own levels, offered rather than typed. A free number box would invite
@@ -154,6 +174,16 @@ export function flowFieldsHtml(step, task) {
             return '';
     }
 }
+
+/// The five reductions an aggregate step offers. Five, and no more: this is the one place
+/// arithmetic enters the step model, and it enters as a closed list rather than a formula.
+var AGGREGATE_OPS = [
+    { value: 'sum', label: 'the total' },
+    { value: 'count', label: 'how many' },
+    { value: 'min', label: 'the smallest' },
+    { value: 'max', label: 'the largest' },
+    { value: 'average', label: 'the average' },
+];
 
 /// The levels a browser's own zoom menu offers, and the range the engine accepts.
 var ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
@@ -257,6 +287,15 @@ export function commitFlowFields(step) {
         spec.resetOnFirstWrite = spec.append && ($('ed-write-reset') || {}).checked === true;
         spec.columns = readColumns(spec.columns || {});
         step.writeDataset = spec;
+    } else if (step.action === 'aggregate') {
+        step.aggregate = {
+            datasetName: (($('ed-agg-dataset') || {}).value || ''),
+            columnName: (($('ed-agg-column') || {}).value || '').trim(),
+            op: (($('ed-agg-op') || {}).value || 'sum'),
+        };
+        // Declared here rather than left to the user, so the binding picker can offer it the
+        // moment the step exists. One step, one answer, one name.
+        step.outputs = [{ name: 'value', type: 'string' }];
     } else if (step.action === 'setZoom') {
         step.zoomPercent = parseInt((($('ed-zoom') || {}).value || '100'), 10) || 100;
     } else if (step.action === 'extractAll') {

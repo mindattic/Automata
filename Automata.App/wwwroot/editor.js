@@ -21,6 +21,8 @@ var NEEDS_TARGET = {
     extractAll: false,
     // Zoom is about the whole page, not an element in it.
     setZoom: false,
+    // An aggregate reads a dataset, never the page.
+    aggregate: false,
 };
 var NEEDS_VALUE = { typeText: 'Text to type', setValue: 'Value to set', selectOption: 'Option text',
     uploadFile: 'Local file path', assertElement: 'Expected text (optional)' };

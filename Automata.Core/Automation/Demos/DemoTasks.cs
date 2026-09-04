@@ -74,6 +74,7 @@ public static class DemoTasks
         Slow(demoRoot),
         Order(demoRoot),
         Zoom(demoRoot),
+        Invoices(demoRoot),
         Chain(demoRoot),
         ShopPrices(demoRoot, parallel: false),
         ShopPrices(demoRoot, parallel: true),
@@ -545,6 +546,102 @@ public static class DemoTasks
         Action = StepAction.Click,
         Label = label,
         Target = Css("button", "#check"),
+    };
+
+    // ---- adding it up -----------------------------------------------------------------------
+
+    /// <summary>Dataset the invoice example harvests into, and the one it totals into.</summary>
+    public const string InvoicesDataset = "invoices.csv";
+    public const string InvoiceTotalsDataset = "invoice-totals.csv";
+
+    /// <summary>
+    /// Harvest three amounts and reduce them five ways.
+    /// <para>
+    /// The five answers are written to a dataset rather than only logged, because a number in a
+    /// log is a number nobody can check. On disk it can be compared against the page it came from
+    /// — which is exactly what the acceptance check does, and what makes this example evidence
+    /// rather than a demonstration.
+    /// </para>
+    /// </summary>
+    private static DemoTask Invoices(string demoRoot) => new(
+        "invoices",
+        "Add up what you collected",
+        "Harvest three invoice amounts off a page, then work out the total, how many there were, "
+        + "the smallest, the largest and the average — five steps, no arithmetic to write — and "
+        + $"record all five as one row of {InvoiceTotalsDataset}.",
+        PageUrl(demoRoot, "invoices.html"),
+        [
+            new Step
+            {
+                Id = "demo-invoices-harvest",
+                Action = StepAction.ExtractAll,
+                Label = "Harvest every invoice on the page",
+                Harvest = new HarvestSpec
+                {
+                    ItemSelector = "table.invoices tbody > tr",
+                    ExpectedCount = DemoPages.InvoiceAmounts.Length,
+                    DatasetName = InvoicesDataset,
+                    Format = "csv",
+                    Append = false,
+                    DedupeBy = "ref",
+                    Fields =
+                    [
+                        new HarvestField { Name = "ref", Source = HarvestSource.Attribute, AttributeName = "data-ref" },
+                        new HarvestField { Name = "amount", Selector = "td.amount", Source = HarvestSource.Text },
+                    ],
+                },
+                Outputs = [new OutputField { Name = "count", Description = "How many invoices were harvested" }],
+            },
+            Reduce("total", AggregateOp.Sum, "Add the amounts up"),
+            Reduce("count", AggregateOp.Count, "Count how many there were"),
+            Reduce("smallest", AggregateOp.Min, "Find the smallest"),
+            Reduce("largest", AggregateOp.Max, "Find the largest"),
+            Reduce("average", AggregateOp.Average, "Work out the average"),
+            new Step
+            {
+                Id = "demo-invoices-record",
+                Action = StepAction.WriteDataset,
+                Label = "Record all five",
+                WriteDataset = new DatasetWriteSpec
+                {
+                    DatasetName = InvoiceTotalsDataset,
+                    Format = "csv",
+                    // One row describing one run, so it replaces rather than piling up.
+                    Append = false,
+                    Columns = new Dictionary<string, BindingRef>
+                    {
+                        ["total"] = Aggregated("total"),
+                        ["count"] = Aggregated("count"),
+                        ["smallest"] = Aggregated("smallest"),
+                        ["largest"] = Aggregated("largest"),
+                        ["average"] = Aggregated("average"),
+                    },
+                },
+            },
+        ]);
+
+    /// <summary>One aggregate step over the harvested amounts.</summary>
+    private static Step Reduce(string slug, AggregateOp op, string label) => new()
+    {
+        Id = $"demo-invoices-{slug}",
+        Action = StepAction.Aggregate,
+        Label = label,
+        Aggregate = new AggregateSpec
+        {
+            DatasetName = InvoicesDataset,
+            ColumnName = "amount",
+            Op = op,
+        },
+        Outputs = [new OutputField { Name = "value", Description = label }],
+    };
+
+    /// <summary>A binding to what one of those aggregate steps worked out.</summary>
+    private static BindingRef Aggregated(string slug) => new()
+    {
+        Kind = BindingKind.StepOutput,
+        SourceStepId = $"demo-invoices-{slug}",
+        OutputField = "value",
+        Label = $"{slug} → value",
     };
 
     // ---- one task calling another ---------------------------------------------------------------

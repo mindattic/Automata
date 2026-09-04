@@ -66,6 +66,13 @@ var STEP_MENU = [
 export function renderTree() {
     // The tree is about to be rebuilt, so an open menu's anchor is about to stop existing.
     closeRowMenu(false);
+
+    // Every row is about to be replaced, so a row that HAS focus is about to lose it. A render can
+    // happen at any moment for reasons that have nothing to do with the user — the host echoes the
+    // whole store back after any change, including one made somewhere else entirely — and a
+    // keyboard user halfway down the tree should not be thrown to the top of the document because
+    // a background save landed. Noted here, put back in ensureFocusKey.
+    var hadFocus = treeEl.contains(document.activeElement);
     var html = '';
     var cCount = state.collections.length;
     state.collections.forEach(function (c, ci) {
@@ -104,7 +111,7 @@ export function renderTree() {
     });
     treeEl.innerHTML = html || '<div class="empty">No collections yet — record something or press “+ add collection”.</div>';
     wireTree();
-    ensureFocusKey();
+    ensureFocusKey(hadFocus);
 }
 
 function renderSteps(task, steps, depth, parentId) {
@@ -349,10 +356,12 @@ function wireTree() {
 function treeRows() {
     return Array.prototype.slice.call(treeEl.querySelectorAll('.node[data-key]'));
 }
-// Called after every renderTree: keeps exactly one row tabbable, re-homing the roving index
-// when the previously focused row no longer exists, and re-taking DOM focus when the render
-// was caused by a keyboard action (otherwise focus would drop to the top of the document).
-function ensureFocusKey() {
+// Called after every renderTree: keeps exactly one row tabbable, re-homing the roving index when
+// the previously focused row no longer exists, and re-taking DOM focus when the tree HAD it — which
+// is either because a keyboard action caused this render (`ui.pendingFocus`) or because a row was
+// simply focused when some unrelated update arrived (`hadFocus`). Focus that was somewhere else is
+// left alone: the tree must never steal it from whatever the user is actually typing in.
+function ensureFocusKey(hadFocus) {
     var rows = treeRows();
     if (!rows.length) { state.focusKey = null; ui.pendingFocus = false; return; }
     var current = rowByKey(state.focusKey);
@@ -364,7 +373,9 @@ function ensureFocusKey() {
         state.focusKey = current.getAttribute('data-key');
     }
     rows.forEach(function (r) { r.setAttribute('tabindex', r === current ? '0' : '-1'); });
-    if (ui.pendingFocus) { ui.pendingFocus = false; current.focus(); }
+    var take = ui.pendingFocus || hadFocus;
+    ui.pendingFocus = false;
+    if (take) current.focus();
 }
 
 function focusRow(el) {

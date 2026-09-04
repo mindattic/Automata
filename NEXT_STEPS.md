@@ -819,6 +819,42 @@ handler the automation triggers, which always runs. The generated page says why,
 `ADVANCED_ACTIONS` and its label is "Advanced", because `setZoom` is not flow control and a list
 whose name fits only some of its members is a list people stop adding to correctly.
 
+### Phase 15 - the total is a step now (2026-09-04)
+
+Summing a harvested column used to happen in `verify-shop.mjs` - outside the product, in the thing
+that was supposed to be checking it. **`StepAction.Aggregate`** brings it in: five reductions over
+one dataset column, published as the step's `value` output for a later step to bind to.
+
+Five, and no more. This is the one place arithmetic enters the step model, and it enters as a
+closed list a picker renders - the total, how many, the smallest, the largest, the average. The
+moment a sixth is a formula rather than a name, a task stops being a record of what it does.
+
+What it refuses is as much of the design as what it does:
+
+- **A cell that is not a number fails the step**, naming the cell. Skipping it would produce a
+  plausible average nobody could tell was short - the most expensive kind of wrong this engine can
+  be. A BLANK cell is skipped, because blank is absence rather than zero.
+- **A column that is not in the dataset fails**, and says which columns are. Answering 0 would be
+  answering a question nobody asked while looking exactly like a working step.
+- **Averaging nothing fails; counting nothing is 0.** One has no answer, the other has an obvious
+  one.
+- Money is expected: `"$12.50"` is what text off a page looks like, and an aggregate that only
+  worked on bare numbers would only work on datasets nobody has.
+
+The new **"Add up what you collected"** example harvests three invoice amounts and reduces them
+five ways into one row of `invoice-totals.csv` - on disk rather than only in a log, because a
+number in a log is a number nobody can check. `verify-demos.mjs` recomputes all five from the
+amounts printed on the generated page and compares, so the example is evidence rather than a
+demonstration. `AggregateOp` joined the enums `DemoCoverageTests` enforces.
+
+**A real focus bug fell out of this.** The bigger demo batch made `PushStateAsync` slower, which
+made a long-standing defect visible: `renderTree` replaces every row, so a row that HAS focus loses
+it, and `ensureFocusKey` only put focus back when the render was caused by a keyboard action. Any
+background echo of the store - a save made anywhere, for any reason - therefore threw a keyboard
+user from halfway down the tree to the top of the document. It now notices that focus was inside
+the tree before the render and puts it back, while still leaving focus alone when it was somewhere
+else. There is a check for it: focus a row, provoke a push, and assert the focus is still there.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -838,10 +874,6 @@ yet** below.
   (`{{query}}`) in step values.
 - **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing. (File locking for
   multi-instance is DONE - see `ExclusiveFileLock` under phase 9.)
-- **No `Aggregate` step.** Summing a harvested column happens in `verify-shop.mjs`, not in the
-  product, which was a deliberate call to keep the step model closed - no arithmetic, no expression
-  language. If it is ever wanted in-product it is one action plus a picker (sum/count/min/max/avg
-  over a dataset column into an output), still a record rather than a formula.
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
   running - a parallel for-each forks a state per row, and no other step is in flight. So it is

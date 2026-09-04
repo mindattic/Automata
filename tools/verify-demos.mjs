@@ -54,7 +54,7 @@ function runner(...args) {
 }
 
 /// Examples this check runs to completion, in the order a person would meet them.
-const RUNNABLE = ['buttons', 'form', 'slow', 'order', 'zoom', 'chain'];
+const RUNNABLE = ['buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'chain'];
 
 /// Covered more strictly elsewhere, or not finishable on purpose.
 const ELSEWHERE = {
@@ -165,6 +165,32 @@ try {
     again.code === 0 && twice.length === 9,
     `${twice.length} row(s) after two runs`,
   );
+
+  // ---- what the aggregate example worked out ----------------------------------------------------
+  // The oracle is the generated page, not the run: the five answers are recomputed here from the
+  // amounts printed on invoices.html. A run agreeing with itself proves nothing.
+  const invoiceHtml = readFileSync(join(roots.AUTOMATA_DEMOS_ROOT, 'invoices.html'), 'utf8');
+  const amounts = [...invoiceHtml.matchAll(/class="amount">\$([\d.]+)</g)].map((m) => Number(m[1]));
+  const totals = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'invoice-totals.csv'))[0] ?? {};
+  const expected = {
+    total: amounts.reduce((a, b) => a + b, 0),
+    count: amounts.length,
+    smallest: Math.min(...amounts),
+    largest: Math.max(...amounts),
+    average: amounts.reduce((a, b) => a + b, 0) / amounts.length,
+  };
+  check(
+    `the page holds the amounts to add up (${amounts.length})`,
+    amounts.length > 0,
+    JSON.stringify(amounts),
+  );
+  for (const [name, want] of Object.entries(expected)) {
+    check(
+      `${name} matches what the page says (${want})`,
+      Number(totals[name]) === want,
+      `recorded ${JSON.stringify(totals[name])}`,
+    );
+  }
 
   // The oracle for what those rows should say is the generated page, not the run: each recorded
   // value has to be a fact that is actually printed on order.html.

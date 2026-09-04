@@ -70,7 +70,8 @@ public static class DemoPages
     /// <summary>Every file the generator writes, in no particular order.</summary>
     public static IReadOnlyList<DemoPage> All()
     {
-        var pages = new List<DemoPage> { Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), ShopSearch() };
+        var pages = new List<DemoPage>
+            { Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(), ShopSearch() };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
     }
@@ -104,6 +105,8 @@ public static class DemoPages
           .facts dt { font-weight: 600; }
           .facts dd { margin: 0 0 8px; }
           .pending { color: #a05000; }
+          table.invoices { border-collapse: collapse; }
+          table.invoices th, table.invoices td { border: 1px solid #d4d4d4; padding: 6px 12px; text-align: left; }
         </style>
         """;
 
@@ -380,6 +383,39 @@ public static class DemoPages
         </body>
         </html>
         """);
+
+    /// <summary>
+    /// Three invoices in a table — the smallest thing worth totalling, and a shape a harvest can
+    /// read straight off. The amounts carry a currency symbol on purpose: text read off a page is
+    /// almost never a bare number, and an aggregate that could not cope with "$12.50" would be an
+    /// aggregate for datasets nobody actually has.
+    /// </summary>
+    private static DemoPage Invoices() => new("invoices.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — three invoices</title>{{Css}}</head>
+        <body>
+          <h1>Invoices</h1>
+          <p class="lede">Three rows, one column worth adding up.</p>
+          <table class="invoices">
+            <thead><tr><th>Reference</th><th>Amount</th></tr></thead>
+            <tbody>
+        {{InvoiceRows}}
+            </tbody>
+          </table>
+        </body>
+        </html>
+        """);
+
+    /// <summary>The invoice rows, and the amounts every correct total has to agree with.</summary>
+    public static readonly decimal[] InvoiceAmounts = [12.50m, 20.00m, 27.50m];
+
+    private static string InvoiceRows => string.Join("\n", InvoiceAmounts.Select((amount, i) => $"""
+                <tr data-ref="INV-{i + 1:000}">
+                  <td class="ref">INV-{i + 1:000}</td>
+                  <td class="amount">${amount:0.00}</td>
+                </tr>
+        """));
 
     /// <summary>
     /// A results grid of repeating tiles — the shape a harvest exists for. Every tile carries its

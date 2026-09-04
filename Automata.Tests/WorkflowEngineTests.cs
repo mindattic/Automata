@@ -531,6 +531,150 @@ public class WorkflowEngineTests
         ],
     };
 
+    // ---- aggregate -------------------------------------------------------------------------------
+
+    /// <summary>The prices a run might have collected, written the way a page gives them up.</summary>
+    private void SeedAmounts(params string[] amounts) =>
+        datasets.Write("collected.csv",
+            amounts.Select(a => new Dictionary<string, string>(StringComparer.Ordinal) { ["price"] = a }),
+            append: false);
+
+    private static TaskDefinition Reducing(AggregateOp op, string column = "price") => new()
+    {
+        Name = "T",
+        Steps =
+        [
+            new Step
+            {
+                Id = "agg", Action = StepAction.Aggregate, Label = "Work it out",
+                Aggregate = new AggregateSpec { DatasetName = "collected.csv", ColumnName = column, Op = op },
+            },
+        ],
+    };
+
+    private static string? Answer(List<StepEvent> events) =>
+        events.OfType<StepEvent.StepCompleted>().Single().ExtractedText;
+
+    /// <summary>
+    /// Money read off a page is "$24.50", never 24.5 — an aggregate that only worked on bare
+    /// numbers would only work on datasets nobody has.
+    /// </summary>
+    [TestCase(AggregateOp.Sum, "60")]
+    [TestCase(AggregateOp.Count, "3")]
+    [TestCase(AggregateOp.Min, "12.5")]
+    [TestCase(AggregateOp.Max, "27.5")]
+    [TestCase(AggregateOp.Average, "20")]
+    public async Task Aggregate_ReducesAColumnOfMoneyToOneNumber(AggregateOp op, string expected)
+    {
+        SeedAmounts("$12.50", "$20.00", "$27.50");
+
+        var events = await Run(Reducing(op), Browser());
+
+        Assert.That(Answer(events), Is.EqualTo(expected));
+    }
+
+    /// <summary>The answer is published for a later step to bind to — that is the whole point of
+    /// having it in the product rather than in a script that reads the CSV afterwards.</summary>
+    [Test]
+    public async Task Aggregate_PublishesItsAnswerForALaterStepToBindTo()
+    {
+        SeedAmounts("$12.50", "$27.50");
+        var task = Reducing(AggregateOp.Sum);
+        task.Steps.Add(new Step
+        {
+            Id = "save", Action = StepAction.WriteDataset,
+            WriteDataset = new DatasetWriteSpec
+            {
+                DatasetName = "totals.csv",
+                Append = false,
+                Columns = new Dictionary<string, BindingRef>
+                {
+                    ["total"] = new()
+                    {
+                        Kind = BindingKind.StepOutput, SourceStepId = "agg", OutputField = "value",
+                    },
+                },
+            },
+        });
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("totals.csv").Single()["total"], Is.EqualTo("40"));
+    }
+
+    /// <summary>
+    /// A cell that is not a number fails the step rather than being skipped. An average that
+    /// quietly ignored half its rows returns a plausible number nobody can tell is short.
+    /// </summary>
+    [Test]
+    public async Task Aggregate_OverSomethingThatIsNotANumber_FailsRatherThanSkippingIt()
+    {
+        SeedAmounts("$12.50", "on request");
+
+        var events = await Run(Reducing(AggregateOp.Sum), Browser());
+
+        var done = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain("on request"), "the message should name the cell");
+    }
+
+    /// <summary>Blank is absence, not zero — a row where nothing was collected must not drag an
+    /// average down.</summary>
+    [Test]
+    public async Task Aggregate_SkipsBlankCells()
+    {
+        SeedAmounts("$10.00", "", "$20.00");
+
+        var events = await Run(Reducing(AggregateOp.Average), Browser());
+
+        Assert.That(Answer(events), Is.EqualTo("15"));
+    }
+
+    /// <summary>
+    /// A column that is not there at all is a typo, not an empty result. Answering 0 would be
+    /// answering a question nobody asked, and it would look like a working step.
+    /// </summary>
+    [Test]
+    public async Task Aggregate_OverAColumnThatIsNotThere_SaysWhichColumnsAre()
+    {
+        SeedAmounts("$10.00");
+
+        var events = await Run(Reducing(AggregateOp.Count, column: "cost"), Browser());
+
+        var done = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain("price"), "the message should list the columns there are");
+    }
+
+    /// <summary>Counting nothing is nothing; averaging nothing is a question with no answer, and
+    /// returning 0 for it would be a lie the run cannot be talked out of.</summary>
+    [Test]
+    public async Task Aggregate_OverAnEmptyColumn_CountsZeroButRefusesToAverage()
+    {
+        datasets.Write("collected.csv",
+            [new Dictionary<string, string>(StringComparer.Ordinal) { ["price"] = "" }], append: false);
+
+        var counted = await Run(Reducing(AggregateOp.Count), Browser());
+        var averaged = await Run(Reducing(AggregateOp.Average), Browser());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Answer(counted), Is.EqualTo("0"));
+            Assert.That(averaged.OfType<StepEvent.StepCompleted>().Single().Status,
+                Is.EqualTo(StepStatus.Failed));
+        });
+    }
+
+    [Test]
+    public async Task Aggregate_OverADatasetThatIsNotThere_SaysWhereItLooked()
+    {
+        var events = await Run(Reducing(AggregateOp.Sum), Browser());
+
+        var done = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain(datasets.RootPath));
+    }
+
     // ---- runTask -------------------------------------------------------------------------------
 
     [Test]

@@ -85,6 +85,43 @@ public sealed class ForEachSpec
     public int MaxConcurrency { get; set; } = 1;
 }
 
+/// <summary>
+/// What an <see cref="StepAction.Aggregate"/> step does to a dataset column.
+/// <para>
+/// Five, and no more. This is the one place arithmetic enters the step model, and it enters as a
+/// closed list a picker can render — not as an expression language. The moment a sixth is a
+/// formula rather than a name, a task stops being a record of what it does.
+/// </para>
+/// </summary>
+public enum AggregateOp
+{
+    Sum,
+    Count,
+    Min,
+    Max,
+    Average,
+}
+
+/// <summary>
+/// Read one column of a dataset and reduce it to a single number, published as this step's
+/// <c>value</c> output for a later step to bind to.
+/// <para>
+/// The step that closes the other end of the loop: a for-each can fan out over a dataset and write
+/// results back, but until now nothing in the product could answer "so what is the total?" — that
+/// arithmetic lived in an acceptance script, outside the thing being demonstrated.
+/// </para>
+/// </summary>
+public sealed class AggregateSpec
+{
+    /// <summary>The dataset to read. A file name, as everywhere else.</summary>
+    public string DatasetName { get; set; } = "";
+
+    /// <summary>Which of its columns.</summary>
+    public string ColumnName { get; set; } = "";
+
+    public AggregateOp Op { get; set; } = AggregateOp.Sum;
+}
+
 /// <summary>Append or replace rows in a named dataset.</summary>
 public sealed class DatasetWriteSpec
 {

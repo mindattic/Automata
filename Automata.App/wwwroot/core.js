@@ -207,6 +207,7 @@ export const ACTION_INFO = {
     writeDataset: 'Append a row to a CSV or JSON file',
     extractAll: 'Read every matching row off this page into a dataset',
     setZoom: 'Zoom the page in or out, so a later step can reach what was cut off',
+    aggregate: 'Total, count, or average one column of a dataset',
 };
 
 // Everything added after the original fourteen lives apart from them and is offered in a
@@ -215,7 +216,7 @@ export const ACTION_INFO = {
 // most of it happens to be — `setZoom` is not flow control, and a list whose name only fits some
 // of its members is a list people stop adding to correctly.
 export const ADVANCED_ACTIONS = [
-    'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
+    'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom', 'aggregate',
 ];
 
 // Everything a step's action dropdown may show, including actions created elsewhere (imported,

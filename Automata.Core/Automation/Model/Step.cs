@@ -86,6 +86,12 @@ public enum StepAction
     /// <see cref="Step.ZoomPercent"/>.
     /// </summary>
     SetZoom,
+
+    /// <summary>
+    /// Reduce one column of a dataset to a single number — a total, a count, the smallest, the
+    /// largest, the average. See <see cref="Step.Aggregate"/>.
+    /// </summary>
+    Aggregate,
 }
 
 /// <summary>
@@ -164,6 +170,10 @@ public sealed class Step
 
     /// <summary><see cref="StepAction.ExtractAll"/>.</summary>
     public HarvestSpec? Harvest { get; set; }
+
+    /// <summary><see cref="StepAction.Aggregate"/>. Publishes its answer as the output named
+    /// <c>value</c>.</summary>
+    public AggregateSpec? Aggregate { get; set; }
 
     /// <summary>
     /// <see cref="StepAction.SetZoom"/>: the zoom level to apply, as a percentage. 100 is normal

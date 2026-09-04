@@ -6,8 +6,8 @@ namespace Automata.Tests;
 
 /// <summary>
 /// The generated examples are the only place a capability can be seen working, so this fixture
-/// makes them the definition of done: <b>a new StepAction, WaitMode or ConditionOp fails the build
-/// until some seeded example demonstrates it.</b>
+/// makes them the definition of done: <b>a new StepAction, WaitMode, ConditionOp or AggregateOp
+/// fails the build until some seeded example demonstrates it.</b>
 /// <para>
 /// The same mechanical trick as the sidebar's floor check, aimed at a different failure. A
 /// capability with no example is a capability nobody finds — it ships, it is never used, and it
@@ -66,6 +66,13 @@ public class DemoCoverageTests
         AssertCovered<WaitMode>(AllSteps().Where(s => s.Wait != null).Select(s => (object)s.Wait!.Mode));
     }
 
+    [Test]
+    public void EveryAggregateOpIsDemonstratedBySomeExample()
+    {
+        AssertCovered<AggregateOp>(
+            AllSteps().Where(s => s.Aggregate != null).Select(s => (object)s.Aggregate!.Op));
+    }
+
     /// <summary>Conditions reach the model two ways — an <c>if</c> and a wait on a condition — and
     /// both count, because both are places the picker offers the whole operator list.</summary>
     [Test]
@@ -91,7 +98,8 @@ public class DemoCoverageTests
                 .Concat(AllSteps()
                     .SelectMany(s => new[] { s.Condition, s.Wait?.Condition })
                     .Where(c => c != null)
-                    .Select(c => (object)c!.Op)));
+                    .Select(c => (object)c!.Op))
+                .Concat(AllSteps().Where(s => s.Aggregate != null).Select(s => (object)s.Aggregate!.Op)));
 
         Assert.That(NotDemonstrable.Where(covered.Contains), Is.Empty,
             "an example now demonstrates this, so its exemption is stale — delete it");

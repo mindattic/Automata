@@ -142,6 +142,22 @@ async function clickRowOp(rowLocator, op) {
 let nudgePage = null;
 function useNudgePage(page) { nudgePage = page; }
 
+/// Focuses a tree row and makes sure the focus stuck, returning its key.
+///
+/// The tree is rebuilt from scratch on every host push, and a push still in flight from an earlier
+/// check replaces the row moments after it was focused — focus then falls to the document, and the
+/// keyboard check that follows fails for a reason that has nothing to do with the keyboard. So
+/// focus, look, and try again.
+async function focusTreeRow(page, locator) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await locator.focus();
+    const key = await page.evaluate(() => document.activeElement?.getAttribute('data-key'));
+    if (key) return key;
+    await sleep(200);
+  }
+  throw new Error('a tree row would not keep focus long enough to press a key');
+}
+
 function assertEqual(actual, expected, message) {
   if (actual !== expected) throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
@@ -352,7 +368,7 @@ async function floorCheck(exePath, group) {
       const topLevelKeys = await page.locator('#modal-list > .action-pick')
         .evaluateAll((els) => els.map((el) => el.getAttribute('data-value')));
       for (const advanced of [
-        'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
+        'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom', 'aggregate',
       ]) {
         assertTrue(!topLevelKeys.includes(advanced),
           `the advanced action "${advanced}" leaked into the top-level picker`);
@@ -992,18 +1008,32 @@ async function main() {
 
     await group('2.1.1: arrow keys and Home move focus through the tree', async () => {
       const first = panelPage.locator('#tree [role="treeitem"]').first();
-      await first.focus();
-      const before = await panelPage.evaluate(() => document.activeElement.getAttribute('data-key'));
+      const key = () => panelPage.evaluate(() => document.activeElement.getAttribute('data-key'));
+
+      const before = await focusTreeRow(panelPage, first);
       await panelPage.keyboard.press('ArrowDown');
-      const after = await panelPage.evaluate(() => document.activeElement.getAttribute('data-key'));
+      const after = await key();
       assertTrue(after && after !== before, `ArrowDown did not move focus (still on ${after})`);
       await panelPage.keyboard.press('Home');
-      assertEqual(await panelPage.evaluate(() => document.activeElement.getAttribute('data-key')), before,
-        'Home should return focus to the first row');
+      assertEqual(await key(), before, 'Home should return focus to the first row');
+
+      // The tree is rebuilt whenever the host echoes the store back, which happens for reasons
+      // that have nothing to do with the user. A keyboard user halfway down it must not be thrown
+      // to the top of the document because a background save landed — so provoke exactly that: a
+      // rename to the name it already has, which changes nothing and still pushes.
+      await panelPage.keyboard.press('ArrowDown');
+      const held = await key();
+      await panelPage.evaluate((id) => {
+        const row = document.querySelector(`.node.collection[data-collection="${id}"] .name`);
+        window.chrome.webview.postMessage(
+          { action: 'renameCollection', id, name: row.textContent });
+      }, collectionId);
+      await sleep(600);
+      assertEqual(await key(), held, 'a background re-render must not take focus out of the tree');
     });
 
     await group('2.4.7: the keyboard-focused row actually shows a ring', async () => {
-      await panelPage.locator('#tree [role="treeitem"]').first().focus();
+      await focusTreeRow(panelPage, panelPage.locator('#tree [role="treeitem"]').first());
       await panelPage.keyboard.press('ArrowDown');
       const ring = await panelPage.evaluate(() => {
         const cs = getComputedStyle(document.activeElement);
@@ -1192,6 +1222,41 @@ async function main() {
       await panelPage.locator('#ed-zoom').selectOption('50');
       await waitFor(() => readFileSync(taskFile, 'utf8').includes('"zoomPercent": 50'),
         { timeoutMs: 5000, label: 'the chosen zoom level to reach disk' });
+    });
+
+    await group('flow: an aggregate step reduces a column and publishes one named answer', async () => {
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('aggregate');
+      await panelPage.locator('#ed-agg-op').waitFor({ state: 'visible', timeout: 10000 });
+
+      // Five reductions, chosen from a list. This is the one place arithmetic enters the step
+      // model, and it must not arrive as a formula box.
+      const ops = await panelPage.locator('#ed-agg-op option').evaluateAll((els) => els.map((el) => el.value));
+      assertEqual(JSON.stringify(ops), JSON.stringify(['sum', 'count', 'min', 'max', 'average']),
+        `expected the five reductions, got ${JSON.stringify(ops)}`);
+      assertEqual(await panelPage.locator('#editor details.target').count(), 0,
+        'an aggregate reads a dataset, never the page');
+
+      // One field at a time, each waited for. Every commit re-renders the editor from the host's
+      // echo, so filling a second field before the first has landed types into an element that is
+      // about to be replaced.
+      await panelPage.locator('#ed-agg-column').fill('price');
+      await panelPage.locator('#ed-agg-column').dispatchEvent('change');
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"columnName": "price"'),
+        { timeoutMs: 5000, label: 'the chosen column to reach disk' });
+
+      await panelPage.locator('#ed-agg-op').selectOption('average');
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"op": "average"'),
+        { timeoutMs: 5000, label: 'the chosen reduction to reach disk' });
+
+      // The answer's name is declared for the step rather than typed, so a later step can bind to
+      // it the moment the step exists.
+      const saved = JSON.parse(readFileSync(taskFile, 'utf8')).steps[0];
+      assertEqual(saved.aggregate.op, 'average');
+      assertEqual(JSON.stringify((saved.outputs ?? []).map((o) => o.name)), JSON.stringify(['value']),
+        'an aggregate step should publish "value" without being asked');
     });
 
     // ---- harvest (extractAll) ------------------------------------------------------------

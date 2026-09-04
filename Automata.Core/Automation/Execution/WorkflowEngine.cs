@@ -337,7 +337,7 @@ public sealed partial class WorkflowEngine
 
     private static bool IsOrchestrated(Step step) =>
         step.Action is StepAction.If or StepAction.ForEach or StepAction.RunTask
-            or StepAction.WriteDataset or StepAction.ExtractAll
+            or StepAction.WriteDataset or StepAction.ExtractAll or StepAction.Aggregate
         || (step.Action == StepAction.Wait
             && step.Wait?.Mode is WaitMode.UntilCondition or WaitMode.UntilSignal);
 
@@ -499,6 +499,58 @@ public sealed partial class WorkflowEngine
                     spec.Append ? $"appended to {spec.DatasetName}" :
                     $"wrote {spec.DatasetName}";
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, what, null);
+                state.LastStatus = StepStatus.Passed;
+                state.Passed++;
+                yield break;
+            }
+
+            case StepAction.Aggregate:
+            {
+                var spec = step.Aggregate;
+                if (spec == null || string.IsNullOrWhiteSpace(spec.DatasetName))
+                {
+                    await foreach (var e in FailAsync(step, scope, state, "no dataset chosen")) yield return e;
+                    yield break;
+                }
+                if (string.IsNullOrWhiteSpace(spec.ColumnName))
+                {
+                    await foreach (var e in FailAsync(step, scope, state, "no column chosen")) yield return e;
+                    yield break;
+                }
+                if (!datasets.Exists(spec.DatasetName))
+                {
+                    await foreach (var e in FailAsync(step, scope, state,
+                        $"dataset '{spec.DatasetName}' not found in {datasets.RootPath}")) yield return e;
+                    yield break;
+                }
+
+                // A column that is not there at all is a mistake, not an empty result. Counting it
+                // as zero would answer a question nobody asked and look like a working step.
+                var columns = datasets.Columns(spec.DatasetName);
+                if (!columns.Contains(spec.ColumnName, StringComparer.Ordinal))
+                {
+                    await foreach (var e in FailAsync(step, scope, state,
+                        $"'{spec.DatasetName}' has no column '{spec.ColumnName}' — it has {string.Join(", ", columns)}"))
+                        yield return e;
+                    yield break;
+                }
+
+                var (text, aggError) = Reduce(datasets.Read(spec.DatasetName), spec);
+                if (aggError != null)
+                {
+                    await foreach (var e in FailAsync(step, scope, state, aggError)) yield return e;
+                    yield break;
+                }
+
+                // Fixed name, like a harvest's "count": one step, one answer, nothing to type and
+                // nothing for a binding to get wrong.
+                state.Outputs[ReplayRunState.OutputKey(step.Id, AggregateOutput)] = text!;
+                foreach (var output in step.Outputs ?? [])
+                    if (!string.IsNullOrWhiteSpace(output.Name))
+                        state.Outputs[ReplayRunState.OutputKey(step.Id, output.Name)] = text!;
+
+                yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
+                    $"{spec.Op.ToString().ToLowerInvariant()} of {spec.ColumnName} in {spec.DatasetName}", text);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
                 yield break;
@@ -666,6 +718,51 @@ public sealed partial class WorkflowEngine
         state.Failed = true;
         if (!scope.Options.EffectiveFor(step).ContinueOnStepError) state.Stop = true;
         await Task.CompletedTask;
+    }
+
+    // ---- aggregates ------------------------------------------------------------------------
+
+    /// <summary>The output name an aggregate step always publishes under.</summary>
+    internal const string AggregateOutput = "value";
+
+    /// <summary>
+    /// Reduces a column to one number, or says why it cannot.
+    /// <para>
+    /// Blank cells are skipped and a non-blank cell that is not a number FAILS, rather than being
+    /// skipped too. An average that quietly ignored half its rows is the most expensive kind of
+    /// wrong this engine can be — it returns a plausible number nobody can tell is short.
+    /// </para>
+    /// </summary>
+    private static (string? Text, string? Error) Reduce(
+        IReadOnlyList<Dictionary<string, string>> rows, AggregateSpec spec)
+    {
+        var values = new List<double>();
+        var present = 0;
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue(spec.ColumnName, out var cell) || string.IsNullOrWhiteSpace(cell)) continue;
+            present++;
+            if (spec.Op == AggregateOp.Count) continue;
+            if (!TryNumber(cell, out var number))
+                return (null, $"'{cell}' in column '{spec.ColumnName}' is not a number");
+            values.Add(number);
+        }
+
+        if (spec.Op == AggregateOp.Count) return (present.ToString(CultureInfo.InvariantCulture), null);
+        if (values.Count == 0)
+            return (null, $"nothing to work with — no row has a value in column '{spec.ColumnName}'");
+
+        var result = spec.Op switch
+        {
+            AggregateOp.Sum => values.Sum(),
+            AggregateOp.Min => values.Min(),
+            AggregateOp.Max => values.Max(),
+            AggregateOp.Average => values.Average(),
+            _ => values.Sum(),
+        };
+        // Four decimals, invariant: an aggregate is a number, and how it should look with a
+        // currency symbol on it is the business of whatever consumes it.
+        return (result.ToString("0.####", CultureInfo.InvariantCulture), null);
     }
 
     // ---- conditions ------------------------------------------------------------------------
