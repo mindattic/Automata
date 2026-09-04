@@ -183,9 +183,17 @@ MindAttic.Vault.
 Automata.App    WPF host: two WebView2 panes, postMessage bridge, AutomationController
 Automata.Core   engine: model, name-based store, zip archive, fingerprint/resolver JS (embedded),
                 replay engine, recorder coalescer, LLM tool loop — WebView2-free (IBrowserSurface)
-Automata.Tests  NUnit 4 — 78 tests over model, store (incl. name round-trip and healing),
-                archive, resolver, replay, recorder, settings, logs
+Automata.Tests  NUnit 4 over model, store (incl. name round-trip and healing), archive,
+                resolver, replay, workflow, recorder, settings, logs, demos
 ```
 
-Known limitations (v2): top-document, light-DOM only (no cross-origin iframes / shadow roots);
-single app instance assumed.
+Beyond the unit tests, three acceptance harnesses drive the real app and the real runner:
+`tools/verify-ui.mjs` (the sidebar over CDP, including a WCAG 2.2 AA baseline),
+`tools/verify-demos.mjs` (every generated example, run in a browser), and `tools/verify-shop.mjs`
+(the harvest-and-loop total, checked three ways against the pages themselves).
+
+Known limitations: closed shadow roots and CROSS-origin iframes are unreachable — the page cannot
+see into either, so reaching them needs per-frame evaluation over CDP rather than one script in the
+top document. Open shadow roots and same-origin iframes are resolved into. Recording still happens
+in the top document, so a click inside an iframe is not recorded (one inside an open shadow root
+is).
