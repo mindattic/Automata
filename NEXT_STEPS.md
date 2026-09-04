@@ -518,11 +518,38 @@ because the answer was in the wrong process.
   the text. The alternative, splitting the line into two absolutely-positioned halves, would have
   had to know the text's width.
 
+### Phase 8e - several triggers on one schedule
+
+The model was always a `List<TriggerDefinition>` and `TriggerEvaluator.NextAcross` always took the
+soonest firing across it. The editor was the part that wrote exactly one, so "every weekday at
+09:00 **or** once the ingest has finished" needed the CLI or a hand-edited `schedule.json`.
+
+- **The editor is a list now**: one boxed block per trigger, add and remove, each with its own
+  shape picker, its own fields and its own compiled-cron line. Numbered only when there is more
+  than one - a single trigger is the overwhelmingly common case and should not be dressed up as a
+  list - and the last one is never removable, because an entry with no trigger runs solely by hand,
+  which is a different thing from a schedule.
+- **They are alternatives, and the form says so.** "Any one of these starts the run - whichever
+  comes first. They are not steps and they do not wait for each other." Rows describe every
+  trigger joined by ", or" for the same reason, and the glyph goes to the clock when a clock is
+  involved at all: "it runs on its own" is what is worth seeing at a glance.
+- **Every control is scoped to its trigger.** `data-trigger` is what tells the change handler which
+  one to mutate, and the accessible names carry the number too - a form with three time pickers
+  must not offer a screen reader three controls called "Time of day". The harness asserts no two
+  controls in the dialog share an accessible name.
+- **Bounded at 8, in both halves.** Several are the point; past that a schedule is easier to read
+  as two, every trigger is evaluated on every tick, and the cap is enforced host-side as well so a
+  hand-edited file cannot be saved back as something unreadable.
+- **Mixing kinds works and is now tested**: a clock trigger and an after-entry trigger on the same
+  entry answer different questions and must not interfere - the clock gives it a due time of its
+  own, and the upstream finishing starts it regardless.
+- **Verification** - 2 new NUnit tests (356 total) and one more harness check (54/54), covering
+  both triggers reaching disk, each block editing only its own trigger, reopening as the shapes
+  they were built with rather than raw cron, and removal keeping the right one.
+
 ### Still to do in v3
 
-- **Multiple triggers on one entry.** The model has always been a list, and the evaluator already
-  takes the soonest firing across all of them, but the editor writes exactly one - so "every
-  weekday at 09:00 *and* after the ingest" needs the CLI or a hand edit today.
+Nothing. All eight planned phases plus 8b-8e are done; what remains is in **Not done yet** below.
 
 ## Not done yet
 

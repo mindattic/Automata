@@ -1202,6 +1202,12 @@ public sealed class AutomationController
         await PushScheduleAsync();
     }
 
+    /// <summary>
+    /// How many triggers one entry may carry. Matches the sidebar's own cap, and exists so a
+    /// hand-edited schedule.json cannot be saved back as something unreadable.
+    /// </summary>
+    private const int MaxTriggersPerEntry = 8;
+
     /// <summary>The reason an entry cannot be saved, or null when it is sound.</summary>
     private string? ValidateScheduleEntry(ScheduleEntry entry, ScheduleEntry? existing)
     {
@@ -1211,6 +1217,12 @@ public sealed class AutomationController
                 ? "Pick a task for this schedule to run."
                 : "Pick a collection for this schedule to run.";
         if (entry.Triggers.Count == 0) return "A schedule needs at least one trigger.";
+        // Several triggers are the point — "every weekday at 09:00 or once the ingest finishes" —
+        // but a bound keeps a hand-edited or scripted entry from turning into something nobody can
+        // read, and every one of them is evaluated on every tick.
+        if (entry.Triggers.Count > MaxTriggersPerEntry)
+            return $"A schedule can have at most {MaxTriggersPerEntry} triggers; past that it is " +
+                   "easier to read as two schedules.";
 
         var entries = schedule.Load();
         foreach (var trigger in entry.Triggers)

@@ -42,8 +42,8 @@ Three groups of checks run, in this order:
    reorder, the non-drag "Move task" path, dialog focus trap and focus restore, help entry point.
 4. **Tab content** - bindings, control flow, the Data tab, the feature view and Gherkin
    authoring, the Schedule tab (a picker shape compiling to cron, a refusal coming back with its
-   reason and the values intact, chain previews, pause keeping its trigger, the tree chip), and
-   the Runs tab, including a parked run and the live lane strip. These come last because they
+   reason and the values intact, chain previews, several triggers on one entry, pause keeping its
+   trigger, the tree chip), and the Runs tab, including a parked run and the live lane strip. These come last because they
    leave state behind: the schedule checks add real entries, which is what puts a `.chip.sched` on
    a tree row for the check that follows.
 
@@ -81,6 +81,11 @@ Two gotchas worth knowing before you write assertions against computed style:
   does not reliably re-apply to the replacement without the pointer moving again — Playwright's own
   retry re-resolves the button but cannot re-hover. Without the pair retry, a run still emitting
   step events in the background makes row-button clicks time out at random.
+- Schedule-editor controls are scoped by `data-trigger`, since an entry can carry several
+  triggers. A bare `[data-input="time"]` matches the first block only — always pair it with
+  `[data-trigger="<i>"]` when more than one block may be on screen. Entries are also picked by
+  `targetId` rather than by position in `schedule.json`, so a group that adds an entry cannot
+  silently retarget a later one.
 - When asserting a row has not changed height, blur and move the pointer off the tree FIRST.
   `:hover` and `:focus-within` both reveal `.node-btns`, so a "before" measurement taken while
   either applies compares a grown row against itself — which is exactly how a 2px shift on every

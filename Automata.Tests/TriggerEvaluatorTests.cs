@@ -198,6 +198,44 @@ public class TriggerEvaluatorTests
         Assert.That(next, Is.EqualTo(At(2026, 5, 4, 8, 10)));
     }
 
+    /// <summary>
+    /// The mixture the multi-trigger editor makes reachable: "every weekday at 09:00 AND once the
+    /// ingest has finished". The two answer different questions and must not interfere — the clock
+    /// decides when this entry is due on its own, and the chain starts it regardless of that.
+    /// </summary>
+    [Test]
+    public void AClockTriggerAndAnAfterEntryTriggerBothApply()
+    {
+        var entry = Entry(
+            Cron("0 9 * * *"),
+            new TriggerDefinition { Kind = TriggerKind.AfterEntry, AfterEntryId = "upstream" });
+        var clock = new FakeClock(At(2026, 5, 4, 7, 0));
+
+        var verdict = TriggerEvaluator.Evaluate(entry, clock);
+        Assert.That(verdict.NextUtc, Is.EqualTo(At(2026, 5, 4, 9, 0)),
+            "the clock trigger still gives it a due time of its own");
+        Assert.That(verdict.Reason, Does.Not.Contain("waits for"),
+            "an entry with a clock does not read as merely waiting on something else");
+
+        Assert.That(TriggerEvaluator.Dependents([entry], "upstream", succeeded: true).Single(), Is.SameAs(entry),
+            "and the upstream finishing still starts it, independently of the clock");
+    }
+
+    /// <summary>
+    /// The soonest firing has to be found across triggers of DIFFERENT kinds, not just several of
+    /// one — which is exactly what an entry built as "every day at 09:00, or every 30 minutes" is.
+    /// </summary>
+    [Test]
+    public void TheSoonestWinsAcrossMixedTriggerKinds()
+    {
+        var entry = Entry(
+            Cron("0 9 * * *"),
+            new TriggerDefinition { Kind = TriggerKind.OneShot, FireAtUtc = At(2026, 5, 4, 7, 30) });
+        var clock = new FakeClock(At(2026, 5, 4, 7, 0));
+
+        Assert.That(TriggerEvaluator.Evaluate(entry, clock).NextUtc, Is.EqualTo(At(2026, 5, 4, 7, 30)));
+    }
+
     [Test]
     public void ADisabledTriggerIsIgnored()
     {

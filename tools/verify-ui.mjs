@@ -1138,6 +1138,12 @@ async function main() {
       assertEqual(await panelPage.locator('[data-input="name"]').inputValue(), 'Verify',
         'the name should default to the chosen target');
 
+      // A single trigger must not be dressed up as a list — no numbering, no remove button.
+      assertEqual(await panelPage.locator('.trigger-block').count(), 1,
+        'a new schedule starts with exactly one trigger');
+      assertEqual(await panelPage.locator('[data-op="remove-trigger"]').count(), 0,
+        'the only trigger is not removable — an entry with none runs solely by hand');
+
       await panelPage.locator('[data-input="when"]').selectOption('weekdays');
       await panelPage.locator('[data-input="time"]').fill('09:30');
       await panelPage.locator('[data-input="time"]').dispatchEvent('change');
@@ -1213,14 +1219,100 @@ async function main() {
       assertTrue(/after .Verify./.test(detail), `expected the upstream named on the chained row, got: ${detail}`);
     });
 
+    await group('schedule: an entry can be started by several triggers, whichever comes first', async () => {
+      // The model has always been a list and the evaluator has always taken the soonest firing
+      // across it; this is the editor finally being able to write more than one.
+      await openScheduleTab();
+      await panelPage.locator('#btn-new-schedule').click();
+      await panelPage.locator('#modal-form [data-input="target"]').waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('[data-input="target"]').selectOption(`task:${taskId}`);
+
+      // Trigger 1: every day at 07:15.
+      await panelPage.locator('[data-input="when"][data-trigger="0"]').selectOption('daily');
+      await panelPage.locator('[data-input="time"][data-trigger="0"]').fill('07:15');
+
+      await panelPage.locator('[data-op="add-trigger"]').click();
+      assertEqual(await panelPage.locator('.trigger-block').count(), 2,
+        'adding a trigger should add a block');
+      assertEqual(await panelPage.locator('[data-op="remove-trigger"]').count(), 2,
+        'with two, either can be removed');
+
+      // Trigger 2: every 30 minutes. Each block edits its OWN trigger — the first must not move.
+      await panelPage.locator('[data-input="when"][data-trigger="1"]').selectOption('minutes');
+      await panelPage.locator('[data-input="everyMinutes"][data-trigger="1"]').fill('30');
+      assertEqual(await panelPage.locator('[data-input="time"][data-trigger="0"]').inputValue(), '07:15',
+        'editing the second trigger must not touch the first');
+
+      // Each block shows its own compiled expression, and only the cron-shaped one has one.
+      assertEqual(await panelPage.locator('#sched-cron-note-0').textContent(), '15 7 * * *');
+      assertEqual(await panelPage.locator('#sched-cron-note-1').count(), 0,
+        'an interval is not stored as cron, so it shows no expression');
+
+      // Every control is still uniquely named, which three time pickers in one form would not be
+      // by default.
+      const duplicated = await panelPage.evaluate(() => {
+        const names = Array.prototype.slice.call(document.querySelectorAll('#modal-form [aria-label]'))
+          .map((el) => el.getAttribute('aria-label'));
+        return names.filter((n, i) => names.indexOf(n) !== i);
+      });
+      assertEqual(JSON.stringify(duplicated), '[]',
+        `two controls share an accessible name: ${JSON.stringify(duplicated)}`);
+
+      assertTrue(/whichever comes first/i.test(await panelPage.locator('#modal-form').innerText()),
+        'the form has to say these are alternatives, not steps');
+
+      await panelPage.locator('#modal-ok').click();
+      const saved = await waitFor(() => scheduleOnDisk().find((e) => e.targetId === taskId) ?? null,
+        { timeoutMs: 10000, label: 'the multi-trigger entry to reach disk' });
+
+      assertEqual(saved.triggers.length, 2, 'both triggers should have been stored');
+      assertEqual(saved.triggers[0].kind, 'cron');
+      assertEqual(saved.triggers[0].cronExpression, '15 7 * * *');
+      assertEqual(saved.triggers[1].kind, 'interval');
+      assertEqual(saved.triggers[1].intervalSeconds, 1800);
+
+      // The row names both, and its next-due time is the SOONER of the two — computed host-side by
+      // the same evaluator the tick obeys.
+      const listed = await panelPage.locator(`.sched-row[data-entry="${saved.id}"] ~ .sched-detail`)
+        .first().innerText();
+      assertTrue(/every day at 07:15/.test(listed), `expected the first trigger described, got: ${listed}`);
+      assertTrue(/every 30 minutes/.test(listed), `expected the second trigger described, got: ${listed}`);
+      assertTrue(/, or /.test(listed),
+        `several triggers are alternatives, and the row should say "or", got: ${listed}`);
+
+      // Reopening reads both back as the shapes they were built with, not as raw cron.
+      await panelPage.locator(`.sched-row[data-entry="${saved.id}"] [data-op="edit"]`).click();
+      await panelPage.locator('#modal-form [data-input="target"]').waitFor({ state: 'visible', timeout: 5000 });
+      assertEqual(await panelPage.locator('.trigger-block').count(), 2,
+        'both triggers should reopen');
+      assertEqual(await panelPage.locator('[data-input="when"][data-trigger="0"]').inputValue(), 'daily',
+        'a daily cron should reopen as "every day at", not as a raw expression');
+      assertEqual(await panelPage.locator('[data-input="everyMinutes"][data-trigger="1"]').inputValue(), '30');
+
+      // Removing one leaves the other, and the numbering goes away with the list.
+      await panelPage.locator('[data-op="remove-trigger"][data-trigger="0"]').click();
+      assertEqual(await panelPage.locator('.trigger-block').count(), 1);
+      assertEqual(await panelPage.locator('[data-input="everyMinutes"][data-trigger="0"]').inputValue(), '30',
+        'the trigger that survived should be the one that was not removed');
+
+      await panelPage.locator('#modal-cancel').click();
+      await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the schedule editor to close' });
+      assertEqual(scheduleOnDisk().find((e) => e.targetId === taskId).triggers.length, 2,
+        'cancelling must leave what was saved alone');
+    });
+
     await group('schedule: pausing an entry keeps its trigger and says so in words', async () => {
       await openScheduleTab();
-      const entryId = scheduleOnDisk()[0].id;
+      // Named rather than positional: other groups add entries, and a positional pick would
+      // silently start testing a different schedule.
+      const entryId = scheduleOnDisk().find((e) => e.targetId === collectionId).id;
       await panelPage.locator(`.sched-row[data-entry="${entryId}"] [data-op="toggle"]`).click();
 
-      await waitFor(() => scheduleOnDisk()[0].enabled === false,
+      const target = () => scheduleOnDisk().find((e) => e.id === entryId);
+      await waitFor(() => target().enabled === false,
         { timeoutMs: 10000, label: 'the entry to be paused on disk' });
-      assertEqual(scheduleOnDisk()[0].triggers[0].cronExpression, '30 9 * * 1-5',
+      assertEqual(target().triggers[0].cronExpression, '30 9 * * 1-5',
         'pausing must not rewrite the trigger');
 
       const paused = panelPage.locator(`.sched-row[data-entry="${entryId}"]`);
@@ -1229,7 +1321,7 @@ async function main() {
         'a paused entry must say so in words, not by colour alone');
 
       await panelPage.locator(`.sched-row[data-entry="${entryId}"] [data-op="toggle"]`).click();
-      await waitFor(() => scheduleOnDisk()[0].enabled === true,
+      await waitFor(() => target().enabled === true,
         { timeoutMs: 10000, label: 'the entry to be resumed' });
     });
 

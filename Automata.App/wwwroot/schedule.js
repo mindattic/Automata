@@ -51,13 +51,16 @@ function hourMinute(time) {
     return { h: isNaN(h) ? 9 : Math.min(23, Math.max(0, h)), m: isNaN(m) ? 0 : Math.min(59, Math.max(0, m)) };
 }
 
-export function cronFor(draft) {
-    var t = hourMinute(draft.time);
-    if (draft.when === 'daily') return t.m + ' ' + t.h + ' * * *';
-    if (draft.when === 'weekdays') return t.m + ' ' + t.h + ' * * 1-5';
-    if (draft.when === 'weekly') return t.m + ' ' + t.h + ' * * ' + (draft.dayOfWeek == null ? 1 : draft.dayOfWeek);
-    if (draft.when === 'hourly') return (draft.minute == null ? 0 : draft.minute) + ' * * * *';
-    return String(draft.cron || '').trim();
+// Takes ONE trigger's draft, not the whole entry — an entry can carry several, each compiling to
+// its own expression.
+export function cronFor(trigger) {
+    var at = hourMinute(trigger.time);
+    if (trigger.when === 'daily') return at.m + ' ' + at.h + ' * * *';
+    if (trigger.when === 'weekdays') return at.m + ' ' + at.h + ' * * 1-5';
+    if (trigger.when === 'weekly')
+        return at.m + ' ' + at.h + ' * * ' + (trigger.dayOfWeek == null ? 1 : trigger.dayOfWeek);
+    if (trigger.when === 'hourly') return (trigger.minute == null ? 0 : trigger.minute) + ' * * * *';
+    return String(trigger.cron || '').trim();
 }
 
 // The inverse, so editing an entry reopens on the shape it was built with rather than dropping
@@ -106,18 +109,13 @@ function whenText(iso) {
 
 // ---- draft <-> entry -------------------------------------------------------------------------
 
-function primaryTrigger(entry) {
-    return (entry.triggers || [])[0] || { kind: 'manual' };
-}
+// An entry may be started by several things at once — "every weekday at 09:00 AND once the ingest
+// has finished". The model has always been a list and the evaluator has always taken the soonest
+// firing across it; the editor is what used to write exactly one.
+var MAX_TRIGGERS = 8;
 
-function draftFrom(entry) {
-    var trigger = primaryTrigger(entry);
-    var draft = {
-        id: entry.id,
-        name: entry.name || '',
-        enabled: entry.enabled !== false,
-        target: entry.target || 'collection',
-        targetId: entry.targetId || '',
+function blankTrigger() {
+    return {
         when: 'daily',
         time: '09:00',
         dayOfWeek: 1,
@@ -126,57 +124,79 @@ function draftFrom(entry) {
         onceLocal: '',
         afterEntryId: '',
         requiredOutcome: 'succeeded',
-        timeZoneId: trigger.timeZoneId || '',
-        catchUp: trigger.catchUp === 'runOnceImmediately',
+        cron: '',
+        timeZoneId: '',
+        catchUp: false,
         // Kept so an interval that is not being changed stays on its original grid instead of
         // silently re-anchoring to whenever the entry was last edited.
-        anchorUtc: trigger.anchorUtc || null,
-        nameTouched: !!entry.id,
+        anchorUtc: null,
     };
-
-    if (trigger.kind === 'cron') Object.assign(draft, shapeOfCron(trigger.cronExpression));
-    else if (trigger.kind === 'interval') {
-        draft.when = 'minutes';
-        draft.everyMinutes = Math.max(1, Math.round((trigger.intervalSeconds || 900) / 60));
-    } else if (trigger.kind === 'oneShot') {
-        draft.when = 'once';
-        draft.onceLocal = toLocalInput(trigger.fireAtUtc);
-    } else if (trigger.kind === 'afterEntry') {
-        draft.when = 'after';
-        draft.afterEntryId = trigger.afterEntryId || '';
-        draft.requiredOutcome = trigger.requiredOutcome || 'succeeded';
-    }
-    return draft;
 }
 
-function triggerFrom(draft) {
-    if (draft.when === 'minutes') {
+function triggerDraftFrom(trigger) {
+    var t = blankTrigger();
+    t.timeZoneId = trigger.timeZoneId || '';
+    t.catchUp = trigger.catchUp === 'runOnceImmediately';
+    t.anchorUtc = trigger.anchorUtc || null;
+
+    if (trigger.kind === 'cron') Object.assign(t, shapeOfCron(trigger.cronExpression));
+    else if (trigger.kind === 'interval') {
+        t.when = 'minutes';
+        t.everyMinutes = Math.max(1, Math.round((trigger.intervalSeconds || 900) / 60));
+    } else if (trigger.kind === 'oneShot') {
+        t.when = 'once';
+        t.onceLocal = toLocalInput(trigger.fireAtUtc);
+    } else if (trigger.kind === 'afterEntry') {
+        t.when = 'after';
+        t.afterEntryId = trigger.afterEntryId || '';
+        t.requiredOutcome = trigger.requiredOutcome || 'succeeded';
+    }
+    return t;
+}
+
+function draftFrom(entry) {
+    var triggers = (entry.triggers || []).map(triggerDraftFrom);
+    return {
+        id: entry.id,
+        name: entry.name || '',
+        enabled: entry.enabled !== false,
+        target: entry.target || 'collection',
+        targetId: entry.targetId || '',
+        // A schedule with no trigger at all runs only by hand, which is not a thing anyone opens
+        // this dialog to build — so a new entry starts with one.
+        triggers: triggers.length ? triggers : [blankTrigger()],
+        nameTouched: !!entry.id,
+    };
+}
+
+function triggerFrom(t) {
+    if (t.when === 'minutes') {
         return {
             kind: 'interval',
             enabled: true,
-            intervalSeconds: Math.max(1, parseInt(draft.everyMinutes, 10) || 1) * 60,
-            anchorUtc: draft.anchorUtc || new Date().toISOString(),
-            catchUp: draft.catchUp ? 'runOnceImmediately' : 'skip',
+            intervalSeconds: Math.max(1, parseInt(t.everyMinutes, 10) || 1) * 60,
+            anchorUtc: t.anchorUtc || new Date().toISOString(),
+            catchUp: t.catchUp ? 'runOnceImmediately' : 'skip',
         };
     }
-    if (draft.when === 'once') {
-        return { kind: 'oneShot', enabled: true, fireAtUtc: fromLocalInput(draft.onceLocal), catchUp: 'skip' };
+    if (t.when === 'once') {
+        return { kind: 'oneShot', enabled: true, fireAtUtc: fromLocalInput(t.onceLocal), catchUp: 'skip' };
     }
-    if (draft.when === 'after') {
+    if (t.when === 'after') {
         return {
             kind: 'afterEntry',
             enabled: true,
-            afterEntryId: draft.afterEntryId,
-            requiredOutcome: draft.requiredOutcome,
+            afterEntryId: t.afterEntryId,
+            requiredOutcome: t.requiredOutcome,
             catchUp: 'skip',
         };
     }
     return {
         kind: 'cron',
         enabled: true,
-        cronExpression: cronFor(draft),
-        timeZoneId: draft.timeZoneId || null,
-        catchUp: draft.catchUp ? 'runOnceImmediately' : 'skip',
+        cronExpression: cronFor(t),
+        timeZoneId: t.timeZoneId || null,
+        catchUp: t.catchUp ? 'runOnceImmediately' : 'skip',
     };
 }
 
@@ -186,7 +206,7 @@ function entryFrom(draft) {
         enabled: !!draft.enabled,
         target: draft.target,
         targetId: draft.targetId,
-        triggers: [triggerFrom(draft)],
+        triggers: draft.triggers.map(triggerFrom),
     };
     // A new entry deliberately carries NO id, so the model mints one. Sending an empty string
     // instead would give every new schedule the same blank id, and the second one saved would
@@ -201,17 +221,26 @@ function entryById(id) {
     return (state.schedule || []).filter(function (e) { return e.id === id; })[0] || null;
 }
 
-// Glyph, word and colour — never colour alone — for what starts an entry.
+// Glyph, word and colour — never colour alone — for what starts an entry. With several triggers
+// the clock wins the glyph: "it runs on its own" is the thing worth seeing at a glance, and a
+// chain is only half the story once a time is involved too.
 function kindGlyph(entry) {
     if (entry.enabled === false) return '⏸';
-    var kind = primaryTrigger(entry).kind;
-    if (kind === 'afterEntry') return '⛓';
-    if (kind === 'manual') return '▫';
-    return '⏰';
+    var kinds = (entry.triggers || []).map(function (t) { return t.kind; });
+    if (!kinds.length) return '▫';
+    if (kinds.some(function (k) { return k !== 'afterEntry' && k !== 'manual'; })) return '⏰';
+    if (kinds.indexOf('afterEntry') >= 0) return '⛓';
+    return '▫';
 }
 
+// Every trigger, not just the first. "or" rather than "and" because the evaluator takes the
+// SOONEST firing across them — any one of them is enough to start the run.
 function whatStartsIt(entry) {
-    var trigger = primaryTrigger(entry);
+    var described = (entry.triggers || []).map(describeTrigger);
+    return described.length ? described.join(', or ') : 'only when started by hand';
+}
+
+function describeTrigger(trigger) {
     if (trigger.kind === 'cron') {
         var shape = shapeOfCron(trigger.cronExpression);
         var label = shape.when === 'daily' ? 'every day at ' + shape.time
@@ -401,16 +430,25 @@ export function openScheduleEditor(entry, error) {
             '</div></div>';
     }
 
-    function whenFields() {
-        if (draft.when === 'minutes') {
+    // The fields one trigger's chosen shape needs. `index` scopes every control to its own
+    // trigger: data-trigger is what tells the change handler which one to mutate, and the
+    // accessible names carry the number too, so a form with three time pickers does not offer a
+    // screen reader three controls called "Time of day".
+    function whenFields(t, index) {
+        var scope = ' data-trigger="' + index + '"';
+        var of = ' (trigger ' + (index + 1) + ')';
+
+        if (t.when === 'minutes') {
             return field('Every', '<input type="number" min="1" max="10080" data-input="everyMinutes"' +
-                ' value="' + esc(draft.everyMinutes) + '" aria-label="Minutes between runs" />', 'minutes');
+                scope + ' value="' + esc(t.everyMinutes) + '" aria-label="Minutes between runs' + of + '" />',
+                'minutes');
         }
-        if (draft.when === 'once') {
-            return field('At', '<input type="datetime-local" data-input="onceLocal" value="' +
-                esc(draft.onceLocal) + '" aria-label="Date and time to run once at" />', 'your local time');
+        if (t.when === 'once') {
+            return field('At', '<input type="datetime-local" data-input="onceLocal"' + scope +
+                ' value="' + esc(t.onceLocal) + '" aria-label="Date and time to run once at' + of + '" />',
+                'your local time');
         }
-        if (draft.when === 'after') {
+        if (t.when === 'after') {
             var others = (state.schedule || [])
                 .filter(function (e) { return e.id !== draft.id; })
                 .map(function (e) { return { value: e.id, label: e.name }; });
@@ -418,54 +456,105 @@ export function openScheduleEditor(entry, error) {
                 return '<div class="diagnostics warn"><ul><li>There is no other schedule to follow ' +
                     'yet. Add one with a time first, then chain this one after it.</li></ul></div>';
             }
-            return field('After', '<select data-input="afterEntryId" aria-label="The schedule this one follows">' +
-                optionsHtml(others, draft.afterEntryId || others[0].value) + '</select>') +
-                field('When', '<select data-input="requiredOutcome" aria-label="Which outcome starts this">' +
-                    optionsHtml(OUTCOMES, draft.requiredOutcome) + '</select>');
+            return field('After', '<select data-input="afterEntryId"' + scope +
+                ' aria-label="The schedule this one follows' + of + '">' +
+                optionsHtml(others, t.afterEntryId || others[0].value) + '</select>') +
+                field('When', '<select data-input="requiredOutcome"' + scope +
+                    ' aria-label="Which outcome starts this' + of + '">' +
+                    optionsHtml(OUTCOMES, t.requiredOutcome) + '</select>');
         }
-        if (draft.when === 'cron') {
-            return field('Expression', '<input type="text" data-input="cron" value="' + esc(draft.cron || '') +
-                '" placeholder="0 9 * * 1-5" aria-label="Cron expression" />',
+        if (t.when === 'cron') {
+            return field('Expression', '<input type="text" data-input="cron"' + scope +
+                ' value="' + esc(t.cron || '') + '" placeholder="0 9 * * 1-5"' +
+                ' aria-label="Cron expression' + of + '" />',
                 'minute hour day-of-month month day-of-week');
         }
+
         var rows = '';
-        if (draft.when === 'hourly') {
-            rows += field('At', '<input type="number" min="0" max="59" data-input="minute" value="' +
-                esc(draft.minute) + '" aria-label="Minutes past the hour" />', 'minutes past the hour');
+        if (t.when === 'hourly') {
+            rows += field('At', '<input type="number" min="0" max="59" data-input="minute"' + scope +
+                ' value="' + esc(t.minute) + '" aria-label="Minutes past the hour' + of + '" />',
+                'minutes past the hour');
         } else {
-            if (draft.when === 'weekly') {
-                rows += field('On', '<select data-input="dayOfWeek" aria-label="Day of the week">' +
+            if (t.when === 'weekly') {
+                rows += field('On', '<select data-input="dayOfWeek"' + scope +
+                    ' aria-label="Day of the week' + of + '">' +
                     optionsHtml(DAY_NAMES.map(function (d, i) { return { value: String(i), label: d }; }),
-                        String(draft.dayOfWeek)) + '</select>');
+                        String(t.dayOfWeek)) + '</select>');
             }
-            rows += field('At', '<input type="time" data-input="time" value="' + esc(draft.time) +
-                '" aria-label="Time of day" />');
+            rows += field('At', '<input type="time" data-input="time"' + scope +
+                ' value="' + esc(t.time) + '" aria-label="Time of day' + of + '" />');
         }
         return rows;
+    }
+
+    // One trigger, boxed and numbered. Numbered only when there is more than one: a single
+    // trigger is the overwhelmingly common case and should not be dressed up as a list.
+    function triggerBlock(t, index) {
+        var scope = ' data-trigger="' + index + '"';
+        var of = ' (trigger ' + (index + 1) + ')';
+        var many = draft.triggers.length > 1;
+        var isClock = t.when !== 'after';
+        var usesZone = t.when !== 'after' && t.when !== 'minutes' && t.when !== 'once';
+        var zones = [{ value: '', label: 'This machine (' + (state.localTimeZoneId || 'local') + ')' }]
+            .concat((state.timeZones || []).map(function (z) { return { value: z.id, label: z.label }; }));
+
+        return '<div class="trigger-block"' + scope + '>' +
+            (many
+                ? '<div class="section-head"><h3 class="section-label">Trigger ' + (index + 1) +
+                  ' of ' + draft.triggers.length + '</h3>' +
+                  '<button class="mini" data-op="remove-trigger"' + scope +
+                  ' aria-label="Remove trigger ' + (index + 1) +
+                  '" data-tooltip="Remove this trigger">✕</button></div>'
+                : '') +
+            field('Starts', '<select data-input="when"' + scope +
+                ' aria-label="What starts this schedule' + of + '">' +
+                optionsHtml(WHEN, t.when) + '</select>') +
+            whenFields(t, index) +
+            (usesZone
+                ? field('Time zone', '<select data-input="timeZoneId"' + scope +
+                    ' aria-label="Time zone the time is read in' + of + '">' +
+                    optionsHtml(zones, t.timeZoneId) + '</select>')
+                : '') +
+            (isClock
+                ? field('If missed', '<label class="inline"><input type="checkbox" data-input="catchUp"' +
+                    scope + (t.catchUp ? ' checked' : '') +
+                    ' aria-label="Run once if a firing was missed' + of + '" /> ' +
+                    'run once as soon as possible</label>',
+                    'otherwise a firing missed while nothing was running is skipped')
+                : '') +
+            // The compiled expression is shown, never hidden: it is what gets stored, what the CLI
+            // prints, and what travels if the schedule is moved to another machine.
+            (isClock && t.when !== 'minutes' && t.when !== 'once'
+                ? '<p class="scope-note">Stored as cron <code id="sched-cron-note-' + index + '">' +
+                  esc(cronFor(t) || '—') + '</code>.</p>'
+                : '') +
+            '</div>';
     }
 
     // A shape's own fields get a workable default the moment it is chosen, so a picker never
     // renders a control whose displayed value disagrees with what a Save would send.
     function normalize() {
-        if (draft.when === 'after' && !draft.afterEntryId) {
-            var first = (state.schedule || []).filter(function (e) { return e.id !== draft.id; })[0];
-            draft.afterEntryId = first ? first.id : '';
-        }
-        if (draft.when === 'once' && !draft.onceLocal) {
-            draft.onceLocal = toLocalInput(new Date(Date.now() + 3600000).toISOString());
-        }
+        draft.triggers.forEach(function (t) {
+            if (t.when === 'after' && !t.afterEntryId) {
+                var first = (state.schedule || []).filter(function (e) { return e.id !== draft.id; })[0];
+                t.afterEntryId = first ? first.id : '';
+            }
+            if (t.when === 'once' && !t.onceLocal) {
+                t.onceLocal = toLocalInput(new Date(Date.now() + 3600000).toISOString());
+            }
+        });
     }
 
     function draw() {
         normalize();
-        var focusedKey = document.activeElement && form.contains(document.activeElement)
-            ? document.activeElement.getAttribute('data-input') : null;
+        var focused = document.activeElement && form.contains(document.activeElement)
+            ? document.activeElement : null;
+        var focusedKey = focused ? focused.getAttribute('data-input') : null;
+        var focusedTrigger = focused ? focused.getAttribute('data-trigger') : null;
         var choices = targetChoices();
         var selectedTarget = draft.targetId ? draft.target + ':' + draft.targetId : '';
-        var isClock = draft.when !== 'after';
-        var usesZone = draft.when !== 'after' && draft.when !== 'minutes' && draft.when !== 'once';
-        var zones = [{ value: '', label: 'This machine (' + (state.localTimeZoneId || 'local') + ')' }]
-            .concat((state.timeZones || []).map(function (z) { return { value: z.id, label: z.label }; }));
+        var atCap = draft.triggers.length >= MAX_TRIGGERS;
 
         form.innerHTML =
             (error ? '<div class="diagnostics" role="alert"><ul><li>' + esc(error) + '</li></ul></div>' : '') +
@@ -480,46 +569,48 @@ export function openScheduleEditor(entry, error) {
                 '</select>') +
             field('Called', '<input type="text" data-input="name" value="' + esc(draft.name) +
                 '" aria-label="Name for this schedule" />') +
-            field('Starts', '<select data-input="when" aria-label="What starts this schedule">' +
-                optionsHtml(WHEN, draft.when) + '</select>') +
-            whenFields() +
-            (usesZone
-                ? field('Time zone', '<select data-input="timeZoneId" aria-label="Time zone the time is read in">' +
-                    optionsHtml(zones, draft.timeZoneId) + '</select>')
-                : '') +
-            (isClock
-                ? field('If missed', '<label class="inline"><input type="checkbox" data-input="catchUp"' +
-                    (draft.catchUp ? ' checked' : '') + ' aria-label="Run once if a firing was missed" /> ' +
-                    'run once as soon as possible</label>',
-                    'otherwise a firing missed while nothing was running is skipped')
-                : '') +
+            draft.triggers.map(triggerBlock).join('') +
+            '<div class="row trigger-add">' +
+            (atCap
+                ? '<span class="unit">' + MAX_TRIGGERS + ' triggers is the limit — plenty for ' +
+                  '"whichever comes first", and past that a schedule is easier to read as two.</span>'
+                : '<button class="mini" data-op="add-trigger" aria-label="Add another trigger"' +
+                  ' data-tooltip="Start this on a second clock, or after another schedule too">' +
+                  '+ add trigger</button>') +
+            '</div>' +
             field('Enabled', '<label class="inline"><input type="checkbox" data-input="enabled"' +
                 (draft.enabled ? ' checked' : '') + ' aria-label="Enabled" /> ' +
                 '<span id="sched-enabled-word">' + (draft.enabled ? 'on' : 'paused') + '</span></label>') +
-            // The compiled expression is shown, never hidden: it is what gets stored, what the CLI
-            // prints, and what travels if the schedule is moved to another machine.
-            (isClock && draft.when !== 'minutes' && draft.when !== 'once'
-                ? '<p class="scope-note">Stored as cron <code id="sched-cron-note">' +
-                  esc(cronFor(draft) || '—') + '</code>.</p>'
+            (draft.triggers.length > 1
+                ? '<p class="scope-note">Any one of these starts the run — whichever comes first. ' +
+                  'They are not steps and they do not wait for each other.</p>'
                 : '');
         wire();
 
         // Focus belongs inside the dialog: on the control that had it before a reshape, and on the
         // first control when the dialog has just opened. Without this a redraw would drop a
         // keyboard user at the top of the document and leave the Tab trap with nothing to trap.
-        var back = (focusedKey && form.querySelector('[data-input="' + focusedKey + '"]'))
+        // The trigger index is part of the identity — three "when" selects are not interchangeable.
+        var selector = focusedKey
+            ? '[data-input="' + focusedKey + '"]' +
+              (focusedTrigger == null ? '' : '[data-trigger="' + focusedTrigger + '"]')
+            : null;
+        var back = (selector && form.querySelector(selector))
             || form.querySelector('select, input, textarea');
         if (back) back.focus();
     }
 
-    // Only two choices reshape the form — what to run, and what starts it. Everything else edits
-    // a control that is already on screen, so it updates the draft in place and leaves the DOM
-    // alone: rebuilding the form under a half-typed field is how you lose a caret.
+    // Only two choices reshape the form — what to run, and what starts a trigger. Everything else
+    // edits a control that is already on screen, so it updates the draft in place and leaves the
+    // DOM alone: rebuilding the form under a half-typed field is how you lose a caret.
     function wire() {
         form.querySelectorAll('[data-input]').forEach(function (input) {
             var key = input.getAttribute('data-input');
+            var at = input.getAttribute('data-trigger');
+            var t = at == null ? null : draft.triggers[Number(at)];
             var live = input.type === 'text' || input.type === 'number'
                 || input.type === 'time' || input.type === 'datetime-local';
+
             input.addEventListener(live ? 'input' : 'change', function () {
                 if (key === 'target') {
                     var parts = String(input.value || '').split(':');
@@ -531,22 +622,50 @@ export function openScheduleEditor(entry, error) {
                         var chosen = input.options[input.selectedIndex];
                         draft.name = draft.targetId ? chosen.textContent : '';
                     }
-                } else if (key === 'name') {
+                    draw();
+                    return;
+                }
+                if (key === 'name') {
                     draft.name = input.value;
                     draft.nameTouched = true;
-                } else if (input.type === 'checkbox') {
-                    draft[key] = input.checked;
-                } else if (input.type === 'number' || key === 'dayOfWeek') {
+                    return;
+                }
+                if (key === 'enabled') {
+                    draft.enabled = input.checked;
+                    refresh();
+                    return;
+                }
+                if (!t) return;
+
+                if (input.type === 'checkbox') t[key] = input.checked;
+                else if (input.type === 'number' || key === 'dayOfWeek') {
                     var n = parseInt(input.value, 10);
-                    if (!isNaN(n)) draft[key] = n;
+                    if (!isNaN(n)) t[key] = n;
                 } else {
-                    draft[key] = input.value;
+                    t[key] = input.value;
                 }
                 // Changing the shape or the cadence re-anchors an interval on purpose: the old
                 // anchor belonged to a grid that no longer exists.
-                if (key === 'when' || key === 'everyMinutes') draft.anchorUtc = null;
-                if (key === 'target' || key === 'when') { draw(); return; }
+                if (key === 'when' || key === 'everyMinutes') t.anchorUtc = null;
+                if (key === 'when') { draw(); return; }
                 refresh();
+            });
+        });
+
+        var add = form.querySelector('[data-op="add-trigger"]');
+        if (add) {
+            add.addEventListener('click', function () {
+                draft.triggers.push(blankTrigger());
+                draw();
+            });
+        }
+        form.querySelectorAll('[data-op="remove-trigger"]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                // The last one is never removable — an entry with no trigger runs only by hand,
+                // which is a different thing from a schedule and not what this dialog builds.
+                if (draft.triggers.length <= 1) return;
+                draft.triggers.splice(Number(btn.getAttribute('data-trigger')), 1);
+                draw();
             });
         });
     }
@@ -554,8 +673,10 @@ export function openScheduleEditor(entry, error) {
     // The parts of the form that describe other parts of the form, kept truthful without a
     // rebuild.
     function refresh() {
-        var note = $('sched-cron-note');
-        if (note) note.textContent = cronFor(draft) || '—';
+        draft.triggers.forEach(function (t, index) {
+            var note = $('sched-cron-note-' + index);
+            if (note) note.textContent = cronFor(t) || '—';
+        });
         var word = $('sched-enabled-word');
         if (word) word.textContent = draft.enabled ? 'on' : 'paused';
     }
