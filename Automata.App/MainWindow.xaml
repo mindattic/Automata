@@ -5,7 +5,7 @@
         Title="Automata" Height="1000" Width="1400"
         WindowStartupLocation="Manual" Left="0" Top="0"
         Closing="OnWindowClosing">
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.ColumnDefinitions>
             <!-- Width is restored from AutomataSettings.SidebarWidth in the code-behind; 420 is
                  the fallback for a first run. The sidebar has to hold binding chips, schedule

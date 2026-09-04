@@ -31,6 +31,10 @@ public partial class MainWindow : Window
             .GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>();
         RestoreSidebarWidth();
         ApplyWindowTheme();
+        // Before InitializeControlPanelAsync below: detaching a panel that has not built its
+        // browser yet is a plain reparent of an empty control, which is the cheapest moment there
+        // is to do it. Toggling later moves a live one, which works but has more to go wrong.
+        if (settingsStore.Load().PanelDetached) DetachPanel();
 
         controller = new AutomationController(
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.CollectionStore>(),
@@ -122,7 +126,254 @@ public partial class MainWindow : Window
 
     private void OnSplitterDragCompleted(object sender, DragCompletedEventArgs e) => SaveSidebarWidth();
 
-    private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e) => SaveSidebarWidth();
+    private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        SaveSidebarWidth();
+        // Closed directly rather than docked: the app is going away, and docking would rewrite the
+        // preference to "attached" for someone who deliberately left it detached.
+        if (detachedPanel == null) return;
+        SaveDetachedBounds();
+        docking = true;
+        detachedPanel.Release();
+        detachedPanel.Close();
+        detachedPanel = null;
+    }
+
+    // ---- the sidebar in its own window -----------------------------------------------------------
+
+    /// <summary>Non-null while the sidebar is undocked. It holds the one and only panel WebView2.</summary>
+    private DetachedPanelWindow? detachedPanel;
+
+    /// <summary>Guards the close→dock→close path, since docking closes the window that asked.</summary>
+    private bool docking;
+
+    /// <summary>The width the docked column had before the panel left it, so docking puts it back
+    /// where it was rather than at the default.</summary>
+    private GridLength dockedWidth = new(420, GridUnitType.Pixel);
+
+    public bool PanelIsDetached => detachedPanel != null;
+
+    /// <summary>
+    /// Detaches or docks, whichever the sidebar is not, then remembers it and TELLS THE PANEL.
+    /// <para>
+    /// The push belongs here rather than at the call site because there are two call sites and one
+    /// of them is the detached window's close button. When only the button pushed, closing that
+    /// window docked the sidebar and left the button still reading "Dock the sidebar" — a control
+    /// describing a state the app was no longer in.
+    /// </para>
+    /// <para>
+    /// If the move itself fails, the sidebar goes back to being docked before anything is saved:
+    /// the panel is the only way to drive this app, and a half-moved one is a window with no UI in
+    /// it and no way to ask for one back.
+    /// </para>
+    /// </summary>
+    public void TogglePanelDetached()
+    {
+        var wantDetached = detachedPanel == null;
+        try
+        {
+            if (wantDetached) DetachPanel();
+            else DockPanel();
+        }
+        catch (Exception ex)
+        {
+            RecoverToDocked();
+            _ = PostLogAsync($"⚠ The sidebar could not be moved — {ex.Message}");
+        }
+
+        PersistDetachedState();
+    }
+
+    /// <summary>
+    /// Writes down where the sidebar now lives, and tells the panel so its own control agrees.
+    /// <para>
+    /// Both halves, from every path that moves the sidebar — including the detached window's close
+    /// button, which is the one that used to skip the telling and leave a button reading "Dock the
+    /// sidebar" on a sidebar that was already docked.
+    /// </para>
+    /// <para>
+    /// The push happens whatever the save did. Remembering the preference is worth less than the
+    /// panel agreeing with the window, and this is the shape the NaN bug argued for: one
+    /// unserializable default threw in the save and took the announcement down with it.
+    /// </para>
+    /// </summary>
+    private void PersistDetachedState()
+    {
+        try
+        {
+            var settings = settingsStore.Load();
+            settings.PanelDetached = detachedPanel != null;
+            settingsStore.Save(settings);
+        }
+        catch (Exception ex)
+        {
+            _ = PostLogAsync($"⚠ The sidebar moved, but where it lives could not be saved — {ex.Message}");
+        }
+        _ = controller.PushSettingsAsync();
+    }
+
+    /// <summary>
+    /// Puts the panel back in the grid from whatever half-state a failed move left it in.
+    /// <para>
+    /// Deliberately tolerant rather than precise: it does not know how far the move got, so it
+    /// asserts the docked shape from first principles and accepts that some of that is a no-op.
+    /// </para>
+    /// </summary>
+    private void RecoverToDocked()
+    {
+        var stray = detachedPanel;
+        detachedPanel = null;
+        if (stray != null)
+        {
+            docking = true;
+            try { stray.Release(); stray.Close(); } catch { /* already gone */ }
+            docking = false;
+        }
+
+        if (!RootGrid.Children.Contains(ControlPanel)) RootGrid.Children.Add(ControlPanel);
+        SidebarColumn.MinWidth = 340;
+        SidebarColumn.Width = dockedWidth.Value > 0 ? dockedWidth : new GridLength(420, GridUnitType.Pixel);
+        SidebarSplitter.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Lifts the panel out of the grid and into its own window.
+    /// <para>
+    /// The column collapses to nothing and the splitter goes with it, so the browser gets the whole
+    /// window rather than the whole window minus an empty 420px gutter. MinWidth has to be cleared
+    /// too — a column with a MinWidth cannot be zero, and the gutter would stay.
+    /// </para>
+    /// </summary>
+    private void DetachPanel()
+    {
+        if (detachedPanel != null) return;
+
+        dockedWidth = SidebarColumn.Width;
+        RootGrid.Children.Remove(ControlPanel);
+        SidebarColumn.MinWidth = 0;
+        SidebarColumn.Width = new GridLength(0);
+        SidebarSplitter.Visibility = Visibility.Collapsed;
+
+        var settings = settingsStore.Load();
+        detachedPanel = new DetachedPanelWindow(ControlPanel, Background)
+        {
+            Owner = null,
+            Width = settings.PanelWindowWidth > 0 ? settings.PanelWindowWidth : 460,
+            Height = settings.PanelWindowHeight > 0 ? settings.PanelWindowHeight : 900,
+        };
+        PlaceDetached(detachedPanel, settings);
+
+        detachedPanel.Closing += (_, _) =>
+        {
+            if (docking) return;
+            // Someone closed this window themselves. The panel is the only way to drive this app,
+            // so it goes back in the grid — but the close is ALLOWED to finish rather than being
+            // cancelled and re-issued: a Window cannot be closed from inside its own Closing
+            // handler, and doing that threw every time the title-bar X was used.
+            DockFromClosing();
+            PersistDetachedState();
+        };
+
+        detachedPanel.Show();
+        detachedPanel.Activate();
+    }
+
+    /// <summary>
+    /// Puts the saved position back, but only if it still lands on a screen that exists.
+    /// <para>
+    /// A window remembered onto a monitor that has since been unplugged opens somewhere nobody can
+    /// see, and the only way back is to edit settings.json by hand.
+    /// </para>
+    /// </summary>
+    private static void PlaceDetached(Window window, Automata.Core.Automation.Storage.AutomataSettings settings)
+    {
+        if (settings.PanelWindowLeft is not { } left || settings.PanelWindowTop is not { } top)
+        {
+            window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            return;
+        }
+
+        var onScreen =
+            left + window.Width > SystemParameters.VirtualScreenLeft &&
+            top + window.Height > SystemParameters.VirtualScreenTop &&
+            left < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth &&
+            top < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight;
+        if (!onScreen)
+        {
+            window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            return;
+        }
+
+        window.Left = left;
+        window.Top = top;
+    }
+
+    /// <summary>Puts the panel back in the grid and closes the window it was living in.</summary>
+    private void DockPanel()
+    {
+        if (detachedPanel == null) return;
+
+        SaveDetachedBounds();
+        var window = detachedPanel;
+        detachedPanel = null;
+        var panel = window.Release();
+
+        docking = true;
+        window.Close();
+        docking = false;
+
+        RestoreDockedLayout(panel);
+        Activate();
+    }
+
+    /// <summary>
+    /// The same, for the case where the window is ALREADY closing — the title-bar X, Alt+F4, the
+    /// taskbar. It takes the panel out and lets the close finish; there is nothing left to close.
+    /// </summary>
+    private void DockFromClosing()
+    {
+        if (detachedPanel == null) return;
+
+        SaveDetachedBounds();
+        var window = detachedPanel;
+        detachedPanel = null;
+        RestoreDockedLayout(window.Release());
+        Activate();
+    }
+
+    /// <summary>The docked shape: the panel in its column, the column back to its width, and the
+    /// splitter that resizes it back on screen.</summary>
+    private void RestoreDockedLayout(UIElement? panel)
+    {
+        if (panel != null && !RootGrid.Children.Contains(panel)) RootGrid.Children.Add(panel);
+        SidebarColumn.MinWidth = 340;
+        SidebarColumn.Width = dockedWidth.Value > 0 ? dockedWidth : new GridLength(420, GridUnitType.Pixel);
+        SidebarSplitter.Visibility = Visibility.Visible;
+    }
+
+    private void SaveDetachedBounds()
+    {
+        if (detachedPanel == null) return;
+        try
+        {
+            var settings = settingsStore.Load();
+            // RestoreBounds, not Left/Top: a maximised or minimised window reports its CURRENT
+            // placement, and remembering -32000 puts it off every screen on the next launch.
+            var bounds = detachedPanel.WindowState == WindowState.Normal
+                ? new Rect(detachedPanel.Left, detachedPanel.Top, detachedPanel.Width, detachedPanel.Height)
+                : detachedPanel.RestoreBounds;
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+            settings.PanelWindowLeft = bounds.Left;
+            settings.PanelWindowTop = bounds.Top;
+            settings.PanelWindowWidth = bounds.Width;
+            settings.PanelWindowHeight = bounds.Height;
+            settingsStore.Save(settings);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A window position is never worth failing a dock over.
+        }
+    }
 
     /// <summary>Opt-in remote-debugging hook for tools/verify-ui.mjs. Null (today's exact
     /// behavior) unless the named env var holds a valid port number.</summary>
@@ -270,6 +521,9 @@ public partial class MainWindow : Window
                 case "run":
                     var task = msg!["task"]!.GetValue<string>();
                     _ = RunTaskAsync(task);
+                    break;
+                case "togglePanelDetached":
+                    TogglePanelDetached();
                     break;
                 case "cancel":
                     // Cancels whichever run is live: the AI free-text loop (runCts here) and/or

@@ -1210,6 +1210,44 @@ not keyboard-focusable, so its content was mouse-only (SC 2.1.1). Invisible to t
 check because that one runs against the untouched first render, when the log is empty and does not
 overflow. Running the same pass late, with the app in a used state, is what saw it.
 
+### Phase 25 - the sidebar can leave the window (2026-09-04)
+
+A build panel pinned to a 340-720px column beside the browser is the wrong shape for someone with
+two monitors, or for anyone who wants a third of the screen for building and the rest for the page.
+**Detach the sidebar** lifts it into its own window; closing that window puts it back; where it was
+is remembered, and it comes back there on the next launch.
+
+**The same panel, moved.** The WebView2 is reparented, never recreated. A second instance would be
+a second copy of the tree, the selection, the run log and the recorder's state, and the two would
+disagree the moment either was touched — so the check for this sets a variable on the page before
+the move and asserts it is still there after, which is the only claim worth making.
+
+Three failures on the way, each of which taught the shape of the fix:
+
+- **`double.NaN` cannot be written as JSON.** "Never placed" as a window position looked like the
+  obvious default and threw inside the settings save — which meant the setting was never written
+  AND the announcement that follows it never ran, so the button went on reading "Detach the
+  sidebar" on a sidebar that was already detached. Nullable instead: a value the serialiser cannot
+  represent has no business being a default.
+- **A window cannot be closed from inside its own Closing handler.** Docking from the panel's
+  button and docking because someone pressed the window's X are not the same code — the second one
+  is already closing, so it takes the panel out and lets the close finish rather than cancelling
+  and re-issuing it. That path is now driven for real by the check, through Windows itself, because
+  nothing in the page can see a WPF window and CDP cannot close one.
+- **Saving and announcing had to be one thing.** Both callers moved the sidebar and only one told
+  the panel. `PersistDetachedState` does both, and announces even when the save failed: the
+  preference is worth less than the panel agreeing with the window.
+
+A failed move now recovers to the docked layout before it reports itself, because the panel is the
+only way to drive this app and a half-moved one is a window with no UI in it and no way to ask for
+one back.
+
+**Not doing: several browser panes.** The plural in "the other half for the browser(s)" was asked
+about and answered — asynchronous execution and multiple live tabs are back-burner. The engine is
+already fast enough to walk a CSV, fill a form and record each response one row at a time, which is
+the shape of the work; the lane pool already covers the case where more than one browser is
+genuinely wanted.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

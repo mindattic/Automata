@@ -1143,6 +1143,9 @@ public sealed class AutomationController
             // Coerced on the way out as well as on the way in: the file on disk is hand-editable,
             // and a name the panel does not know would leave it with no palette at all.
             theme = AutomataSettings.Themes.Coerce(settings.Theme),
+            // Read from the SETTING rather than from the window, because this controller does not
+            // own one — the window writes the setting as it detaches, so the two cannot disagree.
+            panelDetached = settings.PanelDetached,
             // The outermost link of the settings chain, plus the floor beneath it. The floor is
             // sent rather than mirrored in JS so there is exactly one definition of it.
             engineDefaults = settings.EngineDefaults,

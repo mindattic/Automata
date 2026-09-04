@@ -167,6 +167,10 @@ The **⚙ Settings** fold-out in the sidebar holds:
   (Claude Code OAuth session → shared MindAttic credential store) for the AI paths. The escape
   hatch when the OAuth session is rate-limited or out of quota. Saved to
   `%APPDATA%\MindAttic\Automata\settings.json`; takes effect on the next run, no restart.
+- **Layout** — **Detach the sidebar** moves the build panel into its own window: put it on another
+  monitor, or take a third of the screen for building and give the browser the rest. Closing that
+  window docks it again, and where it was is remembered across launches. It is the same panel
+  either way — reparented, never reloaded — so nothing it was holding is lost by moving it.
 - **Theme** — **Dark** (default) or **Light**, applied the moment it is chosen and remembered
   across launches. Both palettes are checked against WCAG 2.2 AA by `tools/verify-ui.mjs`, which
   runs the same axe-core pass over each.

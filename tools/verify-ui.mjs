@@ -48,6 +48,53 @@ async function waitFor(predicate, { timeoutMs = 10000, intervalMs = 150, label =
   throw new Error(`Timed out waiting for ${label}${lastErr ? `: ${lastErr.message}` : ''}`);
 }
 
+/// Lists (and optionally closes) the app's own top-level windows, by asking Windows.
+///
+/// The detached sidebar is a WPF window, so nothing inside the page can see it and CDP cannot
+/// close it. Its close BUTTON is a path worth checking rather than assuming: docking from inside a
+/// window's own Closing handler is not the same code as docking from the panel's button, and the
+/// first attempt at it threw every time — a Window cannot be closed while it is already closing.
+function appWindows(pid, scratchDir, { close = false } = {}) {
+  const script = `Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public class Win {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static List<string> Titles(uint want) {
+    var found = new List<string>();
+    EnumWindows((h, l) => {
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      if (pid == want && IsWindowVisible(h)) {
+        var sb = new StringBuilder(300); GetWindowText(h, sb, 300);
+        if (sb.Length > 0) found.Add(h.ToInt64() + "|" + sb.ToString());
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+  public static void Close(IntPtr h) { SendMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
+}
+'@
+$titles = [Win]::Titles([uint32]${pid})
+$titles | ForEach-Object { 'WINDOW ' + $_ }
+${close ? `foreach ($t in $titles) { $p = $t.Split('|'); if ($p[1] -like '*Build*') { [Win]::Close([IntPtr][int64]$p[0]) } }` : ''}
+`;
+  const file = path.join(scratchDir, 'app-windows.ps1');
+  // A BOM, because Windows PowerShell 5.1 reads a BOM-less file as the system codepage and the
+  // window title is not ASCII.
+  writeFileSync(file, '\ufeff' + script, 'utf8');
+  const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file],
+    { encoding: 'utf8' });
+  return out.split(/\r?\n/).filter((l) => l.startsWith('WINDOW ')).map((l) => l.slice(7).split('|')[1]);
+}
+
 function servesCdp(port) {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port, path: '/json/version', timeout: 1000 }, (res) => {
@@ -1089,6 +1136,68 @@ async function main() {
       await panelPage.locator('#settings-modal-close').click();
       await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
         { timeoutMs: 5000, label: 'settings modal to close' });
+    });
+
+    await group('detach: the sidebar moves to its own window and is the same panel', async () => {
+      // The claim this makes is "same panel, moved" rather than "a second one opened". A second
+      // instance would be a second copy of the tree, the selection, the log and the recorder's
+      // state, and the two would disagree the moment either was touched — so the sentinel below is
+      // the actual check: a page variable set before the move that is still there after it.
+      await panelPage.evaluate(() => { window.__sameDocument = Date.now(); });
+      const before = await panelPage.evaluate(() => window.__sameDocument);
+      // Whatever happens below, the modal closes: an open one covers the panel in a scrim, so
+      // leaving it up turns one failed check into every check after it failing on a blocked click.
+      const closeSettings = async () => {
+        if (await hasClass(panelPage.locator('#settings-modal'), 'hidden')) return;
+        await panelPage.keyboard.press('Escape');
+        await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+          { timeoutMs: 5000, label: 'settings modal to close' });
+      };
+      try {
+
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#set-detach').waitFor({ state: 'visible', timeout: 5000 });
+      assertEqual((await panelPage.locator('#set-detach').innerText()).trim(), 'Detach the sidebar',
+        'the button should say what pressing it will do');
+      await panelPage.locator('#set-detach').click();
+
+      await waitFor(async () => (await panelPage.locator('#set-detach').innerText()).trim() === 'Dock the sidebar',
+        { timeoutMs: 10000, label: 'the host to report the panel as detached' });
+      assertEqual(await panelPage.evaluate(() => window.__sameDocument), before,
+        'the panel was reloaded rather than reparented — everything it was holding is gone');
+
+      const titles = appWindows(proc.pid, scratch);
+      assertTrue(titles.some((t) => /Build/.test(t)),
+        `expected a second window for the sidebar, got ${JSON.stringify(titles)}`);
+
+      // Alive, not just present: reparenting an HwndHost is the part that can leave a control that
+      // renders nothing, and only driving it proves otherwise.
+      await closeSettings();
+      await panelPage.locator(`.node.task[data-task="${taskId}"] .name`).click();
+      await waitFor(() => panelPage.locator(`.node.task[data-task="${taskId}"].selected`).count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the detached panel to still respond to a click' });
+
+      // Docked by CLOSING that window rather than by pressing the button again — the harder of
+      // the two paths, and the one that broke: docking from inside a window's own Closing handler
+      // cannot close that window, and the first attempt tried to. The panel is the only way to
+      // drive this app, so its close button has to put it back rather than take the UI with it.
+      appWindows(proc.pid, scratch, { close: true });
+      await waitFor(async () => (await panelPage.locator('#set-detach').innerText()).trim() === 'Detach the sidebar',
+        { timeoutMs: 10000, label: 'closing the sidebar window to dock it' });
+      assertEqual(await panelPage.evaluate(() => window.__sameDocument), before,
+        'docking reloaded the panel');
+      assertTrue(!appWindows(proc.pid, scratch).some((t) => /Build/.test(t)),
+        'the sidebar window should be gone once its panel is back in the main window');
+
+      // And still alive after the round trip.
+      await closeSettings();
+      await panelPage.locator(`.node.task[data-task="${taskId}"] .name`).click();
+      await waitFor(() => panelPage.locator(`.node.task[data-task="${taskId}"].selected`).count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the re-docked panel to still respond to a click' });
+
+      } finally {
+        await closeSettings();
+      }
     });
 
     await group('Settings modal opens, is interactable, and closes without saving', async () => {

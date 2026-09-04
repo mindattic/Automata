@@ -61,6 +61,35 @@ public sealed class AutomataSettings
     public double SidebarWidth { get; set; } = 420;
 
     /// <summary>
+    /// Whether the sidebar is living in its own window rather than docked beside the browser.
+    /// <para>
+    /// Restored on launch, so someone who works with the panel on a second monitor gets it back
+    /// there without re-detaching every time.
+    /// </para>
+    /// </summary>
+    public bool PanelDetached { get; set; }
+
+    /// <summary>
+    /// Where the detached sidebar window sat, in device-independent pixels. Null means "never
+    /// placed" and the window centres — which is also where a position on a monitor that has since
+    /// been unplugged degrades to, since the bounds are checked against the virtual screen before
+    /// they are used.
+    /// <para>
+    /// Nullable rather than NaN, and this is not a style preference: <c>double.NaN</c> cannot be
+    /// written as JSON at all, so a NaN here threw inside <see cref="AutomataSettingsStore.Save"/>
+    /// and took the whole action that was saving with it. A value this type cannot serialise has
+    /// no business being a default.
+    /// </para>
+    /// </summary>
+    public double? PanelWindowLeft { get; set; }
+
+    public double? PanelWindowTop { get; set; }
+
+    public double PanelWindowWidth { get; set; } = 460;
+
+    public double PanelWindowHeight { get; set; } = 900;
+
+    /// <summary>
     /// The outermost scope of the engine settings chain (global -> collection -> task -> step).
     /// Null means every engine setting sits at its floor, which is the behavior the app had
     /// before scoped settings existed.

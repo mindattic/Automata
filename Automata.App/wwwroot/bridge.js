@@ -218,6 +218,10 @@ window.ssPanel = {
         document.documentElement.dataset.theme = (s && s.theme) === 'light' ? 'light' : 'dark';
         $('set-theme').value = document.documentElement.dataset.theme;
 
+        // Its own window or beside the browser. The button says what pressing it will DO, which
+        // for a toggle is the only labelling that does not read as a status light.
+        $('set-detach').textContent = (s && s.panelDetached) ? 'Dock the sidebar' : 'Detach the sidebar';
+
         var radius = (s && s.borderRadius != null) ? s.borderRadius : 5;
         document.documentElement.style.setProperty('--radius', radius + 'px');
         $('set-radius').value = radius;

@@ -89,6 +89,11 @@ document.querySelectorAll('[data-clear]').forEach(function (btn) {
         post('saveSettings', { clearKey: btn.getAttribute('data-clear') });
     });
 });
+$('set-detach').addEventListener('click', function () {
+    // The host owns the window, so it owns the answer: the button's own label is rewritten when
+    // the settings come back, rather than guessed at here.
+    post('togglePanelDetached');
+});
 $('set-theme').addEventListener('change', function () {
     // Applied here rather than waiting for the host to echo it back: a theme switch that lags a
     // round trip reads as a control that did not work.
