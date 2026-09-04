@@ -13,6 +13,7 @@ import {
 import { render } from './render.js';
 import { openScopedSettings } from './scoped-settings.js';
 import { scheduleChipFor } from './schedule.js';
+import { openRowMenu, closeRowMenu } from './rowmenu.js';
 
 var dragCtx = null;           // {type:'step'|'task', id, taskId}
 
@@ -20,14 +21,51 @@ var dragCtx = null;           // {type:'step'|'task', id, taskId}
 // adds one Tab stop instead of four hundred. Arrow keys move focus between rows.
 function tabIndexFor(key) { return state.focusKey === key ? '0' : '-1'; }
 
-// Icon-only row buttons need a real accessible name, not just a hover tooltip — the glyph
-// alone tells a screen reader nothing. One string drives both.
-function miniBtn(op, glyph, label) {
-    return '<button class="mini" data-op="' + op + '" aria-label="' + esc(label) +
-        '" data-tooltip="' + esc(label) + '">' + glyph + '</button>';
+// One wrench per row, in place of the strip of six-to-eight icon buttons these rows used to
+// carry. Its accessible name says WHICH row it belongs to: a screen reader moving down the tree
+// would otherwise hear "Actions, Actions, Actions" all the way down.
+function wrench(what, name) {
+    return '<span class="node-btns"><button class="mini row-menu-btn" data-op="menu"' +
+        ' aria-haspopup="menu" aria-expanded="false"' +
+        ' aria-label="Actions for ' + what + ' ' + esc(name) + '"' +
+        ' data-tooltip="Actions for this ' + what + '">🔧</button></span>';
 }
 
+// What each kind of row offers. Held here rather than built at click time so the menu and the
+// keyboard shortcuts cannot drift apart, and so the ops a row supports are readable in one place.
+var COLLECTION_MENU = [
+    { op: 'run-collection', glyph: '▶', label: 'Run every task, in order' },
+    { op: 'add-task', glyph: '＋', label: 'New task' },
+    'separator',
+    { op: 'ren-collection', glyph: '✎', label: 'Rename…' },
+    { op: 'dup-collection', glyph: '⧉', label: 'Duplicate' },
+    { op: 'collection-settings', glyph: '⚙', label: 'Engine settings…' },
+    'separator',
+    { op: 'del-collection', glyph: '🗑', label: 'Delete…', danger: true },
+];
+
+var TASK_MENU = [
+    { op: 'run-task', glyph: '▶', label: 'Run this task' },
+    { op: 'add-step', glyph: '＋', label: 'Add a step at the end' },
+    'separator',
+    { op: 'ren-task', glyph: '✎', label: 'Rename…' },
+    { op: 'move-task', glyph: '⇄', label: 'Move to another collection…' },
+    { op: 'dup-task', glyph: '⧉', label: 'Duplicate' },
+    { op: 'task-feature', glyph: '{ }', label: 'Read as a Gherkin feature' },
+    { op: 'task-settings', glyph: '⚙', label: 'Engine settings…' },
+    'separator',
+    { op: 'del-task', glyph: '🗑', label: 'Delete…', danger: true },
+];
+
+var STEP_MENU = [
+    { op: 'ins-after', glyph: '＋', label: 'Insert a step after this one' },
+    'separator',
+    { op: 'del-step', glyph: '🗑', label: 'Delete…', danger: true },
+];
+
 export function renderTree() {
+    // The tree is about to be rebuilt, so an open menu's anchor is about to stop existing.
+    closeRowMenu(false);
     var html = '';
     var cCount = state.collections.length;
     state.collections.forEach(function (c, ci) {
@@ -43,14 +81,7 @@ export function renderTree() {
             '<span class="icon" aria-hidden="true">🗂️</span>' +
             '<span class="name">' + esc(c.name) + '</span>' +
             scheduleChipFor('collection', c.id) +
-            '<span class="node-btns">' +
-            miniBtn('run-collection', '▶', 'Run every task in this collection, in order') +
-            miniBtn('add-task', '+ add task', 'New task in this collection') +
-            miniBtn('ren-collection', '✎', 'Rename collection') +
-            miniBtn('dup-collection', '⧉', 'Duplicate collection') +
-            miniBtn('collection-settings', '⚙', 'Engine settings for this collection') +
-            miniBtn('del-collection', '🗑', 'Delete collection') +
-            '</span></div>';
+            wrench('collection', c.name) + '</div>';
         if (!open) return;
         var tasks = c.tasks || [];
         tasks.forEach(function (t, ti) {
@@ -67,16 +98,7 @@ export function renderTree() {
                 '<span class="icon" aria-hidden="true">📋</span>' +
                 '<span class="name">' + esc(t.name) + '</span>' +
                 scheduleChipFor('task', t.id) +
-                '<span class="node-btns">' +
-                miniBtn('run-task', '▶', "Run this task's steps") +
-                miniBtn('add-step', '+ add step', 'Add a step at the end of this task') +
-                miniBtn('ren-task', '✎', 'Rename task') +
-                miniBtn('move-task', '⇄', 'Move task to another collection') +
-                miniBtn('dup-task', '⧉', 'Duplicate task') +
-                miniBtn('task-feature', '{ }', 'Read this task as a Gherkin feature') +
-                miniBtn('task-settings', '⚙', 'Engine settings for this task') +
-                miniBtn('del-task', '🗑', 'Delete task') +
-                '</span></div>';
+                wrench('task', t.name) + '</div>';
             if (tOpen) html += renderSteps(t, t.steps || [], 0);
         });
     });
@@ -108,10 +130,7 @@ function renderSteps(task, steps, depth, parentId) {
             '<span class="status" role="img" aria-label="' + esc(status || 'not run') + '">' +
             (STATUS_GLYPH[status] || '▫') + '</span>' +
             '<span class="name">' + esc(s.label || s.action) + '</span>' + flags +
-            '<span class="node-btns">' +
-            miniBtn('ins-after', '＋', 'Insert a new step after this one') +
-            miniBtn('del-step', '🗑', 'Delete step') +
-            '</span></div>';
+            wrench('step', s.label || s.action) + '</div>';
         html += renderSteps(task, kids, depth + 1, s.id);
     });
     if (steps.length) html += insertZone(task.id, pid, steps.length, depth);
@@ -124,9 +143,9 @@ function renderSteps(task, steps, depth, parentId) {
 //
 // Deliberately aria-hidden and unfocusable: at 10px tall it cannot meet WCAG 2.2 SC 2.5.8's
 // 24x24 pointer-target minimum, and growing it would add ~14px to every step row. It relies
-// on the criterion's "Equivalent" exception instead — the 24x24 ＋ button on each step row
-// performs the same insertion and is fully keyboard-operable — so this remains a pure mouse
-// shortcut rather than a second, undersized focus stop per gap.
+// on the criterion's "Equivalent" exception instead — the step's own menu, opened from a 24x24
+// wrench, offers "Insert a step after this one" and is fully keyboard-operable — so this remains
+// a pure mouse shortcut rather than a second, undersized focus stop per gap.
 function insertZone(taskId, parentId, index, depth) {
     var active = state.gapInsert && state.gapInsert.taskId === taskId &&
         (state.gapInsert.parentId || '') === parentId && state.gapInsert.index === index;
@@ -135,30 +154,94 @@ function insertZone(taskId, parentId, index, depth) {
         '" style="padding-left:' + (34 + depth * 14) + 'px">' +
         '<span>＋ add step here</span></div>';
 }
+// What a row's operations DO. One definition each, called both by the row menu and by anything
+// else that needs the same effect — a shortcut, a test, a future context menu — so there is never
+// a version of "delete task" that skips the confirmation because it was reached another way.
+
+function collectionOp(cid, op) {
+    if (op === 'run-collection') { state.expanded[cid] = true; post('runCollection', { collectionId: cid }); return; }
+    if (op === 'add-task') { post('createTask', { collectionId: cid, name: 'New task' }); return; }
+    if (op === 'ren-collection') {
+        var col = findCollection(cid);
+        openRenameModal('Rename collection', col ? col.name : '', function (name) {
+            post('renameCollection', { id: cid, name: name });
+        });
+        return;
+    }
+    if (op === 'collection-settings') { openScopedSettings('collection', { collectionId: cid }); return; }
+    if (op === 'dup-collection') { post('duplicateCollection', { id: cid }); return; }
+    if (op === 'del-collection') {
+        var delCol = findCollection(cid);
+        openConfirmModal('Delete collection',
+            'Are you sure you want to delete "' + (delCol ? delCol.name : 'this collection') +
+            '" and all of its tasks?', 'Delete',
+            function () { post('deleteCollection', { id: cid }); });
+    }
+}
+
+function taskOp(cid, tid, op) {
+    if (op === 'run-task') { post('runTask', { taskId: tid, allowRepair: $('allow-repair').checked }); return; }
+    if (op === 'add-step') { addStep(tid, null); return; }
+    if (op === 'ren-task') {
+        var task = findTask(tid);
+        openRenameModal('Rename task', task ? task.name : '', function (name) {
+            post('renameTask', { id: tid, name: name });
+        });
+        return;
+    }
+    if (op === 'move-task') { openMoveTaskModal(tid); return; }
+    if (op === 'task-feature') { post('getFeature', { taskId: tid }); return; }
+    if (op === 'task-settings') { openScopedSettings('task', { collectionId: cid, taskId: tid }); return; }
+    if (op === 'dup-task') { post('duplicateTask', { id: tid }); return; }
+    if (op === 'del-task') {
+        var delTask = findTask(tid);
+        openConfirmModal('Delete task',
+            'Are you sure you want to delete "' + (delTask ? delTask.name : 'this task') + '"?',
+            'Delete',
+            function () { post('deleteTask', { id: tid }); });
+    }
+}
+
+function stepOp(tid, sid, op) {
+    if (op === 'del-step') {
+        var task = findTask(tid);
+        var step = task && findStep(task.steps, sid);
+        openConfirmModal('Delete step',
+            'Are you sure you want to delete "' + (step ? (step.label || step.action) : 'this step') + '"?',
+            'Delete',
+            function () {
+                if (!task) return;
+                removeStep(task.steps, sid);
+                if (state.sel.stepId === sid) state.sel.stepId = null;
+                saveTask(task);
+            });
+        return;
+    }
+    // Keyboard-operable equivalent of clicking the hover gap below this row
+    // (WCAG 2.2 SC 2.5.8 "Equivalent" exception — see insertZone).
+    if (op === 'ins-after') {
+        var t2 = findTask(tid);
+        var loc = t2 && locateStep(t2.steps, sid, null);
+        if (!loc) return;
+        openActionPicker(function (action) {
+            if (action === '__record') beginRecordAtGap(tid, loc.parentId, loc.index + 1);
+            else createStepAt(tid, loc.parentId, loc.index + 1, action);
+        });
+    }
+}
+
 function wireTree() {
     treeEl.querySelectorAll('.node.collection').forEach(function (el) {
         var cid = el.getAttribute('data-collection');
         el.addEventListener('click', function (e) {
             var op = e.target.getAttribute && e.target.getAttribute('data-op');
-            if (op === 'run-collection') { state.expanded[cid] = true; post('runCollection', { collectionId: cid }); return; }
-            if (op === 'add-task') { post('createTask', { collectionId: cid, name: 'New task' }); return; }
-            if (op === 'ren-collection') {
-                var col = findCollection(cid);
-                openRenameModal('Rename collection', col ? col.name : '', function (name) {
-                    post('renameCollection', { id: cid, name: name });
-                });
+            if (op === 'menu') {
+                var c = findCollection(cid);
+                openRowMenu(e.target, 'Actions for collection ' + (c ? c.name : ''),
+                    COLLECTION_MENU, function (picked) { collectionOp(cid, picked); });
                 return;
             }
-            if (op === 'collection-settings') { openScopedSettings('collection', { collectionId: cid }); return; }
-            if (op === 'dup-collection') { post('duplicateCollection', { id: cid }); return; }
-            if (op === 'del-collection') {
-                var delCol = findCollection(cid);
-                openConfirmModal('Delete collection',
-                    'Are you sure you want to delete "' + (delCol ? delCol.name : 'this collection') +
-                    '" and all of its tasks?', 'Delete',
-                    function () { post('deleteCollection', { id: cid }); });
-                return;
-            }
+            if (op) { collectionOp(cid, op); return; }
             if (e.target.classList.contains('twist')) {
                 state.expanded[cid] = state.expanded[cid] === false;
                 ui.pendingFocus = true;
@@ -182,27 +265,13 @@ function wireTree() {
         var tid = el.getAttribute('data-task'), cid = el.getAttribute('data-collection');
         el.addEventListener('click', function (e) {
             var op = e.target.getAttribute && e.target.getAttribute('data-op');
-            if (op === 'run-task') { post('runTask', { taskId: tid, allowRepair: $('allow-repair').checked }); return; }
-            if (op === 'add-step') { addStep(tid, null); return; }
-            if (op === 'ren-task') {
-                var task = findTask(tid);
-                openRenameModal('Rename task', task ? task.name : '', function (name) {
-                    post('renameTask', { id: tid, name: name });
-                });
+            if (op === 'menu') {
+                var t = findTask(tid);
+                openRowMenu(e.target, 'Actions for task ' + (t ? t.name : ''),
+                    TASK_MENU, function (picked) { taskOp(cid, tid, picked); });
                 return;
             }
-            if (op === 'move-task') { openMoveTaskModal(tid); return; }
-            if (op === 'task-feature') { post('getFeature', { taskId: tid }); return; }
-            if (op === 'task-settings') { openScopedSettings('task', { collectionId: cid, taskId: tid }); return; }
-            if (op === 'dup-task') { post('duplicateTask', { id: tid }); return; }
-            if (op === 'del-task') {
-                var delTask = findTask(tid);
-                openConfirmModal('Delete task',
-                    'Are you sure you want to delete "' + (delTask ? delTask.name : 'this task') + '"?',
-                    'Delete',
-                    function () { post('deleteTask', { id: tid }); });
-                return;
-            }
+            if (op) { taskOp(cid, tid, op); return; }
             if (e.target.classList.contains('twist')) {
                 state.expanded[tid] = state.expanded[tid] !== true;
                 ui.pendingFocus = true;
@@ -221,32 +290,14 @@ function wireTree() {
         var sid = el.getAttribute('data-step'), tid = el.getAttribute('data-task');
         el.addEventListener('click', function (e) {
             var op = e.target.getAttribute && e.target.getAttribute('data-op');
-            if (op === 'del-step') {
-                var task = findTask(tid);
-                var step = task && findStep(task.steps, sid);
-                openConfirmModal('Delete step',
-                    'Are you sure you want to delete "' + (step ? (step.label || step.action) : 'this step') + '"?',
-                    'Delete',
-                    function () {
-                        if (!task) return;
-                        removeStep(task.steps, sid);
-                        if (state.sel.stepId === sid) state.sel.stepId = null;
-                        saveTask(task);
-                    });
+            if (op === 'menu') {
+                var t = findTask(tid);
+                var st = t && findStep(t.steps, sid);
+                openRowMenu(e.target, 'Actions for step ' + (st ? (st.label || st.action) : ''),
+                    STEP_MENU, function (picked) { stepOp(tid, sid, picked); });
                 return;
             }
-            // Keyboard-operable equivalent of clicking the hover gap below this row
-            // (WCAG 2.2 SC 2.5.8 "Equivalent" exception — see insertZone).
-            if (op === 'ins-after') {
-                var t2 = findTask(tid);
-                var loc = t2 && locateStep(t2.steps, sid, null);
-                if (!loc) return;
-                openActionPicker(function (action) {
-                    if (action === '__record') beginRecordAtGap(tid, loc.parentId, loc.index + 1);
-                    else createStepAt(tid, loc.parentId, loc.index + 1, action);
-                });
-                return;
-            }
+            if (op) { stepOp(tid, sid, op); return; }
             var selTask = findTask(tid);
             state.sel = { collectionId: state.sel.collectionId, taskId: tid, stepId: sid };
             if (selTask) state.expanded[tid] = true;
@@ -485,17 +536,13 @@ treeEl.addEventListener('focusin', function (e) {
     treeRows().forEach(function (r) { r.setAttribute('tabindex', r === row ? '0' : '-1'); });
 });
 
-// Keyboard/AT equivalent of the hover-revealed row buttons: offer exactly the actions this
-// row already has, read straight off its own buttons so the two can never drift apart.
+// Shift+F10 and the Context Menu key open the row's own menu — the same one the wrench opens,
+// not a parallel list built from it. When these were a strip of icon buttons this had to
+// assemble a picker by reading their labels back off the DOM; now there is one menu and both
+// gestures reach it, so they cannot drift apart because there is nothing to drift from.
 function openRowActions(row) {
-    var btns = Array.prototype.slice.call(row.querySelectorAll('.node-btns .mini'));
-    if (!btns.length) return;
-    var nameEl = row.querySelector('.name');
-    openListPicker('Row actions', 'Actions for “' + (nameEl ? nameEl.textContent : 'this row') + '”:',
-        btns.map(function (b, ix) {
-            return { value: String(ix), label: b.getAttribute('aria-label') || b.textContent };
-        }),
-        function (v) { btns[parseInt(v, 10)].click(); });
+    var btn = row.querySelector('.node-btns [data-op="menu"]');
+    if (btn) btn.click();
 }
 
 // Non-dragging path for "move this task to another collection", which drag-and-drop was the

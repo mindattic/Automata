@@ -244,7 +244,57 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
    take focus, so the row gaining focus has to reveal them before Tab can get there. */
 .node:hover .node-btns,
 .node:focus-within .node-btns,
+.node.menu-open .node-btns,
 .section-head .node-btns { display: inline-flex; }
+
+/* ---- the row menu ---- */
+
+/* One wrench per row, in place of the strip of six-to-eight icon buttons these rows used to
+   carry. The row keeps its width for the thing it is actually naming. */
+.row-menu {
+  position: fixed;
+  z-index: 1100;                 /* above a modal's 1000 backdrop, since a menu can outlive one */
+  min-width: 200px;
+  padding: 4px;
+  background: var(--color-bg-3);
+  border: 1px solid var(--color-border-modal);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+.row-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--target-min);
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.row-menu [role="menuitem"]:hover,
+.row-menu [role="menuitem"]:focus { background: var(--color-bg-sel); outline: none; }
+
+/* Focus has to be visible on its own, not only as a background change — the menu is driven by
+   arrow keys, so the focused item IS the cursor. */
+.row-menu [role="menuitem"]:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+.row-menu [role="menuitem"].danger { color: var(--color-danger); }
+
+/* Fixed-width and centred, so the labels line up in a column however wide each glyph renders. */
+.row-menu-glyph { width: 16px; flex: none; text-align: center; }
+
+.row-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--color-border);
+}
 
 .node .status { width: 18px; flex: none; text-align: center; }
 .node.st-running .status { color: var(--color-warning); }
@@ -612,7 +662,7 @@ button.mini.binding-toggle { display: none; }
   padding: var(--space-2);
   border: 1px solid var(--color-insert);
   border-radius: var(--radius);
-  color: var(--color-text);
+  color: var(--color-fg);
 }
 
 /* ---- runs ---- */

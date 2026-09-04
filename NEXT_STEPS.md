@@ -745,6 +745,34 @@ folder on startup, so two of them running at once deleted each other's workspace
 victim failed with a missing generated page, which reads exactly like the product being broken.
 They now only sweep what is an hour old or more.
 
+### Phase 13 - one wrench per row (2026-09-04)
+
+A collection row carried six icon buttons, a task row eight. At a sidebar's width that is a wall
+of glyphs that only appears on hover, competes with the row's own name for the space, and gives
+every operation the same weight whether it renames something or deletes it. **Every row now has a
+single wrench that opens a menu**, and the operations get room for actual words - "Move to another
+collection…", not `⇄`.
+
+- `rowmenu.js` is the menu: `role="menu"` with `role="menuitem"` buttons, opened focused on its
+  first item, arrow keys wrapping, Home/End, Escape closing and handing focus back to the wrench,
+  Tab closing, click-outside and scroll closing, and one open at a time. Positioned fixed against
+  the wrench, flipped above when there is no room below.
+- The ops themselves moved into `collectionOp` / `taskOp` / `stepOp`, one definition each, so a
+  menu pick and any other route to the same operation cannot diverge - there is no version of
+  "delete task" that skips its confirmation because it was reached another way.
+- **Shift+F10 and the Context Menu key now open the same menu.** They used to assemble a separate
+  list picker by reading labels back off the row's buttons; there is one menu now, so there is
+  nothing left to drift from.
+- The insert-gap's WCAG 2.2 SC 2.5.8 "Equivalent" argument still holds and its comment says so
+  properly: the equivalent control is the step menu's "Insert a step after this one", reached from
+  a 24x24 wrench, with 24px menu rows.
+- The wrench parks its own hover tooltip while its menu is up. Otherwise "Actions for this
+  collection" sits underneath a menu of actions for that collection - the same words twice, one of
+  them behind the other.
+
+`clickRowOp` in the harness became two clicks, which kept all twenty-odd existing checks working
+unchanged, and two new groups cover the menu's keyboard model and the one-at-a-time rule.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

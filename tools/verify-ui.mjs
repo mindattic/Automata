@@ -116,12 +116,17 @@ async function waitForEnabled(locator, timeoutMs = 10000) {
 // re-apply to the replacement without the pointer moving again. Playwright's own retry re-resolves
 // the button but cannot re-hover, so a run still emitting step events in the background used to
 // make this time out at random.
+//
+// Every row operation now lives behind that row's wrench, so this is two clicks: the wrench, then
+// the item. The menu is rendered at the document root rather than inside the row, which is why the
+// second click is not scoped to the row locator.
 async function clickRowOp(rowLocator, op) {
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       await rowLocator.hover();
-      await rowLocator.locator(`[data-op="${op}"]`).click({ timeout: 5000 });
+      await rowLocator.locator('[data-op="menu"]').click({ timeout: 5000 });
+      await rowLocator.page().locator(`.row-menu [data-op="${op}"]`).click({ timeout: 5000 });
       return;
     } catch (err) {
       lastErr = err;
@@ -363,15 +368,17 @@ async function floorCheck(exePath, group) {
       for (const view of ['view-schedule', 'view-data', 'view-runs']) {
         assertTrue(await page.locator(`#${view}`).isHidden(), `#${view} should be hidden on first run`);
       }
-      // Two different bars. Some things must not exist at all yet; the per-scope cogs DO exist
-      // in the DOM but live inside .node-btns, which is display:none until a row is hovered or
-      // focused - so the invariant on them is visibility, not presence.
-      const absent = await page.locator('.chip.bound, .chip.sched, #lane-strip, .settings-field').count();
+      // Two different bars. Some things must not exist at all yet; the rest exist but must not be
+      // on screen until the user reaches for them. Every per-row operation now lives inside a menu
+      // that is built when its wrench is clicked, so for those the invariant is presence: nothing
+      // named an engine setting or a Gherkin feature is anywhere in a first-run DOM.
+      const absent = await page.locator(
+        '.chip.bound, .chip.sched, #lane-strip, .settings-field, .row-menu',
+      ).count();
       assertEqual(absent, 0, 'advanced affordances exist in the first-run DOM');
       const visible = await page.locator(
-        '[data-op="collection-settings"]:visible, [data-op="task-settings"]:visible, ' +
         '#ed-settings:visible, .binding-toggle:visible, #btn-draft:visible, ' +
-        '[data-op="task-feature"]:visible',
+        '[data-op="menu"]:visible',
       ).count();
       assertEqual(visible, 0, 'advanced affordances are on screen without hovering anything');
     });
@@ -664,12 +671,89 @@ async function main() {
         `expected idle steps to show ▫, got ${JSON.stringify(stepStatuses)}`);
     });
 
-    await group('per-row Run buttons exist; toolbar Run button is gone', async () => {
+    await group('every row runs from its own wrench; the toolbar Run button is gone', async () => {
       assertEqual(await panelPage.locator('#btn-run').count(), 0, '#btn-run should no longer exist in the DOM');
-      assertEqual(await panelPage.locator(`.node.collection[data-collection="${collectionId}"] [data-op="run-collection"]`).count(), 1,
-        'expected a run-collection button on the collection row');
-      assertEqual(await panelPage.locator(`.node.task[data-task="${taskId}"] [data-op="run-task"]`).count(), 1,
-        'expected a run-task button on the task row');
+
+      // One wrench per row, not a strip: the whole point of the change is that a row spends its
+      // width on its name.
+      for (const [what, selector] of [
+        ['collection', `.node.collection[data-collection="${collectionId}"]`],
+        ['task', `.node.task[data-task="${taskId}"]`],
+      ]) {
+        const row = panelPage.locator(selector);
+        assertEqual(await row.locator('.node-btns button').count(), 1,
+          `expected exactly one row button on the ${what} row`);
+
+        await row.hover();
+        await row.locator('[data-op="menu"]').click();
+        await panelPage.locator('.row-menu').waitFor({ state: 'visible', timeout: 5000 });
+        assertEqual(await panelPage.locator(`.row-menu [data-op="run-${what}"]`).count(), 1,
+          `expected the ${what} menu to offer its run`);
+
+        // Escape closes it and hands focus back to the wrench it came from — a menu you can only
+        // leave with the mouse is a trap.
+        await panelPage.keyboard.press('Escape');
+        await waitFor(() => panelPage.locator('.row-menu').count().then((n) => n === 0),
+          { timeoutMs: 5000, label: `the ${what} menu to close on Escape` });
+        assertEqual(
+          await panelPage.evaluate(() => document.activeElement?.getAttribute('data-op')),
+          'menu', 'focus should return to the wrench the menu came from');
+      }
+    });
+
+    await group('row menu: arrow keys move through it, and only one is ever open', async () => {
+      const collectionRow = panelPage.locator(`.node.collection[data-collection="${collectionId}"]`);
+      const taskRow = panelPage.locator(`.node.task[data-task="${taskId}"]`);
+
+      await collectionRow.hover();
+      await collectionRow.locator('[data-op="menu"]').click();
+      await panelPage.locator('.row-menu').waitFor({ state: 'visible', timeout: 5000 });
+
+      // Opening focuses the first item, so the menu is usable without touching the mouse again.
+      // A tooltip left on screen under the menu would be captioning the menu with the name of the
+      // button that opened it — the same words, twice, one of them behind the other.
+      await waitFor(() => panelPage.locator('#ma-tooltip:visible').count().then((n) => n === 0),
+        { timeoutMs: 3000, label: "the wrench's tooltip to give way to the menu it opened" });
+
+      const first = await panelPage.evaluate(() => document.activeElement?.getAttribute('data-op'));
+      assertEqual(first, 'run-collection', 'opening a menu should focus its first item');
+
+      await panelPage.keyboard.press('ArrowDown');
+      assertEqual(await panelPage.evaluate(() => document.activeElement?.getAttribute('data-op')),
+        'add-task', 'ArrowDown should move to the next item');
+
+      // Separators are not stops. A keyboard user pressing Down twice must land on two commands,
+      // not on a horizontal rule.
+      await panelPage.keyboard.press('ArrowDown');
+      assertEqual(await panelPage.evaluate(() => document.activeElement?.getAttribute('data-op')),
+        'ren-collection', 'a separator must not take focus');
+
+      // Up from the first item wraps to the last, which is the ARIA menu pattern.
+      await panelPage.keyboard.press('Home');
+      await panelPage.keyboard.press('ArrowUp');
+      assertEqual(await panelPage.evaluate(() => document.activeElement?.getAttribute('data-op')),
+        'del-collection', 'ArrowUp from the first item should wrap to the last');
+
+      // Opening another row's menu replaces this one rather than stacking beside it.
+      await taskRow.hover();
+      await taskRow.locator('[data-op="menu"]').click();
+      await panelPage.locator('.row-menu [data-op="run-task"]').waitFor({ state: 'visible', timeout: 5000 });
+      assertEqual(await panelPage.locator('.row-menu').count(), 1,
+        'two menus must never be open at once');
+
+      await panelPage.keyboard.press('Escape');
+      await waitFor(() => panelPage.locator('.row-menu').count().then((n) => n === 0),
+        { timeoutMs: 5000, label: 'the menu to close' });
+
+      // Shift+F10 on a focused row opens the same menu — there is no mouse-only path to any of
+      // these operations, and no second list assembled for the keyboard that could fall behind it.
+      await taskRow.click();
+      await panelPage.locator(`.node.task[data-task="${taskId}"]`).focus();
+      await panelPage.keyboard.press('Shift+F10');
+      await panelPage.locator('.row-menu [data-op="run-task"]').waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.keyboard.press('Escape');
+      await waitFor(() => panelPage.locator('.row-menu').count().then((n) => n === 0),
+        { timeoutMs: 5000, label: 'the keyboard-opened menu to close' });
     });
 
     await group('hover gap: hr-line appears, and nothing around it moves', async () => {
@@ -818,10 +902,17 @@ async function main() {
       // collection finish before Cancel lands, which would test nothing. #btn-cancel-run starts
       // disabled (no run yet) and a disabled element's click() doesn't fire, so post the
       // underlying message directly instead, exactly as its click handler would.
-      await panelPage.evaluate((cid) => {
-        document.querySelector(`.node.collection[data-collection="${cid}"] [data-op="run-collection"]`).click();
+      // The run is started from the collection's menu now, so the menu is opened FIRST and only
+      // the item click shares a tick with the cancel — opening it in the same tick would leave
+      // nothing to click.
+      const collectionRow = panelPage.locator(`.node.collection[data-collection="${collectionId}"]`);
+      await collectionRow.hover();
+      await collectionRow.locator('[data-op="menu"]').click();
+      await panelPage.locator('.row-menu [data-op="run-collection"]').waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.evaluate(() => {
+        document.querySelector('.row-menu [data-op="run-collection"]').click();
         window.chrome.webview.postMessage({ action: 'cancelRun' });
-      }, collectionId);
+      });
       await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
         { timeoutMs: 10000, label: 'the cancelled collection run to actually stop' });
       await sleep(300);
