@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using Automata.Core.Automation.Model;
@@ -325,23 +326,63 @@ public sealed class CollectionStore
                 !string.Equals(Path.GetFileName(f), ManifestFileName, StringComparison.OrdinalIgnoreCase))
             : [];
 
+    // ---- finding a thing by its id ------------------------------------------------------------
+    //
+    // Both of these used to answer by reading EVERY file: a save walked every collection manifest
+    // to find its folder, then every task file in that folder to find its own. That is fine at ten
+    // tasks and quadratic-feeling at a few hundred — and it happens on every keystroke the step
+    // editor commits.
+    //
+    // So the answers are remembered. What they are NOT is trusted: this store is a folder a person
+    // is invited to rearrange in Explorer, and a cache that believed itself would hand back a path
+    // to a file somebody has since renamed, moved or replaced. Every hit is confirmed by reading
+    // the id back out of the file it points at — one small read instead of a whole directory —
+    // and a confirmation that fails simply falls through to the scan that populated it.
+
+    private readonly ConcurrentDictionary<string, string> collectionDirById = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> taskFileById = new(StringComparer.Ordinal);
+
     private string? FindCollectionDirById(string id)
     {
+        if (collectionDirById.TryGetValue(id, out var remembered)
+            && ReadJson<Collection>(Path.Combine(remembered, ManifestFileName))?.Id == id)
+        {
+            return remembered;
+        }
+
         foreach (var dir in CollectionDirs())
         {
-            if (ReadJson<Collection>(Path.Combine(dir, ManifestFileName))?.Id == id)
-                return dir;
+            var found = ReadJson<Collection>(Path.Combine(dir, ManifestFileName))?.Id;
+            if (found == null) continue;
+            collectionDirById[found] = dir;
+            if (found == id) return dir;
         }
+
+        collectionDirById.TryRemove(id, out _);
         return null;
     }
 
-    private static string? FindTaskFileById(string dir, string taskId)
+    private string? FindTaskFileById(string dir, string taskId)
     {
+        if (taskFileById.TryGetValue(taskId, out var remembered)
+            && ReadJson<TaskDefinition>(remembered)?.Id == taskId)
+        {
+            return remembered;
+        }
+
         foreach (var file in TaskFiles(dir))
         {
-            if (ReadJson<TaskDefinition>(file)?.Id == taskId)
-                return file;
+            var found = ReadJson<TaskDefinition>(file)?.Id;
+            if (found == null) continue;
+            taskFileById[found] = file;
+            if (found == taskId) return file;
         }
+
+        // Not in THIS collection — which is not the same as gone, since the caller may be asking
+        // about a task that lives somewhere else. Only a remembered path that pointed into this
+        // directory has been disproved.
+        if (remembered != null && PathsEqual(Path.GetDirectoryName(remembered), dir))
+            taskFileById.TryRemove(taskId, out _);
         return null;
     }
 

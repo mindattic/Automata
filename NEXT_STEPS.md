@@ -888,6 +888,26 @@ it from the command line with a third term, and checks that a malformed `--input
 
 The Inputs dialog hangs off the task's wrench and commits as it is edited, like scoped settings.
 
+### Phase 17 - the store stops re-reading itself (2026-09-04)
+
+Finding a collection by id read every collection manifest; finding a task by id then read every
+task file in that folder. A save did both, and the step editor commits a save on every field
+change. Fine at ten tasks; not at a few hundred - and the demo batch growing to eleven was enough
+to make pushes slow enough to expose the focus bug fixed in phase 15.
+
+Both answers are remembered now. **What they are not is trusted.** This store is a folder people
+are invited to rearrange in Explorer, and a cache that believed itself would hand back a path to a
+file somebody has since renamed, moved or replaced - and the next save would write a second copy
+beside it. So every hit is confirmed by reading the id back out of the file it points at: one small
+read instead of a whole directory, and a confirmation that fails simply falls through to the scan
+that populated it. Three tests pin exactly that: a task file renamed by hand, a collection folder
+renamed by hand, and a deleted id that must stop resolving rather than keep answering from memory.
+
+What is NOT fixed is the other half - `PushStateAsync` still sends the whole store to the panel
+after every mutation. That needs a push protocol that can say "this one task changed" and a panel
+that can apply it without losing selection, expansion or focus, which is a different kind of change
+and is recorded under **Not done yet**.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -919,7 +939,8 @@ yet** below.
   context - but it is undocumented anywhere except the `chain` example, which navigates explicitly
   before each call and says why in its description. Worth either honouring the callee's start URL
   behind a flag or naming the rule in the editor.
-- **Known perf cleanup** (fine at current scale, flagged by code review): every panel mutation
-  re-scans the whole store (`PushStateAsync` → `LoadCollections` + per-collection `LoadTasks`,
-  each id lookup re-enumerating directories). Fix when stores get large: an id→path index
-  invalidated on write, and pushing only the affected subtree.
+- **Pushing only the affected subtree.** The id→path index landed in phase 17, so a save no
+  longer re-reads the workspace to find one file — but `PushStateAsync` still serialises the WHOLE
+  store to the panel after every mutation, and that is the remaining half. It needs a push protocol
+  that can say "this one task changed" and a panel that can apply it without losing selection,
+  expansion or focus, which is a protocol change rather than a caching one.

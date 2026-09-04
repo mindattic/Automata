@@ -35,6 +35,70 @@ public class CollectionStoreTests
     private static TaskDefinition ReadTaskFile(string path) =>
         JsonSerializer.Deserialize<TaskDefinition>(File.ReadAllText(path), AutomataJson.Options)!;
 
+    // ---- finding a thing by its id ---------------------------------------------------------------
+    //
+    // The store remembers where an id lives so a save does not re-read the whole workspace to find
+    // one file. These pin the part that matters: the memory is never believed over the disk. This
+    // is a folder people are invited to rearrange in Explorer, and a remembered path to a file that
+    // has since moved would have the next save quietly write a second copy beside it.
+
+    [Test]
+    public void ATaskWhoseFileWasRenamedByHandIsStillTheSameTask()
+    {
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id, "One");
+        store.SaveTask(task);
+        Assert.That(store.GetTask(task.Id), Is.Not.Null, "and now the store knows where it lives");
+
+        var dir = Path.Combine(root, "C");
+        File.Move(Path.Combine(dir, "One.json"), Path.Combine(dir, "Renamed.json"));
+
+        // The file name wins on load, so this is the same task under a new name.
+        var healed = store.LoadTasks(collection.Id).Single();
+        healed.Description = "edited after the rename";
+        store.SaveTask(healed);
+
+        var files = Directory.GetFiles(dir, "*.json").Select(Path.GetFileName).Order().ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(healed.Name, Is.EqualTo("Renamed"));
+            Assert.That(files, Is.EqualTo(new[] { "collection.json", "Renamed.json" }),
+                "a remembered path must not leave a copy behind at the old one");
+        });
+    }
+
+    [Test]
+    public void ACollectionWhoseFolderWasRenamedByHandIsStillTheSameCollection()
+    {
+        var collection = store.CreateCollection("C");
+        store.SaveTask(NewTask(collection.Id));
+        Assert.That(store.GetCollection(collection.Id), Is.Not.Null);
+
+        Directory.Move(Path.Combine(root, "C"), Path.Combine(root, "Renamed"));
+
+        var found = store.GetCollection(collection.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(found, Is.Not.Null, "the collection is where its folder now is");
+            Assert.That(found!.Name, Is.EqualTo("Renamed"));
+            Assert.That(Directory.GetDirectories(root).Length, Is.EqualTo(1));
+        });
+    }
+
+    /// <summary>A deleted id must stop resolving, not keep answering from memory.</summary>
+    [Test]
+    public void ADeletedTaskIsNotStillFoundByItsId()
+    {
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id);
+        store.SaveTask(task);
+        Assert.That(store.GetTask(task.Id), Is.Not.Null);
+
+        store.DeleteTask(task.Id);
+
+        Assert.That(store.GetTask(task.Id), Is.Null);
+    }
+
     // ---- name-based layout ---------------------------------------------------------------------
 
     [Test]
