@@ -82,7 +82,11 @@ public static class BrowserActions
         var raw = await EvalOnResolvedAsync(browser, """
             var isNative = el.tagName === 'INPUT';
             var isChecked = isNative ? el.checked : el.getAttribute('aria-checked') === 'true';
-            var rect = el.getBoundingClientRect();
+            // The resolver's translated rect when it is there, because a widget inside an iframe
+            // measures itself against that frame's viewport while the click below is dispatched
+            // against the top document's.
+            var rect = window.__automataViewportRect
+                ? window.__automataViewportRect(el) : el.getBoundingClientRect();
             return JSON.stringify({ ok: true, checked: isChecked, native: isNative,
                 centerX: rect.left + rect.width / 2, centerY: rect.top + rect.height / 2 });
             """, ct);

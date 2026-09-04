@@ -71,7 +71,10 @@ public static class DemoPages
     public static IReadOnlyList<DemoPage> All()
     {
         var pages = new List<DemoPage>
-            { Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(), ShopSearch() };
+        {
+            Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(),
+            Shadow(), ShopSearch(),
+        };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
     }
@@ -105,6 +108,7 @@ public static class DemoPages
           .facts dt { font-weight: 600; }
           .facts dd { margin: 0 0 8px; }
           .pending { color: #a05000; }
+          h2.section { font-size: 15px; margin: 20px 0 8px; }
           table.invoices { border-collapse: collapse; }
           table.invoices th, table.invoices td { border: 1px solid #d4d4d4; padding: 6px 12px; text-align: left; }
         </style>
@@ -416,6 +420,64 @@ public static class DemoPages
                   <td class="amount">${amount:0.00}</td>
                 </tr>
         """));
+
+    /// <summary>
+    /// A control inside an OPEN shadow root, and a same-origin iframe — the two places a selector
+    /// run against the top document simply cannot see.
+    /// <para>
+    /// Both report what happened back into their OWN tree, not into the top document, so a step
+    /// that asserts on the result has to reach in too. An example that clicked inside and then
+    /// checked a flag on the outer page would only ever prove half of it.
+    /// </para>
+    /// </summary>
+    private static DemoPage Shadow() => new("shadow.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — shadow DOM and a frame</title>{{Css}}</head>
+        <body>
+          <h1>Behind a boundary</h1>
+          <p class="lede">Neither of the two controls below is reachable from the top document:
+             one lives in a shadow root, the other in a frame of its own.</p>
+
+          <h2 class="section">In a shadow root</h2>
+          <div id="host"></div>
+
+          <h2 class="section">In an iframe</h2>
+          <!-- srcdoc, not src="framed.html", and for a reason worth knowing: a page loaded from
+               file:// gets an OPAQUE origin, so one local file embedding another is cross-origin
+               even though they sit in the same folder — nothing can read into it. A srcdoc frame
+               inherits its embedder's origin, which is what a real same-origin embed
+               (shop.example embedding shop.example/cart) looks like, and is therefore the case
+               this example is actually about. -->
+          <iframe id="frame" title="An embedded page"
+                  style="width: 420px; height: 160px; border: 1px solid #d4d4d4;"
+                  srcdoc="<!doctype html><meta charset='utf-8'>
+                          <style>body { font: 15px/1.5 system-ui, sans-serif; margin: 8px; }
+                                 button { font: inherit; padding: 6px 14px; }</style>
+                          <p>This page is inside an iframe on the page that embedded it.</p>
+                          <button id='in-frame'>The button in the frame</button>
+                          <p id='frame-said'></p>
+                          <script>
+                            document.getElementById('in-frame').addEventListener('click', function () {
+                              document.getElementById('frame-said').textContent = 'the frame was clicked';
+                            });
+                          </script>"></iframe>
+
+          <script>
+            // OPEN, so script can see in. A closed root is invisible to everything by design, and
+            // no automation can reach one without the page's cooperation.
+            var shadow = document.getElementById('host').attachShadow({ mode: 'open' });
+            shadow.innerHTML =
+              '<style>p { font: inherit; } button { font: inherit; padding: 6px 14px; }</style>' +
+              '<button id="in-shadow">The button in the shadow root</button>' +
+              '<p id="shadow-said"></p>';
+            shadow.getElementById('in-shadow').addEventListener('click', function () {
+              shadow.getElementById('shadow-said').textContent = 'the shadow root was clicked';
+            });
+          </script>
+        </body>
+        </html>
+        """);
 
     /// <summary>
     /// A results grid of repeating tiles — the shape a harvest exists for. Every tile carries its

@@ -76,6 +76,7 @@ public static class DemoTasks
         Order(demoRoot),
         Zoom(demoRoot),
         Invoices(demoRoot),
+        Shadow(demoRoot),
         Search(demoRoot),
         Chain(demoRoot),
         ShopPrices(demoRoot, parallel: false),
@@ -645,6 +646,57 @@ public static class DemoTasks
         OutputField = "value",
         Label = $"{slug} → value",
     };
+
+    // ---- behind a boundary --------------------------------------------------------------------
+
+    /// <summary>
+    /// The example for the two places a selector run against the top document cannot see: an open
+    /// shadow root and a same-origin iframe.
+    /// <para>
+    /// It clicks inside each and then asserts on what each one wrote INTO ITS OWN TREE. Asserting
+    /// on something the outer page put up would have proved only that the click landed; asserting
+    /// inside proves the resolver got back in there to read it.
+    /// </para>
+    /// </summary>
+    private static DemoTask Shadow(string demoRoot) => new(
+        "shadow",
+        "Reach into a shadow root and a frame",
+        "Component libraries put their controls inside shadow roots, and embedded pages put theirs "
+        + "inside iframes; a selector run against the page itself sees neither. This clicks a "
+        + "button in each and reads the answer back out of the same place it was written.",
+        PageUrl(demoRoot, "shadow.html"),
+        [
+            new Step
+            {
+                Id = "demo-shadow-click",
+                Action = StepAction.Click,
+                Label = "Click the button inside the shadow root",
+                Target = Css("button", "#in-shadow"),
+            },
+            new Step
+            {
+                Id = "demo-shadow-assert",
+                Action = StepAction.AssertElement,
+                Label = "Read what it wrote, inside that same shadow root",
+                Target = Css("p", "#shadow-said"),
+                Value = "the shadow root was clicked",
+            },
+            new Step
+            {
+                Id = "demo-shadow-frame-click",
+                Action = StepAction.Click,
+                Label = "Click the button inside the iframe",
+                Target = Css("button", "#in-frame"),
+            },
+            new Step
+            {
+                Id = "demo-shadow-frame-assert",
+                Action = StepAction.AssertElement,
+                Label = "Read what it wrote, inside that same frame",
+                Target = Css("p", "#frame-said"),
+                Value = "the frame was clicked",
+            },
+        ]);
 
     // ---- a task run more than one way -----------------------------------------------------------
 

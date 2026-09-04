@@ -63,7 +63,7 @@
 
         var request = pending;
         pending = null;
-        var el = e.target;
+        var el = realTarget(e);
         var answer;
         try {
             answer = request.mode === 'row'
@@ -83,10 +83,22 @@
         return true;
     }
 
+    // What was really clicked. An event that crosses an open shadow boundary is RETARGETED on the
+    // way out — e.target becomes the component's host element, so recording it would produce a step
+    // that clicks the wrapper and never the control inside. composedPath()[0] is the element the
+    // user actually hit; for an ordinary page it is e.target and nothing changes.
+    //
+    // A closed root retargets with no path to look at, and an iframe never delivers the event here
+    // at all — recording inside either needs the recorder running in there too, which it is not.
+    function realTarget(e) {
+        var path = e.composedPath ? e.composedPath() : null;
+        return (path && path.length ? path[0] : e.target);
+    }
+
     function onClick(e) {
         if (onPickClick(e)) return;
         if (!enabled) return;
-        var el = actionTarget(e.target);
+        var el = actionTarget(realTarget(e));
         if (!el || el.nodeType !== 1) return;
         if (el.tagName === 'LABEL') {
             var ctl = el.control ||
@@ -107,7 +119,7 @@
 
     function onInput(e) {
         if (!enabled) return;
-        var el = e.target;
+        var el = realTarget(e);
         if (!el || el.nodeType !== 1 || targetKind(el) !== 'text') return;
         var masked = isMasked(el);
         post({
@@ -119,7 +131,7 @@
 
     function onChange(e) {
         if (!enabled) return;
-        var el = e.target;
+        var el = realTarget(e);
         if (!el || el.nodeType !== 1) return;
         var kind = targetKind(el);
         var masked = isMasked(el);
@@ -140,7 +152,7 @@
 
     function onKeydown(e) {
         if (!enabled || e.key !== 'Enter') return;
-        var el = e.target;
+        var el = realTarget(e);
         if (!el || el.nodeType !== 1 || targetKind(el) !== 'text') return;
         post({ kind: 'key', value: 'Enter', targetKind: 'text', fingerprint: window.__automataFingerprint(el) });
     }

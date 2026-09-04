@@ -908,6 +908,43 @@ after every mutation. That needs a push protocol that can say "this one task cha
 that can apply it without losing selection, expansion or focus, which is a different kind of change
 and is recorded under **Not done yet**.
 
+### Phase 18 - reaching behind a boundary (2026-09-04)
+
+`document.querySelector` stops at a shadow boundary and at a frame edge, so a component library
+that renders its button inside a shadow root produced "element not found by any strategy" - which
+reads as a broken recording rather than as a limit of the tool. **Every strategy in `resolver.js`
+now runs across every reachable root**: the document, every OPEN shadow root inside it, and every
+same-origin iframe's document, recursively.
+
+The parts that are easy to get wrong, and how:
+
+- **Coordinates.** A rect measured inside an iframe is relative to THAT frame's viewport, while a
+  click is dispatched against the top document's. `__automataViewportRect` walks out through every
+  enclosing frame and adds each one's position; the check-state probe uses it too, since that is the
+  other place a rect turns into a click. A shadow root needs no adjustment - a shadow tree shares
+  its host's coordinate space.
+- **Id lookups.** An id is unique within its own tree, not across the page, so `getElementById`,
+  `label[for]` and `aria-labelledby` all resolve in the element's OWN root. Two instances of the
+  same component each having a `#submit` is normal, and is now correctly reported as ambiguous
+  rather than resolved to whichever came first.
+- **XPath** runs against documents only - it has no way to express a shadow boundary - so shadow
+  roots are skipped by that one strategy and frames are not.
+- **Cost.** Collecting roots means a `querySelectorAll('*')` per root, so it happens ONCE per
+  resolve and is shared by all eight strategies. A resolve polls every half second until its element
+  appears; eight walks per poll instead of one is the whole difference on a large page.
+
+The recorder reads `composedPath()[0]` rather than `event.target`, because an event crossing an open
+shadow boundary is RETARGETED to the component's host on the way out - recording that would produce
+a step that clicks the wrapper and never the control.
+
+New example, **"Reach into a shadow root and a frame"**, clicks a button in each and then reads the
+answer back out of the same tree it was written into. Asserting on something the outer page put up
+would only have proved the click landed; asserting inside proves the resolver got back in there.
+Its frame is a `srcdoc` one, and that detail is worth keeping: a page loaded from `file://` has an
+OPAQUE origin, so one local file embedding another is cross-origin even in the same folder. A
+`srcdoc` frame inherits its embedder's origin, which is what a real same-origin embed looks like -
+and the file:// case being unreachable is itself the demonstration of the limit above.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -925,8 +962,23 @@ yet** below.
 - **Orchestration (old Phase 4)**: several instances running the SAME task at once with different
   parameter bindings. The parameters themselves landed in phase 16; what is left is a runner that
   fans one task out over a list of them, which is a scheduling question rather than a model one.
-- **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing. (File locking for
-  multi-instance is DONE - see `ExclusiveFileLock` under phase 9.)
+- **Cross-origin iframes, and closed shadow roots.** Open shadow roots and same-origin iframes
+  landed in phase 18; these two did not, and the reason is the same for both: **the page cannot see
+  in.** A closed root exposes nothing to script by design, and a cross-origin document throws on
+  access. Reaching either means evaluating in each frame's own context over CDP - `Page.getFrameTree`
+  plus `Runtime.evaluate` against a specific execution context - rather than running one script in
+  the top document, and then reconciling coordinates across those contexts. That is a different
+  mechanism, not a longer selector.
+- **Recording inside an iframe.** The recorder listens on the top document, and an iframe never
+  delivers its events there; it would have to be injected into every frame. Recording inside an open
+  SHADOW root does work, since phase 18 - the recorder reads `composedPath()[0]` instead of
+  `event.target`.
+- **Harvesting inside a shadow root or a frame.** `harvest.js` still queries the top document only.
+  The resolver's root walk is the shape the answer takes; the picker also has to be able to point at
+  something in there, which is the harder half.
+- **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
+  selector against the top document, so the one action that does not go through the resolver is the
+  one action that still stops at the boundary.
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
   running - a parallel for-each forks a state per row, and no other step is in flight. So it is
