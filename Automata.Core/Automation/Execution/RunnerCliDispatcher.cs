@@ -637,8 +637,8 @@ public sealed class RunnerCliDispatcher
 
     /// <summary>
     /// The generated examples. Seeding is safe to run at any time and never touches an example the
-    /// user has edited; regenerating only overwrites the ones named on the command line, which is
-    /// the CLI's version of being asked.
+    /// user has edited; regenerating puts every one of them back, because the Demos collection is
+    /// generated territory and keeping a modified example means moving it somewhere else.
     /// </summary>
     private int DemosCommand(string[] args)
     {
@@ -664,22 +664,8 @@ public sealed class RunnerCliDispatcher
                 return RunnerExitCode.Success;
 
             case "regenerate":
-            {
-                var revertAll = args.Any(a => a.Equals("--revert-all", StringComparison.OrdinalIgnoreCase));
-                var resolutions = new Dictionary<string, DemoResolution>(StringComparer.Ordinal);
-
-                foreach (var status in demos.Survey())
-                {
-                    if (status.State != DemoState.Edited) continue;
-                    if (revertAll || Named(args, "--revert").Contains(status.Key))
-                        resolutions[status.Key] = DemoResolution.Revert;
-                    else if (Named(args, "--clone").Contains(status.Key))
-                        resolutions[status.Key] = DemoResolution.Clone;
-                }
-
-                Report(demos.Regenerate(resolutions));
+                Report(demos.Regenerate());
                 return RunnerExitCode.Success;
-            }
 
             default:
                 output.WriteLine($"error: unknown demos command '{sub}'");
@@ -695,32 +681,20 @@ public sealed class RunnerCliDispatcher
         _ => "EDITED",
     };
 
-    /// <summary>Every value given for a repeatable option, e.g. <c>--revert a --revert b</c>.</summary>
-    private static HashSet<string> Named(string[] args, string option)
-    {
-        var found = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < args.Length - 1; i++)
-            if (args[i].Equals(option, StringComparison.OrdinalIgnoreCase)) found.Add(args[i + 1]);
-        return found;
-    }
-
     private void Report(DemoSeedReport report)
     {
         output.WriteLine($"{report.PagesWritten.Count} page(s) written to {demos!.RootPath}");
         Line("added", report.Added);
         Line("refreshed", report.Refreshed);
-        Line("reverted", report.Reverted);
-        Line("cloned", report.Cloned);
+        Line("restored", report.Restored);
         Line("kept (edited, left alone)", report.Kept);
 
-        var edited = report.Before.Count(s => s.State == DemoState.Edited);
-        var untouched = edited - report.Reverted.Count - report.Cloned.Count;
-        if (untouched > 0)
+        if (report.Kept.Count > 0)
         {
             output.WriteLine(
-                $"{untouched} edited example(s) were left as they are. Name one with " +
-                "--revert <key> to restore the original, or --clone <key> to keep yours and add " +
-                "the original beside it.");
+                $"{report.Kept.Count} edited example(s) were left as they are. " +
+                "'demos regenerate' puts every example back to the shipped version — move or " +
+                "duplicate one into another collection first if you want to keep your changes.");
         }
 
         void Line(string label, IReadOnlyList<string> names)
@@ -849,8 +823,8 @@ public sealed class RunnerCliDispatcher
 
           demos list                    the generated examples, and which have been edited
           demos seed                    write any example that is missing; refresh untouched ones
-          demos regenerate [--revert <key>...] [--clone <key>...] [--revert-all]
-                                        rebuild the examples; edited ones are kept unless named
+          demos regenerate              put EVERY example back to the shipped version, edits and
+                                        all; move or duplicate one out of Demos to keep it
           --help                        this text
 
         Exit codes: 0 success, 1 a run failed, 2 fault, 3 bad arguments.

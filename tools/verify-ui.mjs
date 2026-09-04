@@ -1154,7 +1154,7 @@ async function main() {
         'clearing the columns has to be said out loud, not done silently');
     });
 
-    await group('harvest: the Examples dialog reports each example, and asks about none', async () => {
+    await group('harvest: the Examples dialog reports each example, and warns before replacing any', async () => {
       // Safe to open Settings now that AUTOMATA_SETTINGS_PATH isolates it; before that hook
       // existed this dialog would have been reading the developer's real provider and API keys.
       await panelPage.locator('#btn-settings').click();
@@ -1164,11 +1164,14 @@ async function main() {
 
       const body = await panelPage.locator('#demos-body').innerText();
       assertTrue(/up to date/.test(body), `expected the untouched examples to read as current: ${body}`);
-      // Freshly generated, so there is nothing edited — and an untouched example must never be
-      // asked about, or every launch would nag about examples nobody has opened.
-      assertEqual(await panelPage.locator('.demo-choices').count(), 0,
-        'an untouched example must not be asked about');
-      assertTrue(/Nothing you have edited/.test(body), 'the dialog should say there is nothing to decide');
+      // Regenerating is wholesale — there is nothing to choose per example, and the dialog must
+      // not imply otherwise by offering controls.
+      assertEqual(await panelPage.locator('.demo-choices, .demo-row input').count(), 0,
+        'the dialog offers a warning, not a negotiation');
+      // Freshly generated, so nothing is at stake and there is nothing to warn about yet.
+      assertEqual(await panelPage.locator('.demo-warning').count(), 0,
+        'a warning with nothing to lose behind it teaches people to ignore warnings');
+      assertTrue(/Nothing here has been changed/.test(body), 'the dialog should say nothing is at stake');
       assertTrue(body.includes(demosRoot) || /demos/i.test(body), 'the dialog should name where pages are written');
 
       // Opening this closes Settings rather than stacking on top of it — two live modals would
@@ -1179,6 +1182,34 @@ async function main() {
       await panelPage.locator('#demos-modal-close').click();
       await waitFor(() => hasClass(panelPage.locator('#demos-modal'), 'hidden'),
         { timeoutMs: 5000, label: 'the examples dialog to close' });
+    });
+
+    await group('examples: an edited one is named in the warning before it is replaced', async () => {
+      // Edit an example the way a user would — through the store, since the point is what the
+      // dialog SAYS about it afterwards, not how it came to be edited.
+      const demoFile = path.join(collectionsRoot, 'Demos', 'Click a button.json');
+      const demo = JSON.parse(readFileSync(demoFile, 'utf8'));
+      demo.steps[0].label = 'mine now';
+      writeFileSync(demoFile, JSON.stringify(demo, null, 2), 'utf8');
+
+      await panelPage.locator('#btn-settings').click();
+      await panelPage.locator('#set-regen-demos').click();
+      await waitFor(() => panelPage.locator('.demo-warning').count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the warning about the edited example' });
+
+      const warning = await panelPage.locator('.demo-warning').innerText();
+      assertTrue(/Click a button/.test(warning),
+        `the warning has to NAME what is about to go, got: ${warning}`);
+      assertTrue(/move or duplicate/i.test(warning),
+        'and say what to do instead of offering a choice it does not have');
+      assertEqual(await panelPage.locator('.demo-row-edited').count(), 1,
+        'exactly the edited example is marked in the list');
+
+      // And it does what it says.
+      await panelPage.locator('#demos-regen').click();
+      await waitFor(() => Promise.resolve(
+        JSON.parse(readFileSync(demoFile, 'utf8')).steps[0].label !== 'mine now'),
+        { timeoutMs: 10000, label: 'the example to be restored' });
     });
 
     await group('data tab: lists the dataset with its row and column counts', async () => {

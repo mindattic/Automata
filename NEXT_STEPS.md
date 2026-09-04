@@ -577,15 +577,13 @@ gathered **while browsing**.
   and rate limiter. `buttons.html` is deliberately the same three-button page as
   `tools/verify-ui-fixture.html`, but the harness still writes its own copy — folding the two into
   one asset set is left for when there are enough demo pages to be worth it.
-- **Regeneration never eats work.** An untouched example is refreshed silently (nothing to lose,
-  nothing worth asking); an edited one is left alone unless answered, with three answers: keep
-  mine, restore the original, or **keep mine + add the original beside it**. Cloning moves the demo
-  marker to the pristine copy and drops it from the user's, so exactly one task carries a demo key,
-  no two tasks share a name (the name IS the file name), and the next regenerate has nothing left
-  to ask.
-- **`DemoOrigin` records a content hash** over what a demo DOES - steps, start URL, settings. Name
-  and description are excluded: renaming a demo is not editing it. Demo step ids are FIXED, not
-  generated, or every regenerate would either break every binding or look like a hand edit.
+- **Regeneration never eats work.** An untouched example is refreshed silently; an edited one is
+  left alone unless answered, with three answers: keep mine, restore the original, or keep mine +
+  add the original beside it. *(Superseded in phase 12 - regenerating is wholesale now.)*
+- **`DemoOrigin` records a content hash** over what a demo DOES - steps, start URL, settings.
+  *(Phase 12 folded name and description into the hash too, since restoring puts those back.)*
+  Demo step ids are FIXED, not generated, or every regenerate would either break every binding or
+  look like a hand edit.
 - **The first-run tutorial survives.** `maybeStartTutorial` now ignores the generated collection
   (`state.demoCollectionId`, pushed by the host), because "this person has built nothing yet" is a
   different question from "this person has nothing but the examples we made for them". Seeding
@@ -713,6 +711,39 @@ Both shop examples and the new order example now set it, so running any of them 
 same answer as running it once; `verify-demos.mjs` runs the order example a second time and checks
 the row count did not move. The editor shows "start fresh each run" beside "append" and withdraws
 it when append is unticked, because without append it would be offering the same thing twice.
+
+### Phase 12 - Demos is generated territory (2026-09-04)
+
+The three-way prompt is gone. **Regenerating restores every example to the version this build
+ships** - contents, name and description alike - and the answer to "I want to keep my version" is
+no longer a checkbox: move or duplicate that task into a collection of your own.
+
+The reason is what the batch is FOR. A collection where any given example might be somebody's
+half-finished experiment cannot also be the place a new user looks for a working reference, and a
+per-example negotiation guarantees exactly that state. It also compounds: every regenerate has to
+re-ask about every edit, forever.
+
+- `DemoResolution` (keep / revert / clone) is deleted, along with `demos regenerate --revert
+  <key> --clone <key> --revert-all`. `Regenerate()` takes no arguments.
+- **Startup did not change and must not.** `SeedMissing` runs on every launch without anyone asking
+  for it, so it still adds what is absent, refreshes what nobody has touched, and leaves every edit
+  exactly as it is. Silent actions may not lose work; an explicit one, asked for in as many words,
+  may. That split is the whole reason regenerating can be as blunt as it is.
+- **Taking a copy takes it out of reach.** `MoveTask` and `DuplicateTask` both drop the demo marker,
+  and a move also takes a fresh id. Without that, the generator would write the pristine example
+  back onto the same fixed id and two tasks would answer to it - and a duplicate carrying the key
+  would leave the generator restoring whichever it found first and silently abandoning the other.
+- **The name is in the hash now.** Restoring puts the name back, so a survey that called a renamed
+  example "up to date" would be promising not to touch something it is about to rename.
+- The dialog **names** what it is about to replace rather than counting it - "including the 2 you
+  have changed: Fill in a form, Click a button" - and says what to do instead. A warning with
+  nothing at stake behind it teaches people to ignore warnings, so it does not appear at all when
+  nothing has been edited.
+
+Also fixed while here: both acceptance harnesses swept every stale scratch directory in the temp
+folder on startup, so two of them running at once deleted each other's workspace mid-run. The
+victim failed with a missing generated page, which reads exactly like the product being broken.
+They now only sweep what is an hour old or more.
 
 ### Still to do in v3
 

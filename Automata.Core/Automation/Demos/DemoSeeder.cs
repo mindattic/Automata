@@ -22,20 +22,6 @@ public enum DemoState
     Edited,
 }
 
-/// <summary>What to do about a demo the user has edited.</summary>
-public enum DemoResolution
-{
-    /// <summary>Leave their version exactly as it is.</summary>
-    Keep,
-
-    /// <summary>Throw their changes away and restore the factory version.</summary>
-    Revert,
-
-    /// <summary>Keep their version untouched and add the factory version beside it under a new
-    /// name, so the reference material is there without anything being lost.</summary>
-    Clone,
-}
-
 /// <summary>One demo task and what the generator found.</summary>
 public sealed record DemoStatus(string Key, string Name, DemoState State, string? TaskId);
 
@@ -46,17 +32,24 @@ public sealed record DemoSeedReport(
     IReadOnlyList<DemoStatus> Before,
     IReadOnlyList<string> Added,
     IReadOnlyList<string> Refreshed,
-    IReadOnlyList<string> Reverted,
-    IReadOnlyList<string> Cloned,
+    IReadOnlyList<string> Restored,
     IReadOnlyList<string> Kept);
 
 /// <summary>
 /// Writes the demo pages to disk and keeps the "Demos" collection in step with them.
 /// <para>
-/// The policy, in one sentence: <b>seed what is missing, silently refresh what nobody has touched,
-/// and never overwrite a hand edit without being told to.</b> An untouched demo carries no
-/// information, so asking about it would be noise; an edited one may be the user's own work built
-/// on top of a demo, and clobbering that is unrecoverable.
+/// <b>Demos is generated territory.</b> Everything in it that carries a demo marker belongs to the
+/// generator, and regenerating puts every one of them back exactly as the build ships them —
+/// contents, name and description alike. There is no per-example negotiation, because the answer
+/// to "I want to keep my version" is not a checkbox: it is to move or duplicate that task into a
+/// collection of your own, where nothing regenerates anything. Both of those gestures take the
+/// demo marker off the copy, so the generator stops owning it the moment you claim it.
+/// </para>
+/// <para>
+/// The two entry points differ on exactly one point, and deliberately: <see cref="SeedMissing"/>
+/// runs on every launch and <b>never destroys an edit</b> — it adds what is absent and refreshes
+/// what nobody has touched. <see cref="Regenerate"/> is something a person clicked, and it restores
+/// everything. Silent actions may not lose work; an explicit one, asked for in as many words, may.
 /// </para>
 /// </summary>
 public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = null)
@@ -69,7 +62,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
 
     /// <summary>
     /// What every factory demo is currently in, without changing anything. This is what the
-    /// sidebar asks before it decides whether it needs to prompt at all.
+    /// Examples dialog reads so it can name the examples a regenerate is about to replace.
     /// </summary>
     public IReadOnlyList<DemoStatus> Survey()
     {
@@ -100,19 +93,24 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
 
     /// <summary>
     /// First-load seeding: write any page or demo that is not there, refresh any that no one has
-    /// edited, and leave every edited one alone without asking. Safe to call on every launch.
+    /// edited, and leave every edited one alone. Safe to call on every launch, which is the whole
+    /// requirement — startup happens without anyone asking for it, so it may not lose work.
     /// </summary>
-    public DemoSeedReport SeedMissing() => Apply(resolutions: null);
+    public DemoSeedReport SeedMissing() => Apply(restoreEverything: false);
 
     /// <summary>
-    /// Regeneration: the same pass, but with an answer for each demo the user has edited. A key
-    /// with no answer is left alone, so a partial set of choices can never destroy anything by
-    /// omission.
+    /// Puts every example back to the version this build ships, whatever state it is in.
+    /// <para>
+    /// Wholesale on purpose. A per-example prompt sounds kinder and is not: it makes the one place
+    /// a new user can look for a working reference into a place where any given example might be
+    /// somebody's half-finished experiment, and it leaves the batch permanently unable to say
+    /// "these are the examples". Keeping a modified example means moving or duplicating it out of
+    /// Demos, which the dialog says in as many words before this runs.
+    /// </para>
     /// </summary>
-    public DemoSeedReport Regenerate(IReadOnlyDictionary<string, DemoResolution> resolutions) =>
-        Apply(resolutions);
+    public DemoSeedReport Regenerate() => Apply(restoreEverything: true);
 
-    private DemoSeedReport Apply(IReadOnlyDictionary<string, DemoResolution>? resolutions)
+    private DemoSeedReport Apply(bool restoreEverything)
     {
         var before = Survey();
         var pages = WritePages();
@@ -121,13 +119,14 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
         if (string.IsNullOrEmpty(collection.Description))
         {
             collection.Description =
-                "Generated examples, one per capability. Safe to run, safe to break — regenerate " +
-                "them at any time from Settings.";
+                "Generated examples, one per capability. Safe to run, safe to break — regenerating " +
+                "from Settings puts every one of them back. Anything here you want to keep, move " +
+                "or duplicate into a collection of your own.";
             collections.SaveCollection(collection);
         }
 
         var existing = collections.LoadTasks(collection.Id).ToList();
-        List<string> added = [], refreshed = [], reverted = [], cloned = [], kept = [];
+        List<string> added = [], refreshed = [], restored = [], kept = [];
 
         foreach (var factory in DemoTasks.All(RootPath))
         {
@@ -148,57 +147,44 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
                 case DemoState.Current:
                     break;
 
-                // Nobody has touched it, so there is nothing to lose and nothing worth asking.
-                // Its NAME is left as it is: renaming a demo is not editing it, and imposing the
-                // factory name back could collide with another task that already has it.
+                // Nobody has touched it, so there is nothing to lose and nothing worth mentioning.
+                // Its name is already the factory name — a rename reads as an edit, since the hash
+                // covers it.
                 case DemoState.Stale:
-                    Reidentify(Build(factory, collection.Id, match!.Name), match.Id);
-                    refreshed.Add(match.Name);
+                    refreshed.Add(Restore(factory, collection.Id, existing, match!).Name);
                     break;
 
                 case DemoState.Edited:
                 {
-                    var choice = resolutions != null && resolutions.TryGetValue(factory.Key, out var r)
-                        ? r
-                        : DemoResolution.Keep;
-                    switch (choice)
+                    if (!restoreEverything)
                     {
-                        case DemoResolution.Revert:
-                            Reidentify(Build(factory, collection.Id, match!.Name), match.Id);
-                            reverted.Add(match.Name);
-                            break;
-
-                        // Their work stays exactly where it is and keeps its name; what it loses is
-                        // the demo marker AND the factory id, because it is their task now, not a
-                        // copy of ours — and an id, like the marker, names the demo rather than
-                        // what somebody built on top of it. The pristine version arrives beside it
-                        // under a free name and takes both over, so the reference material is
-                        // present, nothing was destroyed, and the next regenerate has nothing left
-                        // to ask about.
-                        case DemoResolution.Clone:
-                            var theirs = match!;
-                            var theirPreviousId = theirs.Id;
-                            theirs.Demo = null;
-                            if (theirs.Id == factory.TaskId) theirs.Id = StoreUtil.NewId();
-                            Reidentify(theirs, theirPreviousId);
-
-                            var clone = Build(
-                                factory, collection.Id, UniqueName(factory.Name, existing));
-                            collections.SaveTask(clone);
-                            existing.Add(clone);
-                            cloned.Add(clone.Name);
-                            break;
-
-                        default:
-                            kept.Add(match!.Name);
-                            break;
+                        kept.Add(match!.Name);
+                        break;
                     }
+                    // Back to the shipped version outright — including its name, because the name
+                    // is part of what an example is and a renamed one is no easier to recognise
+                    // than a rewritten one.
+                    restored.Add(Restore(factory, collection.Id, existing, match!).Name);
                     break;
                 }
             }
         }
 
-        return new DemoSeedReport(collection.Id, pages, before, added, refreshed, reverted, cloned, kept);
+        return new DemoSeedReport(collection.Id, pages, before, added, refreshed, restored, kept);
+    }
+
+    /// <summary>
+    /// Puts one example back and keeps <paramref name="existing"/> current, so a later example
+    /// restoring in the same pass sees the name this one has just vacated or taken rather than the
+    /// one it had when the pass started.
+    /// </summary>
+    private TaskDefinition Restore(
+        DemoTask factory, string collectionId, List<TaskDefinition> existing, TaskDefinition match)
+    {
+        var task = Build(factory, collectionId, UniqueName(factory.Name, existing, match));
+        Reidentify(task, match.Id);
+        existing[existing.IndexOf(match)] = task;
+        return task;
     }
 
     /// <summary>
@@ -225,10 +211,18 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
     /// Names matter more than they look: a task's file is named after it, so two tasks sharing a
     /// name in one collection would have one silently overwrite the other on disk.
     /// </para>
+    /// <param name="self">
+    /// The task being rewritten, which does not count as competition for its own name — without
+    /// this, restoring an unrenamed example would push it to "name (2)" for colliding with itself.
+    /// </param>
     /// </summary>
-    private static string UniqueName(string baseName, IEnumerable<TaskDefinition> existing)
+    private static string UniqueName(
+        string baseName, IEnumerable<TaskDefinition> existing, TaskDefinition? self = null)
     {
-        var taken = existing.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var taken = existing
+            .Where(t => !ReferenceEquals(t, self) && t.Id != self?.Id)
+            .Select(t => t.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!taken.Contains(baseName)) return baseName;
         for (var n = 2; ; n++)
         {
@@ -275,25 +269,27 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
     }
 
     /// <summary>
-    /// A content hash over what a demo DOES: its steps, its start URL and its settings.
+    /// A content hash over everything a regenerate would put back: name, description, steps, start
+    /// URL and settings.
     /// <para>
-    /// Name and description are excluded deliberately. Renaming a demo, or rewording its blurb, is
-    /// not editing what it does — and a hash that moved for those would nag the user about a demo
-    /// they only retitled, while also making it impossible to place a pristine copy beside their
-    /// edited one under a different name. Ids, timestamps and the marker itself are excluded for
-    /// the plainer reason that they change on every save.
+    /// The name is in there because restoring puts the name back too, and a survey that called a
+    /// renamed example "up to date" would be promising not to touch something it is about to
+    /// rename. Ids, timestamps and the marker itself are excluded for the plainer reason that they
+    /// change on every save.
     /// </para>
     /// </summary>
     private static string HashOf(DemoTask factory) =>
-        Hash(factory.StartUrl, factory.Steps, factory.Settings);
+        Hash(factory.Name, factory.Description, factory.StartUrl, factory.Steps, factory.Settings);
 
     private static string HashOf(TaskDefinition task) =>
-        Hash(task.StartUrl, task.Steps, task.Settings);
+        Hash(task.Name, task.Description, task.StartUrl, task.Steps, task.Settings);
 
     private static string Hash(
-        string? startUrl, List<Step> steps, EngineSettingsOverride? settings)
+        string name, string description, string? startUrl, List<Step> steps,
+        EngineSettingsOverride? settings)
     {
-        var payload = JsonSerializer.Serialize(new { startUrl, steps, settings }, HashOptions);
+        var payload = JsonSerializer.Serialize(
+            new { name, description, startUrl, steps, settings }, HashOptions);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))[..16];
     }
 

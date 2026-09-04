@@ -144,17 +144,7 @@ public sealed class AutomationController
 
             case "regenerateDemos":
             {
-                var resolutions = new Dictionary<string, DemoResolution>(StringComparer.Ordinal);
-                if (msg["resolutions"] is JsonObject chosen)
-                {
-                    foreach (var (key, value) in chosen)
-                    {
-                        if (Enum.TryParse<DemoResolution>(value?.GetValue<string>(), true, out var resolution))
-                            resolutions[key] = resolution;
-                    }
-                }
-
-                var report = demos.Regenerate(resolutions);
+                var report = demos.Regenerate();
                 await logAsync(SummariseDemoRegeneration(report));
                 await PushStateAsync();
                 await PushDemoSurveyAsync();
@@ -1029,8 +1019,7 @@ public sealed class AutomationController
         }
         Add("added", report.Added);
         Add("refreshed", report.Refreshed);
-        Add("restored", report.Reverted);
-        Add("copied in", report.Cloned);
+        Add("restored", report.Restored);
         Add("left alone", report.Kept);
 
         return parts.Count == 0

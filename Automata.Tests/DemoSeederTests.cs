@@ -75,8 +75,8 @@ public class DemoSeederTests
         {
             Assert.That(again.Added, Is.Empty);
             Assert.That(again.Refreshed, Is.Empty);
-            Assert.That(again.Reverted, Is.Empty);
-            Assert.That(again.Cloned, Is.Empty);
+            Assert.That(again.Restored, Is.Empty);
+            Assert.That(again.Kept, Is.Empty);
         });
     }
 
@@ -108,41 +108,31 @@ public class DemoSeederTests
         Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Edited));
     }
 
-    /// <summary>Renaming a demo is not editing it. Nagging about a retitled example — and, worse,
-    /// renaming it back — would both be wrong.</summary>
+    /// <summary>
+    /// A rename counts as an edit, because regenerating puts the name back with everything else.
+    /// A survey that called a renamed example "up to date" would be promising not to touch
+    /// something it is about to rename.
+    /// </summary>
     [Test]
-    public void RenamingADemoDoesNotCountAsEditingIt()
+    public void RenamingADemoCountsAsEditingIt()
     {
         seeder.SeedMissing();
         var task = Task(Key);
         task.Name = "My price run";
         collections.SaveTask(task);
 
-        Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Current));
+        Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Edited));
     }
 
-    // ---- regenerating over an edit ----------------------------------------------------------
+    // ---- regenerating ------------------------------------------------------------------------
 
+    /// <summary>
+    /// The rule the whole Demos collection rests on: <b>regenerating restores everything</b>. It
+    /// is not a negotiation, because a batch where any given example might be somebody's
+    /// half-finished experiment cannot be the place a new user looks for a working reference.
+    /// </summary>
     [Test]
-    public void RegeneratingLeavesAnEditedDemoAloneWhenNoChoiceIsGiven()
-    {
-        seeder.SeedMissing();
-        var task = Task(Key);
-        task.Steps.Clear();
-        collections.SaveTask(task);
-
-        var report = seeder.Regenerate(new Dictionary<string, DemoResolution>());
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(report.Kept, Is.Not.Empty);
-            Assert.That(report.Reverted, Is.Empty);
-            Assert.That(collections.GetTask(task.Id)!.Steps, Is.Empty, "their version is untouched");
-        });
-    }
-
-    [Test]
-    public void RevertingRestoresTheFactoryStepsInPlace()
+    public void RegeneratingRestoresAnEditedDemoWithoutBeingAsked()
     {
         seeder.SeedMissing();
         var task = Task(Key);
@@ -150,78 +140,132 @@ public class DemoSeederTests
         task.Steps.Clear();
         collections.SaveTask(task);
 
-        seeder.Regenerate(new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Revert });
+        var report = seeder.Regenerate();
 
-        var after = collections.GetTask(task.Id)!;
+        var after = collections.GetTask(DemoTask.TaskIdFor(Key))!;
         Assert.Multiple(() =>
         {
+            Assert.That(report.Restored, Is.Not.Empty);
+            Assert.That(report.Kept, Is.Empty, "nothing is left behind for a second prompt");
             Assert.That(after.Steps, Has.Count.EqualTo(factoryStepCount));
-            Assert.That(after.Id, Is.EqualTo(task.Id), "reverting is in place, not a replacement");
             Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Current));
         });
     }
 
-    /// <summary>
-    /// Cloning is the option that has to lose nothing: their work survives verbatim, the pristine
-    /// copy shows up beside it, and nothing is left in a state that will ask again next time.
-    /// <para>
-    /// What their copy does NOT keep is the demo's identity — the marker and the fixed id both
-    /// move to the pristine version, because a demo's id is what a <c>runTask</c> step points at
-    /// and two tasks cannot answer to one id. Their task keeps everything that is theirs: its
-    /// name, its steps, its place on disk.
-    /// </para>
-    /// </summary>
+    /// <summary>The name goes back too — a renamed example is no easier to recognise than a
+    /// rewritten one, and "restored to the shipped version" has to mean all of it.</summary>
     [Test]
-    public void CloningKeepsTheirVersionAndAddsAPristineOneBesideIt()
+    public void RegeneratingRestoresTheNameAsWellAsTheSteps()
     {
         seeder.SeedMissing();
         var task = Task(Key);
-        var collectionId = task.CollectionId;
+        var factoryName = task.Name;
         task.Name = "My price run";
-        task.Steps.Clear();
         collections.SaveTask(task);
 
-        var report = seeder.Regenerate(
-            new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Clone });
-
-        var all = collections.LoadTasks(collectionId);
-        var theirs = all.First(t => t.Name == "My price run");
-        var clone = all.First(t => t.Demo?.Key == Key);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(report.Cloned, Is.Not.Empty);
-            Assert.That(theirs.Steps, Is.Empty, "their edit survives exactly as it was");
-            Assert.That(theirs.Demo, Is.Null, "it is their task now, not a tracked copy of ours");
-            Assert.That(theirs.Id, Is.Not.EqualTo(clone.Id), "one id cannot name two tasks");
-            Assert.That(clone.Id, Is.EqualTo(DemoTask.TaskIdFor(Key)),
-                "the pristine copy takes the fixed id back, so a runTask step still finds it");
-            Assert.That(clone.Steps, Is.Not.Empty);
-        });
-    }
-
-    /// <summary>
-    /// Only one task may carry a demo key, or a later survey would report on whichever it happened
-    /// to find first — and only one task may carry a name, because the name is the file name.
-    /// </summary>
-    [Test]
-    public void CloningLeavesExactlyOneTrackedDemoAndNoDuplicateNames()
-    {
-        seeder.SeedMissing();
-        var task = Task(Key);
-        task.Steps.Clear();
-        collections.SaveTask(task);
-
-        seeder.Regenerate(new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Clone });
+        seeder.Regenerate();
 
         var all = collections.LoadTasks(task.CollectionId);
         Assert.Multiple(() =>
         {
             Assert.That(all.Count(t => t.Demo?.Key == Key), Is.EqualTo(1));
-            Assert.That(all.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                Is.EqualTo(all.Count));
-            Assert.That(Status(seeder.Survey(), Key).State, Is.EqualTo(DemoState.Current),
-                "nothing is left for the next regenerate to ask about");
+            Assert.That(all.First(t => t.Demo?.Key == Key).Name, Is.EqualTo(factoryName));
+            Assert.That(all.Any(t => t.Name == "My price run"), Is.False,
+                "their renamed copy is not left behind as a second task");
+        });
+    }
+
+    /// <summary>
+    /// Startup is the other half of the rule. It happens without anyone asking, so it may not
+    /// destroy work — and the difference between the two paths is the whole reason regenerating
+    /// can be as blunt as it is.
+    /// </summary>
+    [Test]
+    public void SeedingOnLaunchStillLeavesAnEditedDemoExactlyAsItIs()
+    {
+        seeder.SeedMissing();
+        var task = Task(Key);
+        task.Steps.Clear();
+        collections.SaveTask(task);
+
+        var report = seeder.SeedMissing();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.Kept, Is.Not.Empty);
+            Assert.That(report.Restored, Is.Empty);
+            Assert.That(collections.GetTask(task.Id)!.Steps, Is.Empty, "their version is untouched");
+        });
+    }
+
+    /// <summary>
+    /// The way to keep a modified example: move it out. It stops being an example on the way —
+    /// marker and fixed id both — or the generator would write its replacement onto the same id.
+    /// </summary>
+    [Test]
+    public void MovingAnEditedDemoOutOfDemosKeepsItSafeFromRegenerating()
+    {
+        seeder.SeedMissing();
+        var task = Task(Key);
+        task.Steps.Clear();
+        collections.SaveTask(task);
+        var mine = collections.CreateCollection("Mine");
+
+        var moved = collections.MoveTask(task.Id, mine.Id);
+        seeder.Regenerate();
+
+        var theirs = collections.LoadTasks(mine.Id).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(theirs.Steps, Is.Empty, "their version survived the regenerate untouched");
+            Assert.That(theirs.Demo, Is.Null, "it stopped being an example when it left");
+            Assert.That(theirs.Id, Is.Not.EqualTo(DemoTask.TaskIdFor(Key)),
+                "and gave the example id back, or two tasks would answer to it");
+            Assert.That(moved.Id, Is.EqualTo(theirs.Id));
+            Assert.That(collections.GetTask(DemoTask.TaskIdFor(Key))!.Steps, Is.Not.Empty,
+                "the pristine example is back in Demos");
+        });
+    }
+
+    /// <summary>Duplicating is the other way, for someone who wants both. The copy is not an
+    /// example — two tasks answering to one key would leave the generator restoring whichever it
+    /// found first and silently leaving the other behind.</summary>
+    [Test]
+    public void DuplicatingADemoLeavesTheCopyOutsideTheGeneratorsReach()
+    {
+        seeder.SeedMissing();
+        var task = Task(Key);
+
+        var copy = collections.DuplicateTask(task.Id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(copy.Demo, Is.Null);
+            Assert.That(copy.Id, Is.Not.EqualTo(task.Id));
+            Assert.That(seeder.Survey().Count(st => st.Key == Key), Is.EqualTo(1),
+                "the copy must not show up as a second claimant of the key");
+        });
+    }
+
+    /// <summary>Regenerating right after a regenerate must be quiet, or the dialog would keep
+    /// reporting work to do on a collection it has just finished rebuilding.</summary>
+    [Test]
+    public void RegeneratingTwiceReportsNothingTheSecondTime()
+    {
+        seeder.SeedMissing();
+        var task = Task(Key);
+        task.Steps.Clear();
+        collections.SaveTask(task);
+        seeder.Regenerate();
+
+        var again = seeder.Regenerate();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(again.Added, Is.Empty);
+            Assert.That(again.Refreshed, Is.Empty);
+            Assert.That(again.Restored, Is.Empty);
+            Assert.That(again.Kept, Is.Empty);
         });
     }
 
@@ -275,7 +319,7 @@ public class DemoSeederTests
         task.Steps.Clear();
         collections.SaveTask(task);
 
-        seeder.Regenerate(new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Revert });
+        seeder.Regenerate();
 
         var all = collections.LoadTasks(collectionId);
         Assert.Multiple(() =>
@@ -286,24 +330,4 @@ public class DemoSeederTests
         });
     }
 
-    /// <summary>Regenerating right after a clone must be quiet — otherwise the clone piles up a
-    /// copy on every run.</summary>
-    [Test]
-    public void RegeneratingAfterACloneAddsNothingFurther()
-    {
-        seeder.SeedMissing();
-        var task = Task(Key);
-        task.Steps.Clear();
-        collections.SaveTask(task);
-        seeder.Regenerate(new Dictionary<string, DemoResolution> { [Key] = DemoResolution.Clone });
-
-        var again = seeder.Regenerate(new Dictionary<string, DemoResolution>());
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(again.Cloned, Is.Empty);
-            Assert.That(again.Added, Is.Empty);
-            Assert.That(again.Kept, Is.Empty);
-        });
-    }
 }

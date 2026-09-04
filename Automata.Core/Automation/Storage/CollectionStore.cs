@@ -267,6 +267,16 @@ public sealed class CollectionStore
         }
     }
 
+    /// <summary>
+    /// Moves a task to another collection.
+    /// <para>
+    /// A generated example that leaves the Demos collection stops being one: it loses its demo
+    /// marker and takes a fresh id. Moving it out is exactly how someone keeps a version of their
+    /// own — the generator restores everything it still owns, so the copy has to stop being owned.
+    /// Keeping the marker would also leave the fixed demo id on two tasks the moment the generator
+    /// wrote the example back.
+    /// </para>
+    /// </summary>
     public TaskDefinition MoveTask(string taskId, string toCollectionId)
     {
         var task = GetTask(taskId)
@@ -277,6 +287,11 @@ public sealed class CollectionStore
 
         DeleteTask(taskId);
         task.CollectionId = toCollectionId;
+        if (task.Demo != null)
+        {
+            task.Demo = null;
+            task.Id = StoreUtil.NewId();
+        }
         task.Name = StoreUtil.UniqueName(task.Name, LoadTasks(toCollectionId).Select(t => t.Name));
         SaveTask(task);
         return task;
@@ -291,6 +306,9 @@ public sealed class CollectionStore
         copy.Id = StoreUtil.NewId();
         copy.Name = StoreUtil.UniqueName(source.Name, LoadTasks(source.CollectionId).Select(t => t.Name));
         copy.CreatedUtc = DateTimeOffset.UtcNow;
+        // A copy of an example is not the example. Two tasks answering to one demo key would leave
+        // the generator restoring whichever it found first and silently leaving the other behind.
+        copy.Demo = null;
         StoreUtil.RegenerateStepIds(copy.Steps);
         SaveTask(copy);
         return copy;

@@ -14,7 +14,7 @@
 // Documents\Automata store is never touched, which is why every AUTOMATA_* root is set below.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -79,10 +79,17 @@ function cleanup() {
 /// Removes scratch directories an earlier run could not, because a WebView2 process was still
 /// letting go of its profile. Left alone these are hundreds of megabytes each.
 function sweepOldScratch() {
+  const anHourAgo = Date.now() - 60 * 60 * 1000;
   for (const name of readdirSync(tmpdir()).filter((n) => n.startsWith('automata-demos-'))) {
     const path = join(tmpdir(), name);
     if (path === scratch) continue;
-    try { rmSync(path, { recursive: true, force: true }); } catch { /* still held; next time */ }
+    // Only what is plainly abandoned. Two of these checks running at once would otherwise delete
+    // each other's workspace mid-run, and the victim fails with a missing generated page — which
+    // reads exactly like the product being broken.
+    try {
+      if (statSync(path).mtimeMs > anHourAgo) continue;
+      rmSync(path, { recursive: true, force: true });
+    } catch { /* still held, or already gone; next time */ }
   }
 }
 

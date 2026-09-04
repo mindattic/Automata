@@ -1,28 +1,24 @@
-// The "Examples…" dialog: what the generated demo tasks are in, and what to do about the ones
-// this user has edited.
+// The "Examples…" dialog: what the generated demo tasks are in, and what regenerating will do.
 //
-// The whole reason this asks rather than just rebuilding is that an edited example is often
-// somebody's real work — they opened the one thing that already ran, changed it, and kept going.
-// An untouched example carries nothing, so it is refreshed silently and never mentioned; only an
-// edited one gets a question, and every answer to that question is non-destructive except the one
-// that says otherwise in as many words.
+// Demos is generated territory. Regenerating puts every example back to the version this build
+// ships — there is no per-example negotiation, because the answer to "I want to keep my version"
+// is not a checkbox: it is to move or duplicate that task into a collection of your own, where
+// nothing regenerates anything. Both of those gestures take the example marker off the copy, so it
+// stops being an example the moment you claim it.
+//
+// What this dialog owes the user, then, is not a set of choices but an honest warning: exactly
+// which of their edits are about to go, named, before they press the button.
 
 import { $, esc, post, state } from './core.js';
 import { trapFocus } from './modal.js';
 import { closeSettings } from './settings.js';
 
 var STATE_TEXT = {
-    missing: 'not there yet',
+    missing: 'not there yet — will be added',
     current: 'up to date',
     stale: 'an older build made it — will be refreshed',
     edited: 'you have changed this one',
 };
-
-var CHOICES = [
-    { value: 'keep', label: 'Keep mine', detail: 'leave it exactly as it is' },
-    { value: 'clone', label: 'Keep mine + add the original', detail: 'nothing is lost' },
-    { value: 'revert', label: 'Restore the original', detail: 'discards your changes' },
-];
 
 var returnEl = null;
 
@@ -57,42 +53,36 @@ export function renderDemosDialog() {
         return;
     }
 
-    var edited = (survey.items || []).filter(function (d) { return d.state === 'edited'; });
+    var items = survey.items || [];
+    var edited = items.filter(function (d) { return d.state === 'edited'; });
+
     var html = '<p class="scope-note">Pages are written to <code>' + esc(survey.root || '') +
         '</code> and rebuilt every time.</p><ul class="demo-list">' +
-        (survey.items || []).map(function (d) {
-            return '<li class="demo-row" data-demo="' + esc(d.key) + '">' +
+        items.map(function (d) {
+            return '<li class="demo-row' + (d.state === 'edited' ? ' demo-row-edited' : '') +
+                '" data-demo="' + esc(d.key) + '">' +
                 '<b>' + esc(d.name) + '</b> <span class="key-status">' +
-                esc(STATE_TEXT[d.state] || d.state) + '</span>' +
-                (d.state === 'edited'
-                    ? '<div class="demo-choices" role="radiogroup" aria-label="What to do about ' +
-                      esc(d.name) + '">' +
-                      CHOICES.map(function (c, i) {
-                          var id = 'demo-' + esc(d.key) + '-' + c.value;
-                          return '<label class="inline" for="' + id + '">' +
-                              '<input type="radio" id="' + id + '" name="demo-' + esc(d.key) + '"' +
-                              ' value="' + c.value + '"' + (i === 0 ? ' checked' : '') + ' /> ' +
-                              esc(c.label) + ' <span class="key-status">' + esc(c.detail) + '</span>' +
-                              '</label>';
-                      }).join('') + '</div>'
-                    : '') +
-                '</li>';
-        }).join('') + '</ul>' +
-        (edited.length
-            ? ''
-            : '<p class="scope-note">Nothing you have edited, so nothing to decide.</p>');
+                esc(STATE_TEXT[d.state] || d.state) + '</span></li>';
+        }).join('') + '</ul>';
+
+    // Named, not counted. "3 examples will be replaced" is a number; "Fill in a form will be
+    // replaced" is the thing the user actually has to decide about.
+    html += edited.length
+        ? '<p class="demo-warning" role="alert"><b>Regenerating replaces every example here with ' +
+          'the version this build ships</b> — including the ' + edited.length +
+          ' you have changed: ' +
+          edited.map(function (d) { return esc(d.name); }).join(', ') + '. ' +
+          'To keep one of those, close this and move or duplicate it into a collection of your ' +
+          'own first. A copy that leaves Demos stops being an example, and is never regenerated ' +
+          'again.</p>'
+        : '<p class="scope-note">Nothing here has been changed, so regenerating only brings the ' +
+          'examples up to date.</p>';
 
     body.innerHTML = html;
 }
 
 function regenerate() {
-    var resolutions = {};
-    document.querySelectorAll('.demo-row').forEach(function (row) {
-        var key = row.getAttribute('data-demo');
-        var picked = row.querySelector('input[type=radio]:checked');
-        if (picked) resolutions[key] = picked.value;
-    });
-    post('regenerateDemos', { resolutions: resolutions });
+    post('regenerateDemos');
     close();
 }
 
