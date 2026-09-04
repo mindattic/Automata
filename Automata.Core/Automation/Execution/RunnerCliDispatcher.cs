@@ -110,6 +110,12 @@ public sealed class RunnerCliDispatcher
     {
         var taskRef = Option(args, "--task");
         var collectionRef = Option(args, "--collection");
+        var (inputs, inputError) = ParseInputs(args);
+        if (inputError != null)
+        {
+            output.WriteLine($"error: {inputError}");
+            return RunnerExitCode.BadArguments;
+        }
 
         if (taskRef == null && collectionRef == null)
         {
@@ -161,7 +167,7 @@ public sealed class RunnerCliDispatcher
 
         return await RunTaskListAsync(
             run, kind, targetName, tasks, alreadyPassed: 0, totalTasks: tasks.Count,
-            resumeFirst: null, resumeCount: 0, ct);
+            resumeFirst: null, resumeCount: 0, ct, inputs);
     }
 
     /// <summary>
@@ -183,7 +189,8 @@ public sealed class RunnerCliDispatcher
         int totalTasks,
         ParkCheckpoint? resumeFirst,
         int resumeCount,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? inputs = null)
     {
         var global = settings.Load();
 
@@ -219,6 +226,10 @@ public sealed class RunnerCliDispatcher
                 // run that measured a wait against a different clock from the tick that resumes it
                 // would park until a moment the tick never agrees has arrived.
                 Clock = () => clock.UtcNow,
+                // Every task in the list gets the same supplied values. A task that declares none
+                // ignores them, and one that declares an input nobody supplied falls back to its
+                // default — or fails at the step that needed it, by name.
+                Inputs = inputs ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             };
 
             output.WriteLine($"  {task.Name}…");
@@ -681,6 +692,26 @@ public sealed class RunnerCliDispatcher
         _ => "EDITED",
     };
 
+    /// <summary>
+    /// Reads every <c>--input name=value</c>. Repeatable, and a malformed one is refused rather
+    /// than ignored: silently dropping the value a run was supposed to be parameterised by would
+    /// produce a run that looks right and did the wrong thing.
+    /// </summary>
+    private static (Dictionary<string, string> Inputs, string? Error) ParseInputs(string[] args)
+    {
+        var inputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (!args[i].Equals("--input", StringComparison.OrdinalIgnoreCase)) continue;
+            var pair = args[i + 1];
+            var split = pair.IndexOf('=');
+            if (split <= 0)
+                return (inputs, $"--input needs name=value, got '{pair}'");
+            inputs[pair[..split]] = pair[(split + 1)..];
+        }
+        return (inputs, null);
+    }
+
     private void Report(DemoSeedReport report)
     {
         output.WriteLine($"{report.PagesWritten.Count} page(s) written to {demos!.RootPath}");
@@ -820,6 +851,10 @@ public sealed class RunnerCliDispatcher
 
           install [--interval-minutes 5]   register the tick with Windows Task Scheduler
           uninstall                        remove it
+
+          run --task <id|name> [--input <name>=<value>]...
+                                        supply the task's declared inputs; anything not named
+                                        falls back to that input's default
 
           demos list                    the generated examples, and which have been edited
           demos seed                    write any example that is missing; refresh untouched ones

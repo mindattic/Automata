@@ -855,6 +855,39 @@ user from halfway down the tree to the top of the document. It now notices that 
 the tree before the render and puts it back, while still leaving focus alone when it was somewhere
 else. There is a check for it: focus a row, provoke a push, and assert the focus is still there.
 
+### Phase 16 - a task can take a value (2026-09-04)
+
+"The same search for a different term" is the oldest item on the list, and it was written down as
+templated parameters - `{{query}}` in a step value. **It is not implemented that way, deliberately.**
+A hand-typed placeholder is an expression language arriving one string at a time: nothing can
+enumerate it, nothing can check it, and a typo in it fails at run time as a value that quietly
+stayed literal. That is the exact opposite of the rule the whole editor is built on - a user
+SELECTS a source, never types a reference.
+
+So a task **declares** its inputs (`TaskDefinition.Inputs`), and they show up everywhere a binding
+can be made. Three things can supply one:
+
+- **a default on the declaration** - and a declaration with no default is REQUIRED: a run that does
+  not supply it fails at the step that needed it, naming it. Resolving to an empty string would
+  type nothing into a search box and report success, which is the failure declaring inputs exists
+  to prevent;
+- **a `runTask` step** (`Step.RunTaskInputs`), resolved in the CALLER's scope so one task can hand
+  another something it read off a page, and pushed onto a stack so a callee's inputs are its own -
+  letting them leak back would make the same binding mean different things after a call;
+- **`run --task X --input name=value`**, repeatable, and a malformed one is refused rather than
+  ignored. Silently dropping the value a run was supposed to be parameterised by produces a run
+  that looks right and did the wrong thing.
+
+`BindingRef.Prefix` finally earns its keep: the search example asserts on `"searched: "` + the
+input, which is the whole of composition here and enough for what composition is for.
+
+New example **"Search for a word you choose"** (declares `term`, defaults to "wolf"), and the chain
+example now calls it with `"badger"` and checks it searched for that rather than its default - so
+the passing of a value is demonstrated, not just the declaring of one. `verify-demos.mjs` also runs
+it from the command line with a third term, and checks that a malformed `--input` is refused.
+
+The Inputs dialog hangs off the task's wrench and commits as it is edited, like scoped settings.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -869,9 +902,9 @@ yet** below.
 - **Acceptance scenarios as saved profiles**: Google search → titles, Bing search → titles,
   webmail inbox → first 20 subject lines.
 - **Fingerprint heuristic tuning** against real sites (auto-generated id/class reject patterns).
-- **Orchestration (old Phase 4)**: multiple concurrent panes/instances with separate
-  userDataFolders running the same task with different parameter bindings; templated parameters
-  (`{{query}}`) in step values.
+- **Orchestration (old Phase 4)**: several instances running the SAME task at once with different
+  parameter bindings. The parameters themselves landed in phase 16; what is left is a runner that
+  fans one task out over a list of them, which is a scheduling question rather than a model one.
 - **v2 limitations to lift later**: cross-origin iframes & shadow DOM piercing. (File locking for
   multi-instance is DONE - see `ExclusiveFileLock` under phase 9.)
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls

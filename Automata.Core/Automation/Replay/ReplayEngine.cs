@@ -46,6 +46,7 @@ public class ReplayEngine
     {
         yield return new StepEvent.RunStarted(task.Id, task.Name);
         var state = new ReplayRunState();
+        state.SetRunInputs(SeedInputs(task, options.Inputs));
 
         if (!string.IsNullOrWhiteSpace(task.StartUrl))
         {
@@ -479,6 +480,26 @@ public class ReplayEngine
             return false;
         }
         return anyToolSucceeded && !fatalError;
+    }
+
+
+    /// <summary>
+    /// The values a run starts with: every input the task declares, taking what the caller supplied
+    /// and otherwise its default. An input with neither is left out entirely rather than blanked —
+    /// a binding to it must fail saying nothing supplied it, not resolve to an empty string that
+    /// types nothing into a search box and reports success.
+    /// </summary>
+    internal static Dictionary<string, string> SeedInputs(
+        TaskDefinition task, IReadOnlyDictionary<string, string> supplied)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var input in task.Inputs)
+        {
+            if (string.IsNullOrWhiteSpace(input.Name)) continue;
+            if (supplied.TryGetValue(input.Name, out var given)) values[input.Name] = given;
+            else if (input.Default != null) values[input.Name] = input.Default;
+        }
+        return values;
     }
 
     internal static async Task<string?> TryNavigateAsync(IBrowserSurface browser, string url, CancellationToken ct)

@@ -14,6 +14,7 @@ import { render } from './render.js';
 import { openScopedSettings } from './scoped-settings.js';
 import { scheduleChipFor } from './schedule.js';
 import { openRowMenu, closeRowMenu } from './rowmenu.js';
+import { openTaskInputs } from './task-inputs.js';
 
 var dragCtx = null;           // {type:'step'|'task', id, taskId}
 
@@ -51,6 +52,7 @@ var TASK_MENU = [
     { op: 'ren-task', glyph: '✎', label: 'Rename…' },
     { op: 'move-task', glyph: '⇄', label: 'Move to another collection…' },
     { op: 'dup-task', glyph: '⧉', label: 'Duplicate' },
+    { op: 'task-inputs', glyph: '⌸', label: 'Inputs…' },
     { op: 'task-feature', glyph: '{ }', label: 'Read as a Gherkin feature' },
     { op: 'task-settings', glyph: '⚙', label: 'Engine settings…' },
     'separator',
@@ -197,6 +199,7 @@ function taskOp(cid, tid, op) {
         return;
     }
     if (op === 'move-task') { openMoveTaskModal(tid); return; }
+    if (op === 'task-inputs') { openTaskInputs(tid); return; }
     if (op === 'task-feature') { post('getFeature', { taskId: tid }); return; }
     if (op === 'task-settings') { openScopedSettings('task', { collectionId: cid, taskId: tid }); return; }
     if (op === 'dup-task') { post('duplicateTask', { id: tid }); return; }

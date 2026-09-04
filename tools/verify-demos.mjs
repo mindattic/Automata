@@ -54,7 +54,7 @@ function runner(...args) {
 }
 
 /// Examples this check runs to completion, in the order a person would meet them.
-const RUNNABLE = ['buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'chain'];
+const RUNNABLE = ['buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'search', 'chain'];
 
 /// Covered more strictly elsewhere, or not finishable on purpose.
 const ELSEWHERE = {
@@ -144,6 +144,23 @@ try {
     'the parked run is waiting to be picked up',
     /Parked, waiting to resume/.test(runner('status').out),
     'status does not list it',
+  );
+
+  // ---- a task run more than one way -------------------------------------------------------------
+  // The search example passed on its default above. Supplying a value has to actually change what
+  // it does — an input that is declared, bound, and then ignored would look identical to one that
+  // works right up until somebody depends on it.
+  const supplied = runner('run', '--task', tasksByKey.search.id, '--input', 'term=heron');
+  check(
+    'the search example uses a term supplied on the command line',
+    supplied.code === 0,
+    tail(supplied.out),
+  );
+  const refused = runner('run', '--task', tasksByKey.search.id, '--input', 'term');
+  check(
+    'a malformed --input is refused rather than quietly dropped',
+    refused.code !== 0 && /--input needs name=value/.test(refused.out),
+    tail(refused.out),
   );
 
   // ---- what the conditions example wrote -------------------------------------------------------

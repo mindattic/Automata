@@ -45,6 +45,7 @@ export function describeBinding(binding) {
     if (!binding) return '';
     if (binding.label) return binding.label;
     if (binding.kind === 'envVar') return 'env: ' + (binding.envVarName || '?');
+    if (binding.kind === 'taskInput') return 'input: ' + (binding.parameterName || '?');
     if (binding.kind === 'stepOutput') return binding.outputField || 'output';
     return binding.kind;
 }
@@ -77,10 +78,13 @@ export function fieldControlHtml(id, label, value, placeholder, binding) {
 export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
     var sources = sourcesFor(task, step);
 
-    if (!sources.length && !current) {
+    var inputs = (task.inputs || []).filter(function (i) { return i.name; });
+
+    if (!sources.length && !inputs.length && !current) {
         openInfoModal('Nothing to bind to yet',
-            'A binding reuses a value an earlier step captured. Add an "extractText" step before ' +
-            'this one and give its output a name, then it will appear here.', null);
+            'A binding reuses a value an earlier step captured, or one this task takes from ' +
+            'whoever runs it. Add an "extractText" step before this one and name its output, or ' +
+            'give the task an input, and it will appear here.', null);
         return;
     }
 
@@ -90,6 +94,16 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
             label: s.label,
             detail: 'captured by an earlier step in this task',
         };
+    });
+    // The task's own inputs — the answer to "the same task, run for a different search term".
+    // Offered, never typed: a hand-written {{placeholder}} is a syntax nothing can check.
+    inputs.forEach(function (i) {
+        items.push({
+            value: 'input:' + i.name,
+            label: 'input: ' + i.name,
+            detail: i.description ||
+                (i.default != null ? 'defaults to “' + i.default + '”' : 'supplied when this task runs'),
+        });
     });
     items.push({
         value: 'env',
@@ -117,6 +131,17 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
                         suffix: current ? current.suffix : null,
                     });
                 });
+            return;
+        }
+        if (choice.indexOf('input:') === 0) {
+            var inputName = choice.slice('input:'.length);
+            onCommit({
+                kind: 'taskInput',
+                parameterName: inputName,
+                label: 'input: ' + inputName,
+                prefix: current ? current.prefix : null,
+                suffix: current ? current.suffix : null,
+            });
             return;
         }
         var parts = choice.split(':');

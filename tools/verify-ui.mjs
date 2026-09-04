@@ -1259,6 +1259,47 @@ async function main() {
         'an aggregate step should publish "value" without being asked');
     });
 
+    await group('inputs: a task declares one, and a step binds to it instead of a fixed value', async () => {
+      const row = panelPage.locator(`.node.task[data-task="${flowTaskId}"]`);
+      await clickRowOp(row, 'task-inputs');
+      await panelPage.locator('#ti-add').waitFor({ state: 'visible', timeout: 10000 });
+
+      // Declared, not typed into a value box as {{something}}: the point of the whole design is
+      // that a reference names a thing that exists.
+      await panelPage.locator('#ti-add').click();
+      await panelPage.locator('.column-row[data-input-index="0"] [data-field="name"]')
+        .waitFor({ state: 'visible', timeout: 5000 });
+      await panelPage.locator('.column-row[data-input-index="0"] [data-field="name"]').fill('term');
+      await panelPage.locator('.column-row[data-input-index="0"] [data-field="name"]').dispatchEvent('change');
+
+      const target = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      await waitFor(() => readFileSync(target, 'utf8').includes('"name": "term"'),
+        { timeoutMs: 5000, label: 'the declared input to reach disk' });
+
+      await panelPage.locator('#modal-ok').click();
+      await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the inputs dialog to close' });
+
+      // And the picker offers it, everywhere inside that task.
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
+      await panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('typeText');
+      await panelPage.locator('#ed-value').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-value').focus();
+      await panelPage.locator('.binding-toggle').click();
+      await panelPage.locator('#modal-list .action-pick').first().waitFor({ state: 'visible', timeout: 5000 });
+
+      const offered = await panelPage.locator('#modal-list .action-pick b').allTextContents();
+      assertTrue(offered.some((o) => o.includes('input: term')),
+        `expected the task's own input to be offered, got ${JSON.stringify(offered)}`);
+
+      await panelPage.locator('#modal-list .action-pick[data-value="input:term"]').click();
+      await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
+      await waitFor(() => readFileSync(target, 'utf8').includes('"taskInput"'),
+        { timeoutMs: 5000, label: 'the binding to reach disk' });
+    });
+
     // ---- harvest (extractAll) ------------------------------------------------------------
     // The point of these is that NOTHING here is typed. A harvest is built by clicking one
     // example in the page, and what that click resolved to is shown back as a count — so these

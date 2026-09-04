@@ -179,7 +179,7 @@ export function renderEditor() {
             step.wait = wait;
         }
 
-        commitFlowFields(step);
+        commitFlowFields(step, editorEl);
 
         // Affix inputs live beside a bound chip; they wrap the resolved value.
         editorEl.querySelectorAll('.affix').forEach(function (inp) {

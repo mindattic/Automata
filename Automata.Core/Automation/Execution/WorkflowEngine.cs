@@ -103,6 +103,7 @@ public sealed partial class WorkflowEngine
         yield return new StepEvent.RunStarted(task.Id, task.Name);
         var state = new ReplayRunState();
         state.TaskStack.Add(task.Id);
+        state.SetRunInputs(ReplayEngine.SeedInputs(task, options.Inputs));
 
         if (resume != null)
         {
@@ -448,9 +449,27 @@ public sealed partial class WorkflowEngine
                     yield break;
                 }
 
+                // Resolved in the CALLER's scope, before the callee's is entered — that is what
+                // lets one task hand another something it read off a page, or pass its own input
+                // straight through.
+                var supplied = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (name, binding) in step.RunTaskInputs ?? [])
+                {
+                    var (value, inputError) = BindingResolver.Resolve(binding, state);
+                    if (inputError != null)
+                    {
+                        state.TaskStack.Remove(target.Id);
+                        await foreach (var e in FailAsync(step, scope, state,
+                            $"input '{name}': {inputError}")) yield return e;
+                        yield break;
+                    }
+                    supplied[name] = value ?? "";
+                }
+
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, $"running '{target.Name}'", null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
+                state.PushInputs(ReplayEngine.SeedInputs(target, supplied));
                 try
                 {
                     // Another task's tree, so an index path from THIS task's root would not
@@ -460,6 +479,7 @@ public sealed partial class WorkflowEngine
                 }
                 finally
                 {
+                    state.PopInputs();
                     state.TaskStack.Remove(target.Id);
                 }
                 yield break;

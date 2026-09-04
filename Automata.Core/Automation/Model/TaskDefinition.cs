@@ -17,6 +17,12 @@ public sealed class TaskDefinition
     /// <summary>Optional convenience: navigated to before the first step when set.</summary>
     public string? StartUrl { get; set; }
 
+    /// <summary>
+    /// Values this task takes from whoever runs it. Empty for the ordinary case; a task with
+    /// inputs is one written to be run more than one way.
+    /// </summary>
+    public List<TaskInput> Inputs { get; set; } = [];
+
     public List<Step> Steps { get; set; } = [];
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset ModifiedUtc { get; set; }

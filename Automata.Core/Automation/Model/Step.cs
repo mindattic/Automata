@@ -165,6 +165,14 @@ public sealed class Step
     /// <summary><see cref="StepAction.RunTask"/>: the task to invoke.</summary>
     public string? RunTaskId { get; set; }
 
+    /// <summary>
+    /// <see cref="StepAction.RunTask"/>: what to pass for the called task's declared inputs, keyed
+    /// by input name. Resolved in the CALLER's scope, so one task can hand another a value it read
+    /// off a page or took from its own inputs. Anything not named here falls back to that input's
+    /// default.
+    /// </summary>
+    public Dictionary<string, BindingRef>? RunTaskInputs { get; set; }
+
     /// <summary><see cref="StepAction.WriteDataset"/>.</summary>
     public DatasetWriteSpec? WriteDataset { get; set; }
 

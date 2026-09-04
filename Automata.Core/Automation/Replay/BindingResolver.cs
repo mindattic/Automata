@@ -56,6 +56,14 @@ internal static class BindingResolver
                     return (null, $"no value for '{binding.ColumnName}' here — this binding needs an enclosing for-each over a dataset");
                 break;
 
+            case BindingKind.TaskInput:
+                if (string.IsNullOrWhiteSpace(binding.ParameterName))
+                    return (null, "no input name set");
+                core = state.Input(binding.ParameterName);
+                if (core == null)
+                    return (null, $"nothing supplied the input '{binding.ParameterName}', and it has no default");
+                break;
+
             case BindingKind.EnvVar:
                 if (string.IsNullOrWhiteSpace(binding.EnvVarName))
                     return (null, "no environment variable name set");

@@ -67,6 +67,15 @@ function datasetOptions(selected) {
     }).join('');
 }
 
+/// The task a runTask step names, wherever it lives — the step's fields describe the CALLEE.
+function findTaskById(id) {
+    var found = null;
+    (state.collections || []).forEach(function (c) {
+        (c.tasks || []).forEach(function (t) { if (t.id === id) found = t; });
+    });
+    return found;
+}
+
 function taskOptions(currentTaskId, selected) {
     var options = ['<option value="">(choose a task)</option>'];
     (state.collections || []).forEach(function (c) {
@@ -97,10 +106,27 @@ export function flowFieldsHtml(step, task) {
                 ' placeholder="row" value="' + esc(spec.rowVariableName || '') + '" /></div>';
         }
 
-        case 'runTask':
+        case 'runTask': {
+            // Only the called task's OWN inputs are offered, read from the task it names. A step
+            // that could pass anything to anything would be a function call with no signature.
+            var called = findTaskById(step.runTaskId);
+            var declared = (called && called.inputs || []).filter(function (i) { return i.name; });
             return '<div class="field"><span>Run task</span>' +
                 '<select id="ed-runtask" aria-label="Task to run from here">' +
-                taskOptions(task.id, step.runTaskId) + '</select></div>';
+                taskOptions(task.id, step.runTaskId) + '</select></div>' +
+                (declared.length
+                    ? '<div class="field"><span>With</span><div class="column-list">' +
+                      declared.map(function (i) {
+                          return '<div class="column-row" data-input="' + esc(i.name) + '">' +
+                              '<span class="input-name">' + esc(i.name) + '</span>' +
+                              operandHtml('in:' + i.name, 'Value for input ' + i.name,
+                                  (step.runTaskInputs || {})[i.name]) +
+                              '</div>';
+                      }).join('') +
+                      '<p class="scope-note">Anything left blank uses that input’s default.</p>' +
+                      '</div></div>'
+                    : '');
+        }
 
         case 'writeDataset': {
             var w = step.writeDataset || {};
@@ -267,7 +293,8 @@ export function waitConditionHtml(step) {
 
 /// Reads the flow fields back onto the step. Returns nothing; mutates in place, like the rest of
 /// the editor.
-export function commitFlowFields(step) {
+export function commitFlowFields(step, root) {
+    root = root || document;
     if (step.action === 'if') {
         step.condition = readCondition(step.condition);
     } else if (waitNeedsCondition(step)) {
@@ -280,6 +307,20 @@ export function commitFlowFields(step) {
         });
     } else if (step.action === 'runTask') {
         step.runTaskId = (($('ed-runtask') || {}).value || '') || null;
+        var passed = {};
+        root.querySelectorAll('[data-input]').forEach(function (row) {
+            var name = row.getAttribute('data-input');
+            var literal = row.querySelector('[data-operand-literal]');
+            var existing = (step.runTaskInputs || {})[name];
+            if (literal) {
+                // A blank literal means "use the default", so it is left out rather than passed
+                // as an empty string — those are different answers.
+                if (literal.value) passed[name] = { kind: 'literal', literal: literal.value };
+            } else if (existing) {
+                passed[name] = existing;
+            }
+        });
+        step.runTaskInputs = Object.keys(passed).length ? passed : null;
     } else if (step.action === 'writeDataset') {
         var spec = Object.assign({ format: 'csv' }, step.writeDataset);
         spec.datasetName = (($('ed-write-name') || {}).value || '').trim();
@@ -469,12 +510,20 @@ function currentOperand(step, slot) {
     if (slot.indexOf('col:') === 0) {
         return ((step.writeDataset || {}).columns || {})[slot.slice(4)] || null;
     }
+    if (slot.indexOf('in:') === 0) {
+        return (step.runTaskInputs || {})[slot.slice(3)] || null;
+    }
     var condition = step.action === 'if' ? step.condition : (step.wait || {}).condition;
     var ref = condition ? condition[slot] : null;
     return isBound(ref) ? ref : null;
 }
 
 function setOperand(step, slot, binding) {
+    if (slot.indexOf('in:') === 0) {
+        step.runTaskInputs = Object.assign({}, step.runTaskInputs);
+        step.runTaskInputs[slot.slice(3)] = binding;
+        return;
+    }
     if (slot.indexOf('col:') === 0) {
         var spec = Object.assign({ format: 'csv', append: true }, step.writeDataset);
         spec.columns = Object.assign({}, spec.columns);

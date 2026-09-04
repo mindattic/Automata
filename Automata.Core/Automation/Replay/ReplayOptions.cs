@@ -51,6 +51,14 @@ public sealed class ReplayControl
 
 public sealed class ReplayOptions
 {
+    /// <summary>
+    /// Values supplied for the task's declared inputs — the CLI's <c>--input name=value</c>, or the
+    /// app's. Anything a task declares and this does not name falls back to that input's default,
+    /// and an input with neither fails the step that needed it, by name.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Inputs { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Write a refreshed fingerprint back into a step that only resolved via a fallback
     /// strategy, so the next run starts from the healed identity.</summary>
     public bool SelfHeal { get; init; } = true;

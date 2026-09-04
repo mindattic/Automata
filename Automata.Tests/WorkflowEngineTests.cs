@@ -675,6 +675,120 @@ public class WorkflowEngineTests
         Assert.That(done.Message, Does.Contain(datasets.RootPath));
     }
 
+    // ---- task inputs -----------------------------------------------------------------------------
+
+    /// <summary>A task that writes whatever it was given into a dataset, so the value is checkable.</summary>
+    private static TaskDefinition Parameterised(string name, string? defaultValue, string dataset) => new()
+    {
+        Id = name, Name = name,
+        Inputs = [new TaskInput { Name = "term", Default = defaultValue }],
+        Steps =
+        [
+            new Step
+            {
+                Id = name + "-save", Action = StepAction.WriteDataset,
+                WriteDataset = new DatasetWriteSpec
+                {
+                    DatasetName = dataset,
+                    Append = true,
+                    Columns = new Dictionary<string, BindingRef>
+                    {
+                        ["term"] = new() { Kind = BindingKind.TaskInput, ParameterName = "term" },
+                    },
+                },
+            },
+        ],
+    };
+
+    private async Task<List<StepEvent>> RunWithInputs(
+        TaskDefinition task, params (string Name, string Value)[] inputs)
+    {
+        var options = new ReplayOptions
+        {
+            DefaultStepTimeoutMs = 300,
+            SettlePollMs = 1,
+            Control = new ReplayControl(),
+            Inputs = inputs.ToDictionary(i => i.Name, i => i.Value, StringComparer.OrdinalIgnoreCase),
+        };
+        var events = new List<StepEvent>();
+        await foreach (var evt in Engine().RunAsync(task, options, Browser()))
+            events.Add(evt);
+        return events;
+    }
+
+    [Test]
+    public async Task TaskInput_FallsBackToItsDeclaredDefault()
+    {
+        await RunWithInputs(Parameterised("t", "wolf", "seen.csv"));
+
+        Assert.That(datasets.Read("seen.csv").Single()["term"], Is.EqualTo("wolf"));
+    }
+
+    [Test]
+    public async Task TaskInput_SuppliedByTheCaller_WinsOverTheDefault()
+    {
+        await RunWithInputs(Parameterised("t", "wolf", "seen.csv"), ("term", "badger"));
+
+        Assert.That(datasets.Read("seen.csv").Single()["term"], Is.EqualTo("badger"));
+    }
+
+    /// <summary>
+    /// An input with no default and nothing supplied fails BY NAME, at the step that needed it.
+    /// Resolving to an empty string would type nothing into a search box and report success —
+    /// which is the failure mode declaring inputs exists to prevent.
+    /// </summary>
+    [Test]
+    public async Task TaskInput_RequiredAndNotSupplied_FailsNamingIt()
+    {
+        var events = await RunWithInputs(Parameterised("t", null, "seen.csv"));
+
+        var done = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain("term"));
+        Assert.That(datasets.Exists("seen.csv"), Is.False);
+    }
+
+    /// <summary>One task handing another a value is the whole point — and the callee's input must
+    /// not leak back out, or the same binding would mean different things after the call.</summary>
+    [Test]
+    public async Task RunTask_HandsTheCalledTaskItsInputs_WithoutLeakingThemBack()
+    {
+        var callee = Parameterised("callee", "wolf", "seen.csv");
+        collections.SaveTask(callee);
+
+        var caller = Parameterised("caller", "otter", "seen.csv");
+        caller.Steps.Insert(0, new Step
+        {
+            Id = "call", Action = StepAction.RunTask, RunTaskId = callee.Id,
+            RunTaskInputs = new Dictionary<string, BindingRef>
+            {
+                ["term"] = new() { Kind = BindingKind.Literal, Literal = "badger" },
+            },
+        });
+
+        await Run(caller, Browser());
+
+        Assert.That(datasets.Read("seen.csv").Select(r => r["term"]),
+            Is.EqualTo(new[] { "badger", "otter" }),
+            "the callee should see what it was handed, and the caller its own value afterwards");
+    }
+
+    /// <summary>Anything the caller does not name falls back to the callee's own default, rather
+    /// than to whatever the caller happens to have under that name.</summary>
+    [Test]
+    public async Task RunTask_WithoutNamingAnInput_LetsTheCalleeUseItsOwnDefault()
+    {
+        var callee = Parameterised("callee", "wolf", "seen.csv");
+        collections.SaveTask(callee);
+
+        var caller = Parameterised("caller", "otter", "seen.csv");
+        caller.Steps.Insert(0, new Step { Id = "call", Action = StepAction.RunTask, RunTaskId = callee.Id });
+
+        await Run(caller, Browser());
+
+        Assert.That(datasets.Read("seen.csv").Select(r => r["term"]), Is.EqualTo(new[] { "wolf", "otter" }));
+    }
+
     // ---- runTask -------------------------------------------------------------------------------
 
     [Test]

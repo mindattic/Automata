@@ -9,7 +9,8 @@ public sealed record DemoTask(
     string Description,
     string? StartUrl,
     List<Step> Steps,
-    EngineSettingsOverride? Settings = null)
+    EngineSettingsOverride? Settings = null,
+    List<TaskInput>? Inputs = null)
 {
     /// <summary>
     /// The id the seeded task carries. Fixed, for the same reason step ids are: a
@@ -75,6 +76,7 @@ public static class DemoTasks
         Order(demoRoot),
         Zoom(demoRoot),
         Invoices(demoRoot),
+        Search(demoRoot),
         Chain(demoRoot),
         ShopPrices(demoRoot, parallel: false),
         ShopPrices(demoRoot, parallel: true),
@@ -644,6 +646,86 @@ public static class DemoTasks
         Label = $"{slug} → value",
     };
 
+    // ---- a task run more than one way -----------------------------------------------------------
+
+    /// <summary>
+    /// The example that takes a value from whoever runs it.
+    /// <para>
+    /// This is what "the same task for a different search term" looks like without templating: the
+    /// task DECLARES an input, the steps bind to it through the picker, and the value arrives from
+    /// a caller, from <c>--input</c>, or from the default. Nothing is typed as a placeholder, so
+    /// nothing can be misspelled into a literal that silently stays literal.
+    /// </para>
+    /// </summary>
+    private static DemoTask Search(string demoRoot) => new(
+        "search",
+        "Search for a word you choose",
+        $"Types whatever it is given into a search box and confirms the page saw it. Run on its own "
+        + $"it searches for \"{DefaultSearchTerm}\"; another task can call it with something else, "
+        + $"and so can the command line with --input term=…",
+        PageUrl(demoRoot, "form.html"),
+        [
+            new Step
+            {
+                Id = "demo-search-type",
+                Action = StepAction.TypeText,
+                Label = "Type the term this task was given",
+                Target = Css("input", "#search"),
+                // The literal is kept beside the binding rather than cleared: unbinding a field
+                // should give back what was there, not an empty box.
+                Value = DefaultSearchTerm,
+                Bindings = new Dictionary<string, BindingRef>
+                {
+                    ["Value"] = Input(SearchTermInput),
+                },
+            },
+            new Step
+            {
+                Id = "demo-search-enter",
+                Action = StepAction.PressEnter,
+                Label = "Press Enter in the field that has focus",
+            },
+            new Step
+            {
+                Id = "demo-search-assert",
+                Action = StepAction.AssertElement,
+                Label = "Confirm the page searched for it",
+                Target = Css("p", "#search-echo"),
+                Value = $"searched: {DefaultSearchTerm}",
+                // Prefix + one reference is the whole of composition here, and it is enough:
+                // "searched: " and the value. Anything more belongs to the authoring layer.
+                Bindings = new Dictionary<string, BindingRef>
+                {
+                    ["Value"] = Input(SearchTermInput, prefix: "searched: "),
+                },
+            },
+        ],
+        Inputs:
+        [
+            new TaskInput
+            {
+                Name = SearchTermInput,
+                Description = "What to search for",
+                Default = DefaultSearchTerm,
+            },
+        ]);
+
+    /// <summary>The one input the search example declares, and what it searches for by default.</summary>
+    public const string SearchTermInput = "term";
+    public const string DefaultSearchTerm = "wolf";
+
+    /// <summary>The term the chain example hands it instead, to show a value being passed.</summary>
+    public const string ChainedSearchTerm = "badger";
+
+    /// <summary>A binding to one of the task's own declared inputs.</summary>
+    private static BindingRef Input(string name, string? prefix = null) => new()
+    {
+        Kind = BindingKind.TaskInput,
+        ParameterName = name,
+        Prefix = prefix,
+        Label = "input: " + name,
+    };
+
     // ---- one task calling another ---------------------------------------------------------------
 
     /// <summary>
@@ -656,11 +738,13 @@ public static class DemoTasks
     /// </summary>
     private static DemoTask Chain(string demoRoot) => new(
         "chain",
-        "Run two other examples",
+        "Run three other examples",
         "A task can call another task, which is how one long recording becomes several short ones "
-        + "that can be fixed independently. This runs 'Click a button' and then 'Wait for a page "
-        + "that is not ready' — opening the right page before each, because a called task starts "
-        + "on whatever page the caller left open.",
+        + "that can be fixed independently. This runs 'Click a button', then 'Wait for a page that "
+        + "is not ready', then 'Search for a word you choose' — handing that last one a term of "
+        + $"its own (\"{ChainedSearchTerm}\") rather than letting it use its default. It opens the "
+        + "right page before each, because a called task starts on whatever page the caller left "
+        + "open.",
         PageUrl(demoRoot, "buttons.html"),
         [
             new Step
@@ -683,6 +767,37 @@ public static class DemoTasks
                 Action = StepAction.RunTask,
                 Label = "Run 'Wait for a page that is not ready'",
                 RunTaskId = DemoTask.TaskIdFor("slow"),
+            },
+            new Step
+            {
+                Id = "demo-chain-open-form",
+                Action = StepAction.Navigate,
+                Label = "Open the form for the last one",
+                Url = PageUrl(demoRoot, "form.html"),
+            },
+            new Step
+            {
+                Id = "demo-chain-search",
+                Action = StepAction.RunTask,
+                Label = $"Run the search, but for \"{ChainedSearchTerm}\"",
+                RunTaskId = DemoTask.TaskIdFor("search"),
+                RunTaskInputs = new Dictionary<string, BindingRef>
+                {
+                    [SearchTermInput] = new()
+                    {
+                        Kind = BindingKind.Literal,
+                        Literal = ChainedSearchTerm,
+                        Label = $"\"{ChainedSearchTerm}\"",
+                    },
+                },
+            },
+            new Step
+            {
+                Id = "demo-chain-searched",
+                Action = StepAction.AssertElement,
+                Label = "Confirm it searched for what it was handed, not its default",
+                Target = Css("p", "#search-echo"),
+                Value = $"searched: {ChainedSearchTerm}",
             },
         ]);
 

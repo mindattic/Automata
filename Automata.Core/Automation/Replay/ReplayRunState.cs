@@ -41,6 +41,37 @@ internal sealed class ReplayRunState
     public readonly HashSet<string> TaskStack = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// The inputs of the task currently running. A STACK, not a dictionary: a called task's inputs
+    /// are its own, and letting them leak back to the caller — or the caller's leak in — would make
+    /// the same binding mean different things depending on who called whom.
+    /// </summary>
+    private readonly List<Dictionary<string, string>> inputScopes =
+        [new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>The value of a named input, or null when nothing supplied one.</summary>
+    public string? Input(string name) =>
+        inputScopes[^1].TryGetValue(name, out var value) ? value : null;
+
+    /// <summary>Enters a called task's own input scope. Every push needs its <see cref="PopInputs"/>.</summary>
+    public void PushInputs(IReadOnlyDictionary<string, string> values) =>
+        inputScopes.Add(new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase));
+
+    public void PopInputs()
+    {
+        // Never the last one: the outermost scope is the run's own inputs, and a task with none
+        // still has to have somewhere to look.
+        if (inputScopes.Count > 1) inputScopes.RemoveAt(inputScopes.Count - 1);
+    }
+
+    /// <summary>Sets the inputs of the task the run STARTED with — the CLI's --input, or the
+    /// defaults the task declared.</summary>
+    public void SetRunInputs(IReadOnlyDictionary<string, string> values)
+    {
+        inputScopes[0].Clear();
+        foreach (var (name, value) in values) inputScopes[0][name] = value;
+    }
+
+    /// <summary>
     /// The zoom a <see cref="StepAction.SetZoom"/> step asked for, as a percentage. Held on the run
     /// rather than on the page because a navigation wipes the page's own zoom, and a task that
     /// zoomed out to see a wide layout means it for the pages that follow too — being silently

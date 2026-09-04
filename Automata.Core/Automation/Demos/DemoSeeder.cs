@@ -241,6 +241,7 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
             StartUrl = factory.StartUrl,
             Steps = factory.Steps,
             Settings = factory.Settings,
+            Inputs = factory.Inputs ?? [],
             // Fixed, not generated — see DemoTasks. A runTask step names a task by id, so a demo
             // that called another demo could not be written at all if the callee's id were only
             // decided at seed time.
@@ -279,17 +280,18 @@ public sealed class DemoSeeder(CollectionStore collections, string? demoRoot = n
     /// </para>
     /// </summary>
     private static string HashOf(DemoTask factory) =>
-        Hash(factory.Name, factory.Description, factory.StartUrl, factory.Steps, factory.Settings);
+        Hash(factory.Name, factory.Description, factory.StartUrl, factory.Steps, factory.Settings,
+            factory.Inputs ?? []);
 
     private static string HashOf(TaskDefinition task) =>
-        Hash(task.Name, task.Description, task.StartUrl, task.Steps, task.Settings);
+        Hash(task.Name, task.Description, task.StartUrl, task.Steps, task.Settings, task.Inputs);
 
     private static string Hash(
         string name, string description, string? startUrl, List<Step> steps,
-        EngineSettingsOverride? settings)
+        EngineSettingsOverride? settings, List<TaskInput> inputs)
     {
         var payload = JsonSerializer.Serialize(
-            new { name, description, startUrl, steps, settings }, HashOptions);
+            new { name, description, startUrl, steps, settings, inputs }, HashOptions);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))[..16];
     }
 
