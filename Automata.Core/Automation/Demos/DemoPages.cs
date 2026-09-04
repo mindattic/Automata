@@ -33,6 +33,17 @@ public static class DemoPages
     public const string AttachmentFile = "notes.txt";
 
     /// <summary>
+    /// How far from the left edge the zoom example's button sits. Comfortably off the side of any
+    /// pane anybody runs this in at normal size — a browser lane is 1280px wide, so 2400 leaves no
+    /// doubt — and comfortably inside the viewport once the page is at
+    /// <see cref="ZoomedTo"/>%, which is the whole demonstration.
+    /// </summary>
+    public const int FarButtonLeftPx = 2400;
+
+    /// <summary>The level the zoom example zooms out to.</summary>
+    public const int ZoomedTo = 25;
+
+    /// <summary>
     /// Price of product <paramref name="index"/> in whole cents. Twelve of these total 45750 —
     /// $457.50, the figure every correct run of the shop example has to arrive at.
     /// <para>
@@ -59,7 +70,7 @@ public static class DemoPages
     /// <summary>Every file the generator writes, in no particular order.</summary>
     public static IReadOnlyList<DemoPage> All()
     {
-        var pages = new List<DemoPage> { Buttons(), Form(), Attachment(), Slow(), Order(), ShopSearch() };
+        var pages = new List<DemoPage> { Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), ShopSearch() };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
     }
@@ -305,6 +316,65 @@ public static class DemoPages
               done.id = 'shipped-notice';
               done.textContent = 'shipped: order 4021';
               document.getElementById('shipped').appendChild(done);
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// A page whose useful part is off the side of the window, and a button that reports whether
+    /// it is currently within reach.
+    /// <para>
+    /// The report is produced by a CLICK HANDLER, not by a timer, an animation frame or a resize
+    /// listener — and that is not an accident. A browser lane renders into an off-screen window,
+    /// so its page counts as hidden: frames stop, repeating timers throttle almost to nothing, and
+    /// a readout on any of those sits on its load-time text forever while appearing to work.
+    /// A handler the automation itself triggers always runs, and measures the page as it is at
+    /// that instant.
+    /// </para>
+    /// </summary>
+    private static DemoPage Zoom() => new("zoom.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — wider than the window</title>{{Css}}
+        <style>
+          #wide { position: relative; height: 48px; }
+          #far-button { position: absolute; left: {{FarButtonLeftPx}}px; top: 0; }
+          #reach { font-weight: 600; }
+        </style>
+        </head>
+        <body>
+          <h1>Wider than the window</h1>
+          <p class="lede">The button below sits {{FarButtonLeftPx}} pixels from the left edge, so at
+             normal size it is off the side of the window and a click aimed at it lands on nothing.
+             Press Check to ask the page whether it can be reached right now.</p>
+          <button id="check">Check</button>
+          <p id="reach">not checked yet</p>
+          <div id="wide"><button id="far-button">The far button</button></div>
+          <div id="zoom-slot"></div>
+          <script>
+            function reachable() {
+              var box = document.getElementById('far-button').getBoundingClientRect();
+              return box.left >= 0 && box.right <= window.innerWidth;
+            }
+
+            document.getElementById('check').addEventListener('click', function () {
+              document.getElementById('reach').textContent = reachable()
+                ? 'the far button is reachable'
+                : 'the far button is out of reach';
+            });
+
+            document.getElementById('far-button').addEventListener('click', function () {
+              var done = document.createElement('div');
+              done.id = 'zoom-clicked';
+              done.className = 'summary';
+              // What the page could see of itself at the moment the click arrived, so the record
+              // says the click landed AND that the whole width was on screen when it did.
+              done.textContent = 'clicked at the far end, ' + (reachable()
+                ? 'with the whole width on screen'
+                : 'while it was still off screen');
+              document.getElementById('zoom-slot').appendChild(done);
             });
           </script>
         </body>

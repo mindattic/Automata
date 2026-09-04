@@ -46,6 +46,147 @@ public class ReplayEngineTests
         return events;
     }
 
+    // ---- zoom ------------------------------------------------------------------------------
+
+    private static FakeBrowserSurface ZoomBrowser() =>
+        new() { DefaultEvalResponse = DefaultResponder };
+
+    /// <summary>The factors the engine actually asked the browser for, in order.</summary>
+    private static List<string> ZoomsAskedFor(FakeBrowserSurface browser) =>
+        browser.Calls.Where(c => c.Method == "SetZoom").Select(c => c.Args).ToList();
+
+    [Test]
+    public async Task SetZoom_AppliesTheLevelAndSaysSo()
+    {
+        var browser = ZoomBrowser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "z", Action = StepAction.SetZoom, Label = "Zoom out", ZoomPercent = 60 }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ZoomsAskedFor(browser), Is.EqualTo(new[] { "0.6" }),
+                "the browser takes a factor, not a percentage");
+            var done = events.OfType<StepEvent.StepCompleted>().Single();
+            Assert.That(done.Status, Is.EqualTo(StepStatus.Passed));
+            Assert.That(done.Message, Does.Contain("60%"));
+        });
+    }
+
+    /// <summary>
+    /// A zoom that did not take has to fail here. Passing it would leave the click after it aiming
+    /// at coordinates from a layout the page is not in, and the failure would surface as an
+    /// unrelated step missing its element several steps later.
+    /// </summary>
+    [Test]
+    public async Task SetZoom_ThatThePageDidNotHonour_Fails()
+    {
+        var browser = ZoomBrowser();
+        browser.ZoomResponse = _ => 1.0;   // a page that stayed exactly where it was
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "z", Action = StepAction.SetZoom, Label = "Zoom out", ZoomPercent = 60 }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        var done = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+        Assert.That(done.Message, Does.Contain("100%"), "the message should say what it measured");
+    }
+
+    /// <summary>An emulated viewport is a whole number of pixels, so a measured factor is almost
+    /// never exactly the one asked for.</summary>
+    [Test]
+    public async Task SetZoom_ToleratesTheRoundingOfAWholePixelViewport()
+    {
+        var browser = ZoomBrowser();
+        browser.ZoomResponse = _ => 0.3300330033;
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "z", Action = StepAction.SetZoom, Label = "Zoom", ZoomPercent = 33 }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Passed));
+    }
+
+    /// <summary>
+    /// A zoom outside what a browser itself offers is far more likely a typo — 6 for 60 — than an
+    /// intention, and a page at 6% cannot be automated at all. Refusing beats obeying.
+    /// </summary>
+    [Test]
+    public async Task SetZoom_OutsideWhatABrowserOffers_FailsRatherThanObeying()
+    {
+        var browser = ZoomBrowser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "z", Action = StepAction.SetZoom, Label = "Zoom", ZoomPercent = 6 }],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ZoomsAskedFor(browser), Is.Empty, "nothing should reach the browser");
+            Assert.That(events.OfType<StepEvent.StepCompleted>().Single().Status, Is.EqualTo(StepStatus.Failed));
+        });
+    }
+
+    /// <summary>
+    /// The zoom belongs to the run, not to the document. A navigation loads a fresh page at 100%,
+    /// so the engine has to put it back — otherwise a task that zoomed out to reach a wide layout
+    /// silently loses it at the first link, and the click after that lands on nothing.
+    /// </summary>
+    [Test]
+    public async Task Navigating_ReappliesTheZoomTheRunAskedFor()
+    {
+        var browser = ZoomBrowser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step { Id = "z", Action = StepAction.SetZoom, Label = "Zoom out", ZoomPercent = 50 },
+                new Step { Id = "nav", Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" },
+            ],
+        };
+
+        var events = await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ZoomsAskedFor(browser), Is.EqualTo(new[] { "0.5", "0.5" }),
+                "the new page should be zoomed too");
+            Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message, Does.Contain("50%"),
+                "and the run should say so, rather than leaving it to be discovered");
+        });
+    }
+
+    /// <summary>A run that never zoomed must not pay for the feature on every navigation.</summary>
+    [Test]
+    public async Task Navigating_WithoutAZoomStep_TouchesTheZoomAtAll()
+    {
+        var browser = ZoomBrowser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "nav", Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" }],
+        };
+
+        await RunToEnd(Engine(), task, Options(), browser);
+
+        Assert.That(ZoomsAskedFor(browser), Is.Empty);
+    }
+
     [Test]
     public async Task HappyPath_EmitsOrderedEvents_IncludingSubstepRecursion()
     {

@@ -133,6 +133,41 @@ public static class BrowserActions
         return ParseReadback(raw);
     }
 
+    /// <summary>
+    /// Zooms the page and confirms it actually changed size.
+    /// <para>
+    /// The confirmation is the point. <see cref="IBrowserSurface.SetZoomAsync"/> returns the factor
+    /// the page measured for itself afterwards, and a zoom that did not take is a step that must
+    /// fail here rather than one that passes and leaves the click after it landing on nothing.
+    /// The tolerance is a rounding allowance: an emulated viewport is a whole number of pixels, so
+    /// 1000px at 33% is 3030px and reads back as 0.3300330…, not 0.33.
+    /// </para>
+    /// </summary>
+    public static async Task<ValueReadback> SetZoomAsync(
+        IBrowserSurface browser, int percent, CancellationToken ct)
+    {
+        var wanted = percent / 100.0;
+        double applied;
+        try
+        {
+            applied = await browser.SetZoomAsync(wanted, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new ValueReadback(false, null, $"the browser refused to zoom: {ex.Message}");
+        }
+
+        var measured = (int)Math.Round(applied * 100);
+        return Math.Abs(applied - wanted) <= ZoomTolerance
+            ? new ValueReadback(true, measured.ToString(), null)
+            : new ValueReadback(false, null,
+                $"asked for {percent}% but the page measured {measured}%");
+    }
+
+    /// <summary>How far a measured zoom may sit from the one asked for — one part in fifty, which
+    /// covers the whole-pixel rounding of an emulated viewport and nothing more.</summary>
+    private const double ZoomTolerance = 0.02;
+
     /// <summary>Read the last-resolved element's normalized text content.</summary>
     public static async Task<ValueReadback> ReadResolvedTextAsync(IBrowserSurface browser, CancellationToken ct)
     {

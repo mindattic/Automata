@@ -80,6 +80,12 @@ public enum StepAction
     /// a human supplied. See <see cref="Step.Harvest"/>.
     /// </summary>
     ExtractAll,
+
+    /// <summary>
+    /// Zoom the page, so a later step can reach something a cramped layout was hiding. See
+    /// <see cref="Step.ZoomPercent"/>.
+    /// </summary>
+    SetZoom,
 }
 
 /// <summary>
@@ -158,6 +164,24 @@ public sealed class Step
 
     /// <summary><see cref="StepAction.ExtractAll"/>.</summary>
     public HarvestSpec? Harvest { get; set; }
+
+    /// <summary>
+    /// <see cref="StepAction.SetZoom"/>: the zoom level to apply, as a percentage. 100 is normal
+    /// size; 60 shows more of a wide page at smaller text.
+    /// <para>
+    /// A whole number rather than a factor because it is what a browser's own zoom menu shows and
+    /// what a person says out loud — "sixty percent", not "zero point six". Its own field rather
+    /// than <see cref="Value"/> so the editor can offer the levels instead of asking for a number
+    /// and hoping.
+    /// </para>
+    /// <para>
+    /// The zoom belongs to the RUN, not to the step: it stays until another step changes it, and
+    /// the engine re-applies it after a navigation so a page loaded later is not quietly back at
+    /// 100%. Each browser lane of a parallel loop starts at 100% of its own, since a lane is a
+    /// browser nobody has zoomed yet.
+    /// </para>
+    /// </summary>
+    public int? ZoomPercent { get; set; }
 
     /// <summary>
     /// Engine settings overridden at this scope; null (the usual case) means "inherit everything".

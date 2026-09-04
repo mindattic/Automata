@@ -773,6 +773,52 @@ collection…", not `⇄`.
 `clickRowOp` in the harness became two clicks, which kept all twenty-odd existing checks working
 unchanged, and two new groups cover the menu's keyboard model and the one-at-a-time rule.
 
+### Phase 14 - zoom is a step (2026-09-04)
+
+Some layouts do not fit the window they are being driven in, and the control you need is off the
+side of it. **`StepAction.SetZoom`** puts the browser's zoom in the hands of the task: zoom out to
+60%, do the thing, zoom back to 100%. The level is a whole percentage in `Step.ZoomPercent`,
+offered from the levels a browser's own menu offers rather than typed - a free number box invites
+6 for 60 and a page nobody can automate.
+
+**Two obvious implementations were tried and both were wrong**, which is why this took three
+attempts and why the code says so:
+
+1. **CSS `zoom` on the root element** - one script evaluation, no interface change, works on every
+   surface. It does not work: this Chromium still returns UNZOOMED values from
+   `getBoundingClientRect` under it, so the resolver would measure an element in one space and the
+   click would be dispatched in another. Found by the demo asserting a measured width and getting
+   the unzoomed one back.
+2. **CDP `Emulation.setDeviceMetricsOverride`** - what the browser's own device toolbar does, and
+   coordinate-consistent by construction. Also does not work here: Chromium reverts an emulation
+   override when the DevTools session that set it detaches, and WebView2 detaches after every
+   `CallDevToolsProtocolMethodAsync`. The override survived long enough to be read back and no
+   longer - a step that verifies itself and is wrong by the next one. Caught by measuring the
+   viewport from inside the step (5120px) and again from the next step (1280px).
+
+What works is the browser's own zoom, `CoreWebView2Controller.ZoomFactor`, so
+`IBrowserSurface.SetZoomAsync` is on the interface and the surface takes an `Action<double>` from
+whoever owns the controller - the app hops to its UI thread, a lane does not. It returns the factor
+the page MEASURED afterwards (the ratio of the two viewport widths), and a zoom that did not take
+fails the step: passing it would leave the click after it aiming at coordinates from a layout the
+page is not in, and the failure would surface as an unrelated step several steps later.
+
+The zoom belongs to the run, not the page: `ReplayRunState.ZoomPercent` is re-applied after a
+navigation, so a task that zoomed out to reach a wide layout is not quietly returned to 100% by a
+link. Each lane of a parallel loop starts at 100% of its own, since a lane is a browser nobody has
+zoomed yet.
+
+**A third thing this turned up, and it applies to every future demo page: a browser lane renders
+into an off-screen window, so its page is HIDDEN.** Animation frames stop and repeating timers
+throttle almost to nothing, which means a page that reports something about itself on a timer or a
+`resize` sits on its load-time text forever *while appearing to work* - the first assertion passes
+because the value happens to be the initial one. The zoom example measures itself in a click
+handler the automation triggers, which always runs. The generated page says why, in the page.
+
+`ACTIONS`'s original fourteen are untouched; the collapsed group they hide behind is now
+`ADVANCED_ACTIONS` and its label is "Advanced", because `setZoom` is not flow control and a list
+whose name fits only some of its members is a list people stop adding to correctly.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

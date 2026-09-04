@@ -206,18 +206,21 @@ export const ACTION_INFO = {
     runTask: 'Run another task from here',
     writeDataset: 'Append a row to a CSV or JSON file',
     extractAll: 'Read every matching row off this page into a dataset',
+    setZoom: 'Zoom the page in or out, so a later step can reach what was cut off',
 };
 
-// Flow-control actions live apart from the original fourteen and are offered in a collapsed
-// group, never at the top level of the action picker: a new user building their first task must
-// not have to step over them. Only `wait` is here because only `wait` executes today — the rest
-// need the workflow engine, and offering a control that fails at run time is worse than offering
-// none.
-export const FLOW_ACTIONS = ['wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll'];
+// Everything added after the original fourteen lives apart from them and is offered in a
+// collapsed group, never at the top level of the action picker: a new user building their first
+// task must not have to step over any of it. Named for what the group IS rather than for what
+// most of it happens to be — `setZoom` is not flow control, and a list whose name only fits some
+// of its members is a list people stop adding to correctly.
+export const ADVANCED_ACTIONS = [
+    'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
+];
 
 // Everything a step's action dropdown may show, including actions created elsewhere (imported,
 // or authored) that the picker itself does not offer.
-export const ALL_ACTIONS = ACTIONS.concat(FLOW_ACTIONS);
+export const ALL_ACTIONS = ACTIONS.concat(ADVANCED_ACTIONS);
 
 export const STATUS_GLYPH = { running: '⟳', passed: '✓', healed: '✓♻', failed: '✗', skipped: '▷', paused: '⏸' };
 // ---- screen-reader announcements ------------------------------------------------------------

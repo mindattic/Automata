@@ -73,6 +73,7 @@ public static class DemoTasks
         Form(demoRoot),
         Slow(demoRoot),
         Order(demoRoot),
+        Zoom(demoRoot),
         Chain(demoRoot),
         ShopPrices(demoRoot, parallel: false),
         ShopPrices(demoRoot, parallel: true),
@@ -456,6 +457,94 @@ public static class DemoTasks
                 },
             },
         ],
+    };
+
+    // ---- zoom ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The example for a site whose layout is wider than the window it is being driven in.
+    /// <para>
+    /// It proves the two things a zoom step has to be true for: the page really changed size, and
+    /// a click still lands where it is aimed afterwards. Every check is made by pressing a button
+    /// that asks the page to measure itself right then — a page in a browser lane is off-screen
+    /// and therefore hidden, so anything driven by a timer, a frame or a resize would report its
+    /// load-time answer forever and look like it was working.
+    /// </para>
+    /// </summary>
+    private static DemoTask Zoom(string demoRoot) => new(
+        "zoom",
+        "See more of a page that is too wide",
+        $"Some layouts do not fit the window they are driven in, and the thing you need is off the "
+        + $"side of it. This asks the page whether a far-off button is reachable, zooms out to "
+        + $"{DemoPages.ZoomedTo}%, asks again, clicks the button that was out of reach a moment "
+        + "before, and puts the zoom back.",
+        PageUrl(demoRoot, "zoom.html"),
+        [
+            Ask("demo-zoom-check-before", "Ask the page whether the far button is reachable"),
+            new Step
+            {
+                Id = "demo-zoom-before",
+                Action = StepAction.AssertElement,
+                Label = "At normal size it is off the side of the window",
+                Target = Css("p", "#reach"),
+                Value = "out of reach",
+            },
+            new Step
+            {
+                Id = "demo-zoom-out",
+                Action = StepAction.SetZoom,
+                Label = $"Zoom out to {DemoPages.ZoomedTo}%",
+                ZoomPercent = DemoPages.ZoomedTo,
+            },
+            Ask("demo-zoom-check-after", "Ask again, now the page is zoomed out"),
+            new Step
+            {
+                Id = "demo-zoom-after",
+                Action = StepAction.AssertElement,
+                Label = "Now the whole width fits",
+                Target = Css("p", "#reach"),
+                Value = "reachable",
+            },
+            new Step
+            {
+                Id = "demo-zoom-click",
+                Action = StepAction.Click,
+                Label = "Click the button that was out of reach",
+                Target = Css("button", "#far-button"),
+            },
+            new Step
+            {
+                Id = "demo-zoom-clicked",
+                Action = StepAction.AssertElement,
+                Label = "The click landed, and the page agrees it was on screen",
+                Target = Css("div", "#zoom-clicked"),
+                Value = "clicked at the far end, with the whole width on screen",
+            },
+            new Step
+            {
+                Id = "demo-zoom-back",
+                Action = StepAction.SetZoom,
+                Label = "Put the zoom back to normal",
+                ZoomPercent = 100,
+            },
+            Ask("demo-zoom-check-restored", "Ask once more, back at normal size"),
+            new Step
+            {
+                Id = "demo-zoom-restored",
+                Action = StepAction.AssertElement,
+                Label = "…and the far end is out of reach again",
+                Target = Css("p", "#reach"),
+                Value = "out of reach",
+            },
+        ]);
+
+    /// <summary>The zoom example's Check button — the page measures itself only when asked.</summary>
+    private static Step Ask(string id, string label) => new()
+    {
+        Id = id,
+        Action = StepAction.Click,
+        Label = label,
+        Target = Css("button", "#check"),
     };
 
     // ---- one task calling another ---------------------------------------------------------------

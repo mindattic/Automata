@@ -43,4 +43,18 @@ public interface IBrowserSurface
     /// don't fire keydown handlers listening for keyCode 13, so form-submit-on-Enter needs
     /// this dedicated dispatch.</summary>
     Task PressEnterAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Zoom the page. 1.0 is normal size; 0.6 shows more of a layout that is wider than the
+    /// window, at smaller text. Returns the factor the page MEASURED afterwards, which is not
+    /// necessarily the one asked for — the caller checks it rather than assuming.
+    /// <para>
+    /// On the interface rather than built out of <see cref="EvalAsync"/> because the obvious
+    /// script — CSS <c>zoom</c> on the root element — does not work: this Chromium still returns
+    /// unzoomed values from <c>getBoundingClientRect</c> under it, so the resolver would measure
+    /// an element in one space and the click would be dispatched in another. Zoom has to be done
+    /// where the browser itself understands it.
+    /// </para>
+    /// </summary>
+    Task<double> SetZoomAsync(double factor, CancellationToken ct);
 }

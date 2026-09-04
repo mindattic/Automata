@@ -29,6 +29,11 @@ public class ReplayEngine
         this.log = log ?? NullLogger<ReplayEngine>.Instance;
     }
 
+    /// <summary>The range a browser's own zoom menu offers. Outside it a step is far more likely
+    /// to be a typo — 6 for 60 — than an intention, and a page at 6% is not automatable.</summary>
+    internal const int MinZoomPercent = 25;
+    internal const int MaxZoomPercent = 500;
+
     /// <summary>What a masked step reports instead of its value. Total withholding, not a scrub:
     /// a partial scrub that misses one interpolation is worse than a generic message.</summary>
     private const string Redacted = "••••••";
@@ -134,7 +139,7 @@ public class ReplayEngine
         var attempt = 1;
         while (true)
         {
-            (status, message, extracted) = await PerformAsync(step, options, effective, (value, url), browser, ct);
+            (status, message, extracted) = await PerformAsync(step, options, effective, (value, url), browser, state, ct);
             if (status != StepStatus.Failed || attempt >= attempts) break;
 
             var delayMs = (int)Math.Round(
@@ -180,7 +185,8 @@ public class ReplayEngine
 
     private async Task<(StepStatus Status, string? Message, string? Extracted)> PerformAsync(
         Step step, ReplayOptions options, ResolvedSettings effective,
-        (string? Value, string? Url) values, IBrowserSurface browser, CancellationToken ct)
+        (string? Value, string? Url) values, IBrowserSurface browser, ReplayRunState state,
+        CancellationToken ct)
     {
         // Shadow the literals so every action below reads the RESOLVED value, whether it came
         // from the step itself or from a binding.
@@ -207,6 +213,20 @@ public class ReplayEngine
         if (step.Action == StepAction.Wait)
             return await PerformWaitAsync(step, options, ct);
 
+        if (step.Action == StepAction.SetZoom)
+        {
+            var percent = step.ZoomPercent ?? 100;
+            if (percent is < MinZoomPercent or > MaxZoomPercent)
+            {
+                return (StepStatus.Failed,
+                    $"a zoom of {percent}% is outside the {MinZoomPercent}-{MaxZoomPercent}% a browser offers", null);
+            }
+            var zoomed = await BrowserActions.SetZoomAsync(browser, percent, ct);
+            if (!zoomed.Ok) return (StepStatus.Failed, zoomed.Error, null);
+            state.ZoomPercent = percent;
+            return (StepStatus.Passed, $"zoomed to {percent}%", null);
+        }
+
         if (step.Action == StepAction.Navigate)
         {
             if (string.IsNullOrWhiteSpace(url))
@@ -214,6 +234,18 @@ public class ReplayEngine
             var navError = await TryNavigateAsync(browser, url!, ct);
             if (navError != null) return (StepStatus.Failed, navError, null);
             await BrowserActions.WaitForSettleAsync(browser, timeoutMs, options.SettlePollMs, ct);
+
+            // A fresh document is at 100% again. Re-applying is what makes the zoom a property of
+            // the run rather than of one page — a task that zoomed out to reach a wide layout
+            // means it for the pages that follow, and finding out otherwise by a click landing on
+            // nothing is the worst way to learn it.
+            if (state.ZoomPercent != 100)
+            {
+                var restored = await BrowserActions.SetZoomAsync(browser, state.ZoomPercent, ct);
+                if (!restored.Ok)
+                    return (StepStatus.Failed, $"could not restore the {state.ZoomPercent}% zoom: {restored.Error}", null);
+                return (StepStatus.Passed, $"navigated, back to {state.ZoomPercent}% zoom", null);
+            }
             return (StepStatus.Passed, null, null);
         }
 

@@ -57,4 +57,14 @@ public sealed class FakeBrowserSurface : IBrowserSurface
         Calls.Add(("PressEnter", ""));
         return Task.CompletedTask;
     }
+
+    /// <summary>What a zoom reports back. Defaults to obeying; set it to something else to
+    /// stand in for a page that refuses to change size.</summary>
+    public Func<double, double> ZoomResponse { get; set; } = factor => factor;
+
+    public Task<double> SetZoomAsync(double factor, CancellationToken ct)
+    {
+        Calls.Add(("SetZoom", factor.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)));
+        return Task.FromResult(ZoomResponse(factor));
+    }
 }

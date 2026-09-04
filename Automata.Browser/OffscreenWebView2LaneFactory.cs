@@ -113,7 +113,11 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
                 // to land on.
                 controller.Bounds = new System.Drawing.Rectangle(0, 0, LaneWidth, LaneHeight);
                 controller.IsVisible = true;
-                ready.TrySetResult(new WebView2BrowserSurface(controller.CoreWebView2));
+                // The controller is reached straight from here: this lane's WebView2 calls are
+                // already made off the pump thread (the awaits above have no synchronisation
+                // context to return to), so its zoom is no different.
+                ready.TrySetResult(new WebView2BrowserSurface(
+                    controller.CoreWebView2, factor => controller.ZoomFactor = factor));
             }
             catch (Exception ex)
             {

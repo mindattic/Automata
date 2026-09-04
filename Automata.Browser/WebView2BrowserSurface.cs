@@ -10,9 +10,18 @@ public class WebView2BrowserSurface : IBrowserSurface
 {
     private readonly CoreWebView2 core;
 
-    public WebView2BrowserSurface(CoreWebView2 core)
+    /// <summary>
+    /// Applies the browser's zoom factor. Supplied by whoever owns the controller, because the
+    /// zoom lives on the CONTROLLER and this type only holds the CoreWebView2 — and because the
+    /// two owners reach it differently: the app has to hop to its UI thread, a lane does not.
+    /// Null for a surface with no controller behind it, which then cannot zoom and says so.
+    /// </summary>
+    private readonly Action<double>? setZoom;
+
+    public WebView2BrowserSurface(CoreWebView2 core, Action<double>? setZoom = null)
     {
         this.core = core;
+        this.setZoom = setZoom;
     }
 
     public string CurrentUrl => core.Source;
@@ -90,6 +99,56 @@ public class WebView2BrowserSurface : IBrowserSurface
 
     public Task InjectFileAsync(string filePath, string selector, CancellationToken ct)
         => DomFileInjector.InjectAsync(core, filePath, selector);
+
+    /// <summary>
+    /// Zooms the page with the browser's OWN zoom — the controller's zoom factor, the same setting
+    /// Ctrl+ and Ctrl- drive.
+    /// <para>
+    /// The two things that look easier both fail, and both were tried. CSS <c>zoom</c> on the root
+    /// element does not move <c>getBoundingClientRect</c> in this Chromium, so the resolver would
+    /// measure an element in one space and the click would be dispatched in another. And CDP's
+    /// <c>Emulation.setDeviceMetricsOverride</c> is reverted the moment the DevTools session that
+    /// set it detaches — which WebView2 does after every <c>CallDevToolsProtocolMethodAsync</c>, so
+    /// the override survives long enough to be read back and no longer, giving a step that verifies
+    /// itself and is wrong by the next one.
+    /// </para>
+    /// <para>
+    /// Browser zoom has neither problem: it changes how many CSS pixels fit in the window, so
+    /// element geometry and dispatched input coordinates stay in one space, and it persists across
+    /// navigations because it belongs to the browser rather than to the document.
+    /// </para>
+    /// </summary>
+    public async Task<double> SetZoomAsync(double factor, CancellationToken ct)
+    {
+        // A surface built without a controller cannot zoom. Reporting 1.0 lets the caller fail the
+        // step with "asked for 60% but the page measured 100%", which is the truth.
+        if (setZoom == null) return 1.0;
+
+        setZoom(1.0);
+        var native = await ViewportAsync(ct);
+        if (Math.Abs(factor - 1.0) < 0.001 || native.Width <= 0) return 1.0;
+
+        setZoom(factor);
+        // What the window ended up holding, not what was asked for: zooming out fits more CSS
+        // pixels across, so the ratio of the two viewports IS the zoom, measured by the page.
+        var applied = await ViewportAsync(ct);
+        return applied.Width <= 0 ? 1.0 : native.Width / applied.Width;
+    }
+
+    private async Task<(double Width, double Height)> ViewportAsync(CancellationToken ct)
+    {
+        var raw = await EvalAsync(
+            "(function(){ return JSON.stringify({ w: window.innerWidth, h: window.innerHeight }); })()", ct);
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return (doc.RootElement.GetProperty("w").GetDouble(), doc.RootElement.GetProperty("h").GetDouble());
+        }
+        catch (JsonException)
+        {
+            return (0, 0);
+        }
+    }
 
     /// <summary>
     /// Dispatches a REAL mouse click at a viewport point via CDP Input.dispatchMouseEvent —

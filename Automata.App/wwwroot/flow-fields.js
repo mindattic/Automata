@@ -135,10 +135,28 @@ export function flowFieldsHtml(step, task) {
         case 'extractAll':
             return harvestHtml(step);
 
+        case 'setZoom': {
+            var pct = step.zoomPercent || 100;
+            // The browser's own levels, offered rather than typed. A free number box would invite
+            // 6 for 60 and a page nobody can automate, and there is no zoom between these that
+            // anybody actually wants.
+            return '<div class="field"><span>Zoom to</span>' +
+                '<select id="ed-zoom" aria-label="Zoom level for the page">' +
+                ZOOM_LEVELS.map(function (z) {
+                    return '<option value="' + z + '"' + (z === pct ? ' selected' : '') + '>' +
+                        z + '%' + (z === 100 ? ' (normal)' : '') + '</option>';
+                }).join('') + '</select>' +
+                '<p class="scope-note">Stays until another step changes it, and is re-applied ' +
+                'after a navigation. Each lane of a parallel loop starts at 100%.</p></div>';
+        }
+
         default:
             return '';
     }
 }
+
+/// The levels a browser's own zoom menu offers, and the range the engine accepts.
+var ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
 
 var SOURCES = [
     { value: 'text', label: 'its text' },
@@ -239,6 +257,8 @@ export function commitFlowFields(step) {
         spec.resetOnFirstWrite = spec.append && ($('ed-write-reset') || {}).checked === true;
         spec.columns = readColumns(spec.columns || {});
         step.writeDataset = spec;
+    } else if (step.action === 'setZoom') {
+        step.zoomPercent = parseInt((($('ed-zoom') || {}).value || '100'), 10) || 100;
     } else if (step.action === 'extractAll') {
         var h = Object.assign({ format: 'csv' }, step.harvest);
         h.datasetName = (($('ed-harvest-name') || {}).value || '').trim();

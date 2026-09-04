@@ -41,6 +41,14 @@ internal sealed class ReplayRunState
     public readonly HashSet<string> TaskStack = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// The zoom a <see cref="StepAction.SetZoom"/> step asked for, as a percentage. Held on the run
+    /// rather than on the page because a navigation wipes the page's own zoom, and a task that
+    /// zoomed out to see a wide layout means it for the pages that follow too — being silently
+    /// returned to 100% by a link is the surprise this avoids.
+    /// </summary>
+    public int ZoomPercent = 100;
+
+    /// <summary>
     /// Datasets a "start fresh each run" write has already claimed. <b>Shared by reference with
     /// every forked row state</b> — deliberately the one thing a fork does not isolate, because
     /// "has this run started this dataset yet?" is a question about the run and there is no other

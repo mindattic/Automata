@@ -342,16 +342,18 @@ async function floorCheck(exePath, group) {
       assertEqual(picks.length, 15,
         `expected Record + 14 actions at the top level, got ${picks.length}: ${JSON.stringify(picks)}`);
       const flowGroup = page.locator('#modal-list details.pick-group');
-      assertEqual(await flowGroup.count(), 1, 'flow actions should be in their own group');
-      assertEqual(await flowGroup.evaluate((el) => el.open), false, 'the flow group must start collapsed');
+      assertEqual(await flowGroup.count(), 1, 'advanced actions should be in their own group');
+      assertEqual(await flowGroup.evaluate((el) => el.open), false, 'the advanced group must start collapsed');
       const flowCount = await flowGroup.locator('.action-pick').count();
       assertTrue(flowCount >= 5,
-        `every flow-control action belongs in the collapsed group; found only ${flowCount}`);
+        `every action past the original fourteen belongs in the collapsed group; found only ${flowCount}`);
       // The specific trap this catches: a new action added to the basic list by mistake. Checked by
       // action key and named in the failure, because a count says nothing about WHICH one leaked.
       const topLevelKeys = await page.locator('#modal-list > .action-pick')
         .evaluateAll((els) => els.map((el) => el.getAttribute('data-value')));
-      for (const advanced of ['wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll']) {
+      for (const advanced of [
+        'wait', 'if', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
+      ]) {
         assertTrue(!topLevelKeys.includes(advanced),
           `the advanced action "${advanced}" leaked into the top-level picker`);
       }
@@ -361,6 +363,10 @@ async function floorCheck(exePath, group) {
     });
 
     await group('floor: a first-run user lands on Build with nothing advanced on screen', async () => {
+      // The pointer is still over whatever row the previous group used, and a hovered row shows
+      // its wrench — which is the point of the assertion below, so move off first.
+      await page.mouse.move(0, 0);
+      await sleep(100);
       // Tabs themselves are chrome, not an advanced concept, so they are allowed here - but Build
       // must be what a new user sees, and every advanced CONCEPT must stay out of sight.
       assertEqual(await page.locator('#tab-build').getAttribute('aria-selected'), 'true',
@@ -1162,6 +1168,30 @@ async function main() {
         { timeoutMs: 5000, label: 'the reset option to withdraw with append' });
       await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"resetOnFirstWrite": true'),
         { timeoutMs: 5000, label: 'the reset flag to be cleared on disk' });
+    });
+
+    await group('flow: a step can zoom the page, chosen from the levels a browser offers', async () => {
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('setZoom');
+      await panelPage.locator('#ed-zoom').waitFor({ state: 'visible', timeout: 10000 });
+
+      // Offered, never typed: a free number box invites 6 for 60 and a page nobody can automate.
+      assertEqual(await panelPage.locator('#ed-zoom').inputValue(), '100',
+        'a fresh zoom step should start at normal size');
+      const levels = await panelPage.locator('#ed-zoom option').evaluateAll(
+        (els) => els.map((el) => el.value));
+      assertTrue(levels.includes('25') && levels.includes('60') === false && levels.includes('500'),
+        `expected the browser's own zoom levels, got ${JSON.stringify(levels)}`);
+
+      // Zoom is about the whole page, so there is no element to point at.
+      assertEqual(await panelPage.locator('#editor details.target').count(), 0,
+        'a zoom step must not ask for a target element');
+
+      await panelPage.locator('#ed-zoom').selectOption('50');
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"zoomPercent": 50'),
+        { timeoutMs: 5000, label: 'the chosen zoom level to reach disk' });
     });
 
     // ---- harvest (extractAll) ------------------------------------------------------------

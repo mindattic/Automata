@@ -186,7 +186,12 @@ public partial class MainWindow : Window
 
         TargetBrowser.CoreWebView2.Navigate("about:blank");
 
-        targetBrowser = new WebView2BrowserSurface(TargetBrowser.CoreWebView2);
+        // The zoom lives on the WebView2 control, which is a WPF element — so unlike a headless
+        // lane, setting it has to hop back to the UI thread from whatever thread the replay
+        // engine is running a step on.
+        targetBrowser = new WebView2BrowserSurface(
+            TargetBrowser.CoreWebView2,
+            factor => Dispatcher.Invoke(() => TargetBrowser.ZoomFactor = factor));
     }
 
     private void OnTargetMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
