@@ -30,7 +30,7 @@ public static class DatasetIO
     public static IReadOnlyList<Dictionary<string, string>> Read(string path)
     {
         using var _ = ExclusiveFileLock.Acquire(path);
-        return IsJson(path) ? ReadJsonArray(path) : ReadCsv(path);
+        return IsJson(path) ? ReadJson(path, flattenNested: true) : ReadCsv(path);
     }
 
     /// <summary>
@@ -80,7 +80,9 @@ public static class DatasetIO
         if (!File.Exists(path)) return [];
         if (IsJson(path))
         {
-            var rows = ReadJsonArray(path);
+            // Flattened, because this is the list the binding picker offers: a nested field that
+            // a loop can reach but the picker cannot name is a field nobody finds.
+            var rows = ReadJson(path, flattenNested: true);
             var names = new List<string>();
             foreach (var row in rows)
                 foreach (var key in row.Keys)
@@ -221,7 +223,38 @@ public static class DatasetIO
 
     // ---- JSON --------------------------------------------------------------------------------
 
-    public static IReadOnlyList<Dictionary<string, string>> ReadJsonArray(string path)
+    /// <summary>
+    /// The file exactly as it stands: one column per top-level property, nested values kept as
+    /// their raw JSON.
+    /// <para>
+    /// Faithful on purpose, because <see cref="WriteJsonArray"/>'s append reads through here
+    /// before rewriting the file. Reading the convenience columns and writing them back would bake
+    /// them into the file, and the next append would do it again.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<Dictionary<string, string>> ReadJsonArray(string path) =>
+        ReadJson(path, flattenNested: false);
+
+    /// <summary>
+    /// The rows a task actually binds against, which is the same thing plus reachable nested
+    /// fields: an object-valued property ALSO publishes its leaves as <c>Address.City</c>.
+    /// <para>
+    /// The parent keeps its raw JSON as well, so nothing that already bound to <c>Address</c>
+    /// changes meaning — flattening only adds names. A whole-row binding therefore carries both,
+    /// which is what "all of it" means here: every column the loop publishes.
+    /// </para>
+    /// <para>
+    /// Objects only. An array keeps its JSON, because its length varies from row to row and
+    /// <c>Items.0</c> would be a column that exists on some rows and not others — a shape this
+    /// product already has a better answer for, which is a loop.
+    /// </para>
+    /// <para>
+    /// <b>A real property always wins.</b> Every top-level name is written first and a leaf never
+    /// overwrites one, for the same reason a column called <c>#</c> beats a row's position: what
+    /// the file says is data, and what this works out is convenience.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<Dictionary<string, string>> ReadJson(string path, bool flattenNested)
     {
         if (!File.Exists(path)) return [];
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
@@ -233,10 +266,35 @@ public static class DatasetIO
             if (element.ValueKind != JsonValueKind.Object) continue;
             var row = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var prop in element.EnumerateObject()) row[prop.Name] = Stringify(prop.Value);
+            if (flattenNested)
+                foreach (var prop in element.EnumerateObject()) AddLeaves(row, prop.Name, prop.Value);
             rows.Add(row);
         }
         return rows;
     }
+
+    /// <summary>
+    /// Adds <c>parent.child</c> for every leaf under an object-valued property, recursively.
+    /// TryAdd rather than assignment: the first name to claim a key keeps it, which is what makes
+    /// the real property above always win.
+    /// </summary>
+    private static void AddLeaves(Dictionary<string, string> row, string prefix, JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return;
+        foreach (var prop in value.EnumerateObject())
+        {
+            var key = prefix + NestedSeparator + prop.Name;
+            row.TryAdd(key, Stringify(prop.Value));
+            AddLeaves(row, key, prop.Value);
+        }
+    }
+
+    /// <summary>
+    /// What joins a nested field to its parent. A dot, matching the <c>row.Address.City</c> a
+    /// binding is written as — the same separator the row variable already uses, so there is one
+    /// punctuation mark to learn rather than two.
+    /// </summary>
+    private const string NestedSeparator = ".";
 
     /// <summary>Scalars become their text; anything nested keeps its JSON so nothing is lost.</summary>
     private static string Stringify(JsonElement value) => value.ValueKind switch

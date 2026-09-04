@@ -1114,6 +1114,33 @@ enum check now proves the picker can PRODUCE every kind, not just that the engin
 every loop satisfies the count with the source form — because an exemption or a check that quietly
 means less than it appears to is worse than none.
 
+### Phase 22 - a field inside a nested object is just a column (2026-09-04)
+
+A JSON dataset kept a nested object as raw text in its column, so `Address.City` could be seen and
+not reached. It is a column now, published alongside the parent rather than instead of it: nothing
+that already bound to `Address` changes meaning, and flattening only ever adds names.
+
+Three decisions, each of which had a cheaper wrong answer:
+
+- **Objects only; an array keeps its JSON.** `Items.0` would be a column that exists on some rows
+  and not others — ragged by construction, for a shape this product already answers with a loop.
+- **A real property always wins.** Every top-level name is written first and a leaf never
+  overwrites one. Same rule phase 21 gave a column called `#` against the row's position, and it is
+  now a stated principle rather than a coincidence: what the file says is data, what the reader
+  works out is convenience.
+- **The faithful read stayed.** Flattening at read time was the obvious answer and the obvious
+  risk, and the risk turned out not to be the collision — it was `WriteJsonArray`'s append, which
+  reads every existing row and writes it back. Flattening THAT read would bake the convenience
+  columns into the file, and the next append would do it again. So `ReadJsonArray` still reports
+  the file exactly as it stands and a separate read publishes the leaves; the append uses the first
+  and everything a task binds against uses the second. There is a test that opens the file
+  afterwards and looks.
+
+No new syntax anywhere: a nested field's name simply has a dot in it, and every reference grammar
+already allowed one — `row.Contact.Email` loses its `row.` prefix like any column, and the picker
+offers it because `Columns` reads through the same flattening. The roster example carries a
+`Contact` object now and binds one, so the capability has somewhere to be seen working.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1148,9 +1175,6 @@ yet** below.
 - **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
   selector against the top document, so the one action that does not go through the resolver is the
   one action that still stops at the boundary.
-- **Nested JSON is flat.** `ReadJsonArray` keeps a nested object as its raw JSON text in that
-  column, so `Address.City` is not reachable as a column. Flattening it at read time is the obvious
-  answer and the obvious risk (a name collision with a real column).
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
   running - a parallel for-each forks a state per row, and no other step is in flight. So it is

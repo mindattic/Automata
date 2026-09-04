@@ -172,6 +172,14 @@ try {
     added.length === wanted.length && added.every((r, i) => r.position === wanted[i].at),
     `${added.map((r) => r.position).join(', ')} — expected ${wanted.map((e) => e.at).join(', ')}`,
   );
+  // The other thing a JSON blob does that a spreadsheet cannot: a field inside a nested object.
+  // The binding says row.Contact.Email and nothing about it knows the field is nested — which only
+  // works if the reader published it as a column of its own.
+  check(
+    'a field inside a nested object is reachable as a column',
+    added.every((r, i) => r.email === wanted[i].row.Contact.Email) && added.every((r) => r.email),
+    added.map((r) => r.email).join(', '),
+  );
   check(
     'and the whole source row alongside it, as JSON',
     added.every((r, i) => {

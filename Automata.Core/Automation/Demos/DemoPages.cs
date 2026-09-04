@@ -54,14 +54,22 @@ public static class DemoPages
     /// header. It is written as an example ASSET rather than harvested, because a harvest fills
     /// every column of every row and so could never produce the gap this example is about.
     /// </para>
+    /// <para>
+    /// It is also NESTED, for the second thing a JSON blob does that a spreadsheet cannot: the two
+    /// named rows carry a <c>Contact</c> object, and the example binds <c>row.Contact.Email</c> to
+    /// show a field inside one is reachable by name.
+    /// </para>
     /// </summary>
     public const string RosterJson = """
         [
-          { "Name": "Ada", "Role": "engineer" },
+          { "Name": "Ada", "Role": "engineer", "Contact": { "Email": "ada@example.com" } },
           { "Role": "unknown" },
-          { "Name": "Grace", "Role": "admiral" }
+          { "Name": "Grace", "Role": "admiral", "Contact": { "Email": "grace@example.com" } }
         ]
         """;
+
+    /// <summary>The nested field the roster example reads, written the way a binding names it.</summary>
+    public const string RosterEmailColumn = "Contact.Email";
 
     /// <summary>How many roster rows carry a name, and how many do not — asserted by the example
     /// itself, so they are stated once.</summary>

@@ -379,6 +379,33 @@ public class GherkinFlowTests
         });
     }
 
+    /// <summary>
+    /// A nested field needed no new syntax either: its name simply has a dot in it, and the
+    /// reference grammar already allowed one. <c>row.</c> comes off the front and the rest is the
+    /// column, however many dots it carries.
+    /// </summary>
+    [Test]
+    public void ANestedFieldIsANameWithADotInIt()
+    {
+        var result = Compile("""
+            Feature: F
+              Scenario Outline: S
+                Given row.Contact.Email is not empty
+                And I type "<Contact.Email>" into "To"
+                Examples: people.json
+                  | Name |
+                  | Ada  |
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        var guard = result.Tasks[0].Steps[0].Children[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(guard.Condition!.Left.ColumnName, Is.EqualTo("Contact.Email"));
+            Assert.That(guard.Children[0].Bindings!["Value"].ColumnName, Is.EqualTo("Contact.Email"));
+        });
+    }
+
     /// <summary><c>row.sku</c> is a column; <c>row</c> on its own is the row.</summary>
     [Test]
     public void ABareRowInsideALoopIsTheWholeRow()

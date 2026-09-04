@@ -161,6 +161,75 @@ public class DatasetIOTests
         });
     }
 
+    /// <summary>
+    /// The reachable half: a field inside a nested object is a column in its own right, named the
+    /// way a binding writes it. The parent keeps its JSON too, so nothing that already bound to it
+    /// changes meaning.
+    /// </summary>
+    [Test]
+    public void Read_MakesANestedFieldReachableAsAColumn()
+    {
+        var path = Path_("nested.json");
+        File.WriteAllText(path, """
+            [ { "sku": "A", "address": { "city": "Ely", "geo": { "lat": "52.4" } },
+                "tags": [ "x", "y" ] } ]
+            """);
+
+        var row = DatasetIO.Read(path)[0];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(row["address.city"], Is.EqualTo("Ely"));
+            Assert.That(row["address.geo.lat"], Is.EqualTo("52.4"), "and all the way down");
+            Assert.That(row["address"], Does.Contain("\"city\""), "the parent still carries its JSON");
+            Assert.That(row.ContainsKey("tags.0"), Is.False,
+                "an array keeps its JSON — its length varies per row, so indexed columns would be ragged by construction");
+        });
+    }
+
+    /// <summary>What the file says is data; what the reader works out is convenience, and data
+    /// wins — the same rule a column called "#" gets against a row's position.</summary>
+    [Test]
+    public void Read_ARealColumnBeatsANestedFieldOfTheSameName()
+    {
+        var path = Path_("collide.json");
+        File.WriteAllText(path, """
+            [ { "address": { "city": "Ely" }, "address.city": "the real one" } ]
+            """);
+
+        Assert.That(DatasetIO.Read(path)[0]["address.city"], Is.EqualTo("the real one"));
+    }
+
+    /// <summary>The picker offers what a binding can reach, or a nested field is one nobody
+    /// finds.</summary>
+    [Test]
+    public void Columns_OffersNestedFieldsToo()
+    {
+        var path = Path_("nested-columns.json");
+        File.WriteAllText(path, """
+            [ { "sku": "A", "address": { "city": "Ely" } } ]
+            """);
+
+        Assert.That(DatasetIO.Columns(path), Is.EqualTo(new[] { "sku", "address", "address.city" }));
+    }
+
+    /// <summary>
+    /// An append rewrites every row it read. Reading the convenience columns and writing them back
+    /// would bake them into the file, and the next append would do it again.
+    /// </summary>
+    [Test]
+    public void AppendingToAJsonDatasetDoesNotWriteTheFlattenedColumnsIntoIt()
+    {
+        var path = Path_("append-nested.json");
+        File.WriteAllText(path, """
+            [ { "address": { "city": "Ely" } } ]
+            """);
+
+        DatasetIO.Write(path, [new Dictionary<string, string> { ["sku"] = "B" }], append: true);
+
+        Assert.That(File.ReadAllText(path), Does.Not.Contain("address.city"));
+    }
+
     [Test]
     public void WriteThenReadJson_RoundTripsAndAppends()
     {

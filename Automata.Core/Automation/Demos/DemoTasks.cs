@@ -820,6 +820,10 @@ public static class DemoTasks
                                             {
                                                 ["position"] = RowNumber(),
                                                 ["name"] = Column("Name"),
+                                                // A field INSIDE the row's Contact object, named
+                                                // the way a picker offers it. Nothing about the
+                                                // binding says it is nested; that is the point.
+                                                ["email"] = Column(DemoPages.RosterEmailColumn),
                                                 ["source"] = WholeRow(DemoPages.RosterDataset),
                                             },
                                         },
