@@ -560,7 +560,7 @@ async function main() {
       };
 
       const conditionOps = enumMembers('Automata.Core/Automation/Model/ControlFlow.cs', 'ConditionOp');
-      const editable = jsList('Automata.App/wwwroot/flow-fields.js', 'var OPS = [', true);
+      const editable = jsList('Automata.App/wwwroot/core.js', 'export const OPS = [', true);
       const missingOps = conditionOps.filter((o) => !editable.includes(o) && !notOffered[o]);
       assertEqual(JSON.stringify(missingOps), '[]',
         `the condition editor cannot express ${JSON.stringify(missingOps)} — a guard using one ` +
@@ -1343,6 +1343,36 @@ async function main() {
       assertEqual(saved.aggregate.op, 'average');
       assertEqual(JSON.stringify((saved.outputs ?? []).map((o) => o.name)), JSON.stringify(['value']),
         'an aggregate step should publish "value" without being asked');
+    });
+
+    await group('rows say what the step is, and keep saying it when the step changes', async () => {
+      // The defect this closes: a label was written once, at creation, and never again — so a row
+      // could read "Click 'Alpha'" while the step's action had since been changed to `if`. The row
+      // text is derived from the record on every render now, so there is nothing to go stale.
+      const row = panelPage.locator('#tree .node.step').first();
+      // The .name child, not the row: a row's text starts with its status glyph.
+      const rowText = () => row.locator('.name').innerText();
+      await row.click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+
+      await panelPage.locator('#ed-action').selectOption('wait');
+      await waitFor(async () => /^Wait/.test((await rowText()).trim()),
+        { timeoutMs: 10000, label: 'the row to describe the wait it now is' });
+
+      await panelPage.locator('#ed-action').selectOption('click');
+      await waitFor(async () => /^Click/.test((await rowText()).trim()),
+        { timeoutMs: 10000, label: 'the row to follow the action back' });
+
+      // And it names the element the way a person would, not by selector — this fixture's target
+      // carries both, and the readable one wins.
+      assertTrue(/Alpha/.test(await rowText()),
+        `expected the row to name the element, got "${await rowText()}"`);
+
+      // The stored label follows too. The tree never reads it, but the host writes run-log lines
+      // from it and has no way to run this derivation.
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      await waitFor(() => /"label": "Click[^"]*Alpha/.test(readFileSync(taskFile, 'utf8')),
+        { timeoutMs: 5000, label: 'the label snapshot to reach disk' });
     });
 
     await group('inputs: a task declares one, and a step binds to it instead of a fixed value', async () => {

@@ -225,6 +225,70 @@ export const ADVANCED_ACTIONS = [
 // or authored) that the picker itself does not offer.
 export const ALL_ACTIONS = ACTIONS.concat(ADVANCED_ACTIONS);
 
+// How a comparison reads, in the order the picker offers them. Shared rather than owned by the
+// condition editor, because the TREE has to say the same words the editor does — a row that
+// described a guard differently from the form that built it would be two vocabularies for one
+// record, and the one on the row is the one people read most.
+export const OPS = [
+    { value: 'equals', label: 'is exactly' },
+    { value: 'notEquals', label: 'is not' },
+    { value: 'contains', label: 'contains' },
+    { value: 'greaterThan', label: 'is greater than' },
+    { value: 'lessThan', label: 'is less than' },
+    { value: 'notEmpty', label: 'has any value' },
+    { value: 'empty', label: 'is empty' },
+    // Presence, which is a different question from emptiness: a row of a ragged list may not carry
+    // the column at all, and asking whether that is "empty" fails the run rather than answering.
+    { value: 'exists', label: 'has a value at all' },
+    { value: 'notExists', label: 'is missing' },
+    { value: 'isTrue', label: 'is true' },
+    { value: 'isFalse', label: 'is false' },
+];
+
+// Comparisons that take no right-hand side; showing an inert box beside one would invite a value
+// that is silently ignored.
+export const UNARY = ['notEmpty', 'empty', 'exists', 'notExists', 'isTrue', 'isFalse'];
+
+/// How a bound value reads in one short phrase — `row.sku`, `input: term`, `env: TOKEN`.
+export function describeBinding(binding) {
+    if (!binding) return '';
+    if (binding.label) return binding.label;
+    if (binding.kind === 'datasetColumn') return 'row.' + (binding.columnName || '?');
+    if (binding.kind === 'envVar') return 'env: ' + (binding.envVarName || '?');
+    if (binding.kind === 'taskInput') return 'input: ' + (binding.parameterName || '?');
+    if (binding.kind === 'stepOutput') return binding.outputField || 'output';
+    return binding.kind;
+}
+
+// What an action is CALLED, as opposed to what it is keyed as. `if` and `forEach` are words for
+// people who already write code; the picker and the editor show these instead. The keys are
+// untouched — on disk, in Gherkin, and in every test they are still `if` and `forEach`.
+export const ACTION_LABEL = {
+    navigate: 'Go to a page',
+    click: 'Click something',
+    typeText: 'Type text',
+    setValue: 'Set a field',
+    pressEnter: 'Press Enter',
+    check: 'Tick a box',
+    uncheck: 'Untick a box',
+    selectRadio: 'Choose an option',
+    selectOption: 'Pick from a dropdown',
+    uploadFile: 'Attach a file',
+    waitForElement: 'Wait for something',
+    assertElement: 'Check something',
+    extractText: 'Read something',
+    group: 'Group of steps',
+    wait: 'Wait',
+    if: 'Only if…',
+    else: 'Otherwise',
+    forEach: 'For each row of…',
+    runTask: 'Run another task',
+    writeDataset: 'Save a row',
+    extractAll: 'Collect a list',
+    setZoom: 'Zoom the page',
+    aggregate: 'Work out a total',
+};
+
 export const STATUS_GLYPH = { running: '⟳', passed: '✓', healed: '✓♻', failed: '✗', skipped: '▷', paused: '⏸' };
 // ---- screen-reader announcements ------------------------------------------------------------
 

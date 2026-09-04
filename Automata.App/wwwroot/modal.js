@@ -2,7 +2,9 @@
 // walk out into the page behind the overlay, and focus restore so closing a dialog never strands
 // a keyboard user at the top of the document (WCAG 2.2 SC 2.1.2 / 2.4.3).
 
-import { $, esc, state, ui, rowByKey, ACTIONS, ACTION_INFO, ADVANCED_ACTIONS } from './core.js';
+import {
+    $, esc, state, ui, rowByKey, ACTIONS, ACTION_INFO, ACTION_LABEL, ADVANCED_ACTIONS,
+} from './core.js';
 
 var modalCommit = null;
 var modalMode = null;      // 'rename' | 'info' | 'confirm' | 'picker' | 'form'
@@ -136,13 +138,13 @@ export function openActionPicker(onPick) {
     var items = [{ value: '__record', label: '🔴 Record', cls: 'record-pick',
         detail: 'Perform the action live in the browser pane' }];
     ACTIONS.forEach(function (a) {
-        items.push({ value: a, label: a, detail: ACTION_INFO[a] || '' });
+        items.push({ value: a, label: ACTION_LABEL[a] || a, detail: ACTION_INFO[a] || '' });
     });
     openListPicker('New step', 'Choose the action this step performs, or record it live:',
         items, onPick, {
             label: 'Advanced',
             items: ADVANCED_ACTIONS.map(function (a) {
-                return { value: a, label: a, detail: ACTION_INFO[a] || '' };
+                return { value: a, label: ACTION_LABEL[a] || a, detail: ACTION_INFO[a] || '' };
             }),
         });
 }

@@ -14,6 +14,7 @@ import { render } from './render.js';
 import { openScopedSettings } from './scoped-settings.js';
 import { scheduleChipFor } from './schedule.js';
 import { openRowMenu, closeRowMenu } from './rowmenu.js';
+import { phraseFor } from './phrases.js';
 import { openTaskInputs } from './task-inputs.js';
 
 var dragCtx = null;           // {type:'step'|'task', id, taskId}
@@ -139,8 +140,8 @@ function renderSteps(task, steps, depth, parentId) {
             ' style="padding-left:' + (34 + depth * 14) + 'px">' +
             '<span class="status" role="img" aria-label="' + esc(status || 'not run') + '">' +
             (STATUS_GLYPH[status] || '▫') + '</span>' +
-            '<span class="name">' + esc(s.label || s.action) + '</span>' + flags +
-            wrench('step', s.label || s.action) + '</div>';
+            '<span class="name">' + esc(phraseFor(s, state.collections)) + '</span>' + flags +
+            wrench('step', phraseFor(s, state.collections)) + '</div>';
         html += renderSteps(task, kids, depth + 1, s.id);
     });
     if (steps.length) html += insertZone(task.id, pid, steps.length, depth);
@@ -218,7 +219,8 @@ function stepOp(tid, sid, op) {
         var task = findTask(tid);
         var step = task && findStep(task.steps, sid);
         openConfirmModal('Delete step',
-            'Are you sure you want to delete "' + (step ? (step.label || step.action) : 'this step') + '"?',
+            'Are you sure you want to delete "' +
+            (step ? phraseFor(step, state.collections) : 'this step') + '"?',
             'Delete',
             function () {
                 if (!task) return;
@@ -304,7 +306,7 @@ function wireTree() {
             if (op === 'menu') {
                 var t = findTask(tid);
                 var st = t && findStep(t.steps, sid);
-                openRowMenu(e.target, 'Actions for step ' + (st ? (st.label || st.action) : ''),
+                openRowMenu(e.target, 'Actions for step ' + (st ? phraseFor(st, state.collections) : ''),
                     STEP_MENU, function (picked) { stepOp(tid, sid, picked); });
                 return;
             }
@@ -585,7 +587,10 @@ function openMoveTaskModal(taskId) {
 function createStepAt(taskId, parentStepId, index, action) {
     var task = findTask(taskId);
     if (!task) return;
-    var step = { id: newId(), action: action, label: 'New ' + action + ' step', children: [] };
+    // The label is a snapshot of the derived sentence, not an independent name — the tree derives
+    // its own text every render, and this copy is what the host puts in the run log.
+    var step = { id: newId(), action: action, label: '', children: [] };
+    step.label = phraseFor(step, state.collections);
     if (!spliceStepsAt(task, parentStepId, index, [step])) return;
     // An `otherwise` records which `if` it is the other half of at the moment it is made, while the
     // answer is unambiguous. Adjacency alone cannot tell that apart from one that merely ended up
@@ -634,7 +639,8 @@ function inlineRename(nodeEl, action, id) {
 export function addStep(taskId, parentStepId) {
     var task = findTask(taskId);
     if (!task) return;
-    var step = { id: newId(), action: 'click', label: 'New step', children: [] };
+    var step = { id: newId(), action: 'click', label: '', children: [] };
+    step.label = phraseFor(step, state.collections);
     if (parentStepId) {
         var parent = findStep(task.steps, parentStepId);
         if (!parent) return;

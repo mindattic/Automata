@@ -5,28 +5,9 @@
 // condition's operands go through the same binding picker as any other value. The only free text
 // is a literal you were always going to type anyway.
 
-import { $, esc, state, post } from './core.js';
-import { openBindingPicker, describeBinding } from './binding-field.js';
+import { $, esc, state, post, OPS, UNARY, describeBinding } from './core.js';
+import { openBindingPicker } from './binding-field.js';
 
-var OPS = [
-    { value: 'equals', label: 'is exactly' },
-    { value: 'notEquals', label: 'is not' },
-    { value: 'contains', label: 'contains' },
-    { value: 'greaterThan', label: 'is greater than' },
-    { value: 'lessThan', label: 'is less than' },
-    { value: 'notEmpty', label: 'has any value' },
-    { value: 'empty', label: 'is empty' },
-    // Presence, which is a different question from emptiness: a row of a ragged list may not carry
-    // the column at all, and asking whether that is "empty" fails the run rather than answering.
-    { value: 'exists', label: 'has a value at all' },
-    { value: 'notExists', label: 'is missing' },
-    { value: 'isTrue', label: 'is true' },
-    { value: 'isFalse', label: 'is false' },
-];
-
-// Operators that take no right-hand side; showing an inert box beside them would invite a value
-// that is silently ignored.
-var UNARY = ['notEmpty', 'empty', 'exists', 'notExists', 'isTrue', 'isFalse'];
 
 /// Options for a select built from a fixed list, ALWAYS including whatever the step currently holds.
 ///

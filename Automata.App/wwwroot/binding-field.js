@@ -9,7 +9,7 @@
 // Composition beyond "this source, optionally wrapped in a literal" is deliberately out of scope
 // here. That belongs to the authoring layer, not to a dropdown.
 
-import { esc, findStep, state } from './core.js';
+import { esc, findStep, state, describeBinding } from './core.js';
 import { openListPicker, openRenameModal, openInfoModal } from './modal.js';
 
 function flatten(steps, out) {
@@ -79,15 +79,8 @@ function columnsInScope(task, step) {
     return found;
 }
 
-export function describeBinding(binding) {
-    if (!binding) return '';
-    if (binding.label) return binding.label;
-    if (binding.kind === 'datasetColumn') return 'row.' + (binding.columnName || '?');
-    if (binding.kind === 'envVar') return 'env: ' + (binding.envVarName || '?');
-    if (binding.kind === 'taskInput') return 'input: ' + (binding.parameterName || '?');
-    if (binding.kind === 'stepOutput') return binding.outputField || 'output';
-    return binding.kind;
-}
+
+export { describeBinding };
 
 /// Renders the control for one bindable field: a plain input when it holds a literal, a chip plus
 /// its optional prefix/suffix when it is bound.

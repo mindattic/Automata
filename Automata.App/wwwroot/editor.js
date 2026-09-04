@@ -2,11 +2,13 @@
 // host echoes the tree back and the UI re-renders from it.
 
 import {
-    $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, locateStep, ALL_ACTIONS,
+    $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, locateStep,
+    ALL_ACTIONS, ACTION_LABEL,
 } from './core.js';
 import { openConfirmModal } from './modal.js';
 import { addStep } from './tree.js';
 import { openScopedSettings } from './scoped-settings.js';
+import { phraseFor } from './phrases.js';
 import { fieldControlHtml, openBindingPicker, loopDatasetsInScope
 } from './binding-field.js';
 import {
@@ -78,10 +80,10 @@ export function renderEditor() {
         '<div class="field"><span>Action</span>' +
         '<select id="ed-action" aria-label="Step action">' +
         ALL_ACTIONS.map(function (a) {
-            return '<option value="' + a + '"' + (a === step.action ? ' selected' : '') + '>' + a + '</option>';
+            return '<option value="' + a + '"' + (a === step.action ? ' selected' : '') + '>' +
+                esc(ACTION_LABEL[a] || a) + '</option>';
         }).join('') + '</select></div>' +
-        '<div class="field"><span>Label</span><input type="text" id="ed-label" aria-label="Step label" value="' +
-        esc(step.label) + '" /></div>' +
+
         (step.action === 'navigate'
             ? '<div class="field"><span>URL</span>' +
               fieldControlHtml('ed-url', 'URL to navigate to', step.url, '', bindingFor(step, 'ed-url')) +
@@ -192,13 +194,13 @@ export function renderEditor() {
             $('ed-action').value = step.action;
             openConfirmModal('Change this step?', warning, 'Change it', function () {
                 applyAction(nextAction);
+                snapshotLabel();
                 saveTask(task);
             });
             return;
         }
 
         applyAction(nextAction);
-        step.label = $('ed-label').value;
         // A bound field renders a chip rather than an input, so there is nothing to read back —
         // and the literal underneath is deliberately preserved, so unbinding restores it.
         if ($('ed-url')) step.url = $('ed-url').value || null;
@@ -256,6 +258,7 @@ export function renderEditor() {
             // fingerprint" instead of a misleading resolve-timeout on a blank identity.
             step.target = hasAny ? tgt : null;
         }
+        snapshotLabel();
         saveTask(task);
     }
 
@@ -272,6 +275,16 @@ export function renderEditor() {
         }
         var before = neighbour(-1);
         step.pairedIfId = before && before.action === 'if' ? before.id : null;
+    }
+
+    /// The stored label is a SNAPSHOT of the derived sentence, refreshed on every commit.
+    ///
+    /// The tree never reads it — it derives its own text every render, so it cannot go stale. This
+    /// copy exists for the one consumer that is not the tree: the host writes run-log lines and run
+    /// records from `Step.Label`, and it has no way to run this derivation. Keeping it in step here
+    /// means the log says the same thing the row does, without a second vocabulary in C#.
+    function snapshotLabel() {
+        step.label = phraseFor(step, state.collections);
     }
 
     // Commit on blur/change of any field — the host echoes state back and the UI re-renders.
