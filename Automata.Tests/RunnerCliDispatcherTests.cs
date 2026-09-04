@@ -282,6 +282,88 @@ public class RunnerCliDispatcherTests
         Assert.That(runs.LoadOutputs(run.RunId, task.Id)["read"]["text"], Is.EqualTo("$42.00"));
     }
 
+    // ---- self-healing, written back ------------------------------------------------------------
+
+    /// <summary>Answers a resolve with a refreshed fingerprint, which is what a step that only
+    /// matched through a fallback strategy gets back — the shape that makes a run report Healed.</summary>
+    private void RespondHealingTo(string newSelector) => factory.Responder = script =>
+    {
+        if (script.Contains("isProcessing")) return """{ "isProcessing": false }""";
+        if (script.Contains("__automataResolve(")) return $$"""
+            { "found": true, "unique": true, "strategy": "text", "ambiguous": false,
+              "candidateCount": 1, "centerX": 1, "centerY": 2,
+              "refreshedFingerprint": { "tag": "h3", "cssSelector": "{{newSelector}}", "classList": [] } }
+            """;
+        if (script.Contains("textContent")) return """{ "ok": true, "value": "x" }""";
+        return "{}";
+    };
+
+    private static Step Reads(string id, string selector) => new()
+    {
+        Id = id, Action = StepAction.ExtractText, Label = "Read",
+        Target = new ElementFingerprint { CssSelector = selector },
+    };
+
+    /// <summary>The app has always written a repair back. Headless runs did not, so every
+    /// unattended run re-discovered the same drift and a site that moved twice failed the second
+    /// time with a repair it had already made and thrown away.</summary>
+    [Test]
+    public async Task AHealedStepIsSavedBackIntoTheTask()
+    {
+        var task = SeedTask("C", "Drifts", Reads("s1", "#was-here"));
+        RespondHealingTo("#is-here-now");
+
+        var code = await Dispatcher().DispatchAsync(["run", "--task", "Drifts"]);
+
+        var reloaded = collections.GetTask(task.Id)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(code, Is.EqualTo(RunnerExitCode.Success));
+            Assert.That(reloaded.Steps[0].Target!.CssSelector, Is.EqualTo("#is-here-now"));
+            Assert.That(Written, Does.Contain("self-healed"));
+        });
+    }
+
+    [Test]
+    public async Task ARunThatHealedNothingLeavesTheTaskFileAlone()
+    {
+        var task = SeedTask("C", "Steady", Reads("s1", "#stable"));
+        var before = collections.GetTask(task.Id)!.ModifiedUtc;
+
+        await Dispatcher().DispatchAsync(["run", "--task", "Steady"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(collections.GetTask(task.Id)!.ModifiedUtc, Is.EqualTo(before));
+            Assert.That(Written, Does.Not.Contain("self-healed"));
+        });
+    }
+
+    /// <summary>A callee is loaded by the engine and never seen by whoever started the run, so it
+    /// is the engine that has to save it — and the caller must not be rewritten for a repair that
+    /// happened somewhere else.</summary>
+    [Test]
+    public async Task AHealInsideACalledTaskIsSavedIntoThatTask_NotIntoItsCaller()
+    {
+        var callee = SeedTask("C", "Callee", Reads("inner", "#was-here"));
+        var caller = SeedTask("C", "Caller", new Step
+        {
+            Id = "call", Action = StepAction.RunTask, Label = "Run the other one", RunTaskId = callee.Id,
+        });
+        var callerBefore = collections.GetTask(caller.Id)!.ModifiedUtc;
+        RespondHealingTo("#is-here-now");
+
+        await Dispatcher().DispatchAsync(["run", "--task", "Caller"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(collections.GetTask(callee.Id)!.Steps[0].Target!.CssSelector, Is.EqualTo("#is-here-now"));
+            Assert.That(collections.GetTask(caller.Id)!.ModifiedUtc, Is.EqualTo(callerBefore),
+                "the caller healed nothing of its own and should not have been rewritten");
+            Assert.That(Written, Does.Contain("Callee"));
+        });
+    }
+
     // ---- status --------------------------------------------------------------------------------
 
     [Test]

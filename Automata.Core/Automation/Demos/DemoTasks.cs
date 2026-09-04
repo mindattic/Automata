@@ -74,6 +74,7 @@ public static class DemoTasks
     public static IReadOnlyList<DemoTask> All(string demoRoot) =>
     [
         Buttons(demoRoot),
+        Drift(demoRoot),
         Form(demoRoot),
         Slow(demoRoot),
         Order(demoRoot),
@@ -119,6 +120,52 @@ public static class DemoTasks
                 Label = "Confirm the page says 'clicked: beta'",
                 Target = Css("div", ".clicked"),
                 Value = "clicked: beta",
+            },
+        ]);
+
+    // ---- the one that repairs itself -----------------------------------------------------------
+
+    /// <summary>
+    /// The only example whose fingerprint is deliberately WRONG. Its button's id and CSS selector
+    /// name something `drift.html` no longer has — the shape of a site that redeployed — so the
+    /// cascade falls through to the words on the button, finds it, and writes the identity it
+    /// actually found back into the step. Run it twice and the second run resolves by id and heals
+    /// nothing, which is the whole claim: a repair is kept, not re-made every time.
+    /// <para>
+    /// Healing edits the example, so the seeder will thereafter treat it as edited and leave it
+    /// alone — the same protection every hand-edited task gets. <c>demos regenerate</c> puts the
+    /// stale fingerprint back when you want to watch it happen again.
+    /// </para>
+    /// </summary>
+    private static DemoTask Drift(string demoRoot) => new(
+        "drift",
+        "Repair a step whose page moved",
+        "The page was redeployed and the button's id changed. Nothing about this task is edited by "
+        + "hand: it finds the button by the words on it, then saves what it found so the next run "
+        + "resolves first time.",
+        PageUrl(demoRoot, "drift.html"),
+        [
+            new Step
+            {
+                Id = "demo-drift-click",
+                Action = StepAction.Click,
+                Label = "Click 'Place order'",
+                // Recorded against the old markup: this id and selector no longer exist.
+                Target = new ElementFingerprint
+                {
+                    Tag = "button",
+                    Id = "place-order-v1",
+                    CssSelector = "#place-order-v1",
+                    VisibleText = "Place order",
+                },
+            },
+            new Step
+            {
+                Id = "demo-drift-assert",
+                Action = StepAction.AssertElement,
+                Label = "Confirm the page says 'order placed'",
+                Target = Css("div", ".clicked"),
+                Value = "order placed",
             },
         ]);
 

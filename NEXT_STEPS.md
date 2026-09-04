@@ -1271,6 +1271,46 @@ The `chain` example now shows both: it navigates before the second call, the way
 tells the third to open its own start page — so the two rules sit next to each other in a task
 someone can run.
 
+### Phase 27 - a repair nobody watched is still worth keeping (2026-09-04)
+
+Self-healing has always been half a feature. The resolver refreshes a fingerprint when a step only
+matched through a fallback strategy, the engine writes it into `step.Target`, and the run reports
+"task should be re-saved". The window acted on that. **The headless runner did not** - it repaired
+the step in memory, said so, and exited. So every scheduled and unattended run rediscovered the same
+drift from scratch, and a site that moved twice failed the second time holding a repair it had
+already made and thrown away. That is precisely the case with nobody at the keyboard, which is the
+case the runner exists for.
+
+Two things had to be got right rather than just adding a `SaveTask` call:
+
+- **A heal has to be credited to the task it happened in.** A `runTask` step's callee is loaded by
+  the engine and never seen by whoever started the run, so counting its heals at the top would
+  rewrite the CALLER's file to record a repair made somewhere else - and announce it under the wrong
+  name. The engine now saves a callee itself, right after its tree finishes, because that is the
+  only place a callee is held; the caller counts only step ids from its own tree. `Step.Flatten` is
+  the one walk both sides use, and `StoreUtil.RegenerateStepIds` now shares it rather than keeping
+  its own copy.
+- **A parked run keeps its repairs.** The save happens before the parked-run early return, so a run
+  that heals and then checkpoints for nine hours resumes from the healed record instead of
+  re-discovering the same drift on the far side of the wait.
+
+Saving from inside a run also made `CollectionStore.SaveTask` a place two threads can arrive at
+once - a parallel loop whose rows call a task that heals - so it is serialised now. A save is a
+read-modify-write across sibling files (find this task's file, check a rename would not land on
+another one, move it, write it), and two of those interleaving leaves a half-written file. Nothing
+needed the gate while only a person could trigger a save.
+
+New example, **"Repair a step whose page moved"** - the only one whose fingerprint is deliberately
+wrong. Its button's id and CSS selector name something `drift.html` no longer has, the words on the
+button are unchanged, and the cascade falls through to them. What `verify-demos` asserts is not that
+the run passed: it is that the id on DISK went from `place-order-v1` to `place-order`, and that a
+second run resolves first time and heals nothing. A run that heals and forgets looks exactly like a
+run that never healed, so only the second run can tell them apart.
+
+Healing edits the example, so the seeder thereafter treats it as edited and leaves it alone - the
+same protection every hand-edited task gets, and `demos regenerate` puts the stale fingerprint back
+when you want to watch it happen again.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

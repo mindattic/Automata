@@ -16,11 +16,7 @@ internal static class StoreUtil
     /// <summary>Fresh ids for a whole step tree (step ids are only unique within a task).</summary>
     public static void RegenerateStepIds(IEnumerable<Step> steps)
     {
-        foreach (var step in steps)
-        {
-            step.Id = NewId();
-            RegenerateStepIds(step.Children);
-        }
+        foreach (var step in Step.Flatten(steps)) step.Id = NewId();
     }
 
     /// <summary>"Search Google" → "search-google"; safe for file names.</summary>

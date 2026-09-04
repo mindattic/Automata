@@ -65,6 +65,9 @@ const ELSEWHERE = {
 };
 const PARKS = 'park';
 
+/// Runs twice, and what changes between the two runs is the point — see below.
+const HEALS = 'drift';
+
 function cleanup() {
   if (keep) {
     console.log(`\nScratch kept: ${scratch}`);
@@ -112,7 +115,7 @@ try {
 
   // Nothing may be quietly left out: every key the generator produced is either run below, run by
   // another check, or the one that parks. A new example added with no entry here fails this.
-  const accounted = new Set([...RUNNABLE, ...Object.keys(ELSEWHERE), PARKS]);
+  const accounted = new Set([...RUNNABLE, ...Object.keys(ELSEWHERE), PARKS, HEALS]);
   const unaccounted = Object.keys(tasksByKey).filter((k) => !accounted.has(k));
   check(
     'every seeded example is accounted for by this check',
@@ -132,6 +135,43 @@ try {
   for (const [key, where] of Object.entries(ELSEWHERE)) {
     console.log(`[SKIP] ${tasksByKey[key].name} — covered by ${where}`);
   }
+
+  // ---- the one that repairs itself, and keeps the repair --------------------------------------
+  // A run that heals and then forgets is indistinguishable from one that never healed, which is
+  // how the headless runner used to behave: it repaired the step in memory, said "should be
+  // re-saved", and exited. So the assertion is not "it passed" — it is that the file on disk
+  // changed, and that the second run had nothing left to repair.
+  const readDemo = (key) => {
+    for (const file of readdirSync(demosDir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
+      const task = JSON.parse(readFileSync(join(demosDir, file), 'utf8'));
+      if (task.demo?.key === key) return task;
+    }
+    return null;
+  };
+  const staleId = tasksByKey[HEALS].steps[0].target.id;
+  const firstHeal = runner('run', '--task', tasksByKey[HEALS].id);
+  check(
+    `${tasksByKey[HEALS].name}: the run passes on a fingerprint that no longer matches`,
+    firstHeal.code === 0,
+    tail(firstHeal.out),
+  );
+  check(
+    'the run says it healed and saved',
+    /self-healed .* saved back into/.test(firstHeal.out),
+    tail(firstHeal.out),
+  );
+  const repaired = readDemo(HEALS);
+  check(
+    'the repaired identity is on disk, not just in the run that made it',
+    repaired?.steps?.[0]?.target?.id === 'place-order' && staleId === 'place-order-v1',
+    `id went ${staleId} → ${repaired?.steps?.[0]?.target?.id}`,
+  );
+  const secondHeal = runner('run', '--task', tasksByKey[HEALS].id);
+  check(
+    'the second run resolves first time and heals nothing',
+    secondHeal.code === 0 && !/self-healed/.test(secondHeal.out),
+    tail(secondHeal.out),
+  );
 
   // ---- the one that is supposed not to finish -------------------------------------------------
   // Parking is the whole point of this example, so "it ran and stopped" is the pass, and a run

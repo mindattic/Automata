@@ -106,7 +106,7 @@ public static class DemoPages
         var pages = new List<DemoPage>
         {
             Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(),
-            Shadow(), Roster(), ShopSearch(),
+            Shadow(), Roster(), ShopSearch(), Drift(),
         };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
@@ -174,6 +174,32 @@ public static class DemoPages
                 document.body.appendChild(marker);
                 document.title = 'clicked:' + btn.id;
               });
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// A page that has already been "redeployed": the button it offers is the one the example was
+    /// recorded against, except its id changed. Everything a person would use to find it again —
+    /// the words on it — is untouched, which is exactly the situation self-healing exists for.
+    /// </summary>
+    private static DemoPage Drift() => new("drift.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — the page moved</title>{{Css}}</head>
+        <body>
+          <h1>The page moved</h1>
+          <p class="lede">This button's id is not the one the example was recorded against. Its
+             words are, and that is enough to find it again.</p>
+          <button id="place-order">Place order</button>
+          <script>
+            document.getElementById('place-order').addEventListener('click', function () {
+              var marker = document.createElement('div');
+              marker.className = 'clicked';
+              marker.textContent = 'order placed';
+              document.body.appendChild(marker);
             });
           </script>
         </body>

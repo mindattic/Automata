@@ -753,6 +753,10 @@ public sealed class AutomationController
         var ownsRun = currentRun == null;
         var run = currentRun ?? runs.CreateRun(RunTargetKind.Task, task.CollectionId, task.Name);
         var outputs = new Dictionary<string, Dictionary<string, string>>();
+        // Only this task's own steps. A runTask step's callee is loaded by the engine, which saves
+        // its repairs itself — crediting them here would rewrite this task's file for a heal that
+        // happened in another one, and announce it as this task's.
+        var ownSteps = Step.Flatten(task.Steps).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
         var healed = false;
         var success = false;
 
@@ -772,7 +776,7 @@ public sealed class AutomationController
                         await PushStepStatusAsync(s.StepId, "running", null);
                         break;
                     case StepEvent.StepCompleted c:
-                        if (c.Status == StepStatus.Healed) healed = true;
+                        if (c.Status == StepStatus.Healed && ownSteps.Contains(c.StepId)) healed = true;
                         // Where an extracted value finally lands durably, rather than scrolling
                         // out of the log.
                         if (c.ExtractedText != null)

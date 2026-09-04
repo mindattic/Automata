@@ -26,6 +26,15 @@ public sealed class CollectionStore
 
     private readonly ILogger<CollectionStore> log;
 
+    /// <summary>
+    /// Serialises writes of one task. A save is a read-modify-write across sibling files - find
+    /// this task's file, check whether a rename would land on another one, move it, write it - and
+    /// two of those interleaving would leave a half-written file behind. Nothing needed it until a
+    /// run could save on its own: a parallel loop whose rows call a task that heals will ask two
+    /// threads to write the same file at the same moment.
+    /// </summary>
+    private readonly Lock saveGate = new();
+
     public static string DefaultRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Collections");
 
@@ -213,6 +222,11 @@ public sealed class CollectionStore
     /// exists without a parent collection. A renamed task's file moves with it.
     /// </summary>
     public void SaveTask(TaskDefinition task)
+    {
+        lock (saveGate) SaveTaskCore(task);
+    }
+
+    private void SaveTaskCore(TaskDefinition task)
     {
         if (string.IsNullOrWhiteSpace(task.CollectionId))
             task.CollectionId = EnsureDefaultCollection().Id;

@@ -148,6 +148,20 @@ public sealed class Step
     public List<Step> Children { get; set; } = [];
 
     /// <summary>
+    /// Every step in a tree, parents before their children. One walk, shared by everything that
+    /// needs to see a whole task rather than its top level — re-keying ids on import, attributing
+    /// a self-heal to the task it happened in, counting what an example demonstrates.
+    /// </summary>
+    public static IEnumerable<Step> Flatten(IEnumerable<Step> steps)
+    {
+        foreach (var step in steps)
+        {
+            yield return step;
+            foreach (var child in Flatten(step.Children)) yield return child;
+        }
+    }
+
+    /// <summary>
     /// Values this step publishes for later steps to bind to — an ExtractText step's captured
     /// text, for instance. Declared here at design time rather than discovered at run time, which
     /// is what lets the binding picker enumerate every valid source without executing anything.

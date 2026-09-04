@@ -240,6 +240,12 @@ public sealed class RunnerCliDispatcher
             ParkCheckpoint? checkpoint = null;
             var outputs = new Dictionary<string, Dictionary<string, string>>();
 
+            // Only THIS task's steps. A runTask step's callee is loaded by the engine and saved by
+            // the engine; counting its heals here would rewrite this task's file to record a repair
+            // that happened somewhere else, and say so in the log.
+            var ownSteps = Step.Flatten(task.Steps).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+            var healed = new HashSet<string>(StringComparer.Ordinal);
+
             await foreach (var evt in engine.RunAsync(
                 task, options, lease.Surface, ct, pool, index == 0 ? resumeFirst : null))
             {
@@ -249,8 +255,11 @@ public sealed class RunnerCliDispatcher
                     case StepEvent.StepStarted started:
                         lease.Describe(started.Label);
                         break;
-                    case StepEvent.StepCompleted { ExtractedText: not null } done:
-                        outputs[done.StepId] = new Dictionary<string, string> { ["text"] = done.ExtractedText! };
+                    case StepEvent.StepCompleted done:
+                        if (done.Status == StepStatus.Healed && ownSteps.Contains(done.StepId))
+                            healed.Add(done.StepId);
+                        if (done.ExtractedText != null)
+                            outputs[done.StepId] = new Dictionary<string, string> { ["text"] = done.ExtractedText };
                         break;
                     case StepEvent.Log line:
                         output.WriteLine($"    {line.Message}");
@@ -266,6 +275,19 @@ public sealed class RunnerCliDispatcher
             }
 
             if (outputs.Count > 0) runs.SaveOutputs(run.RunId, task.Id, outputs);
+
+            // A step that only resolved through a fallback strategy had its fingerprint refreshed
+            // in memory. The desktop app writes that back; without this, the headless runner did
+            // not — so every unattended run re-discovered the same drift from scratch, and a site
+            // that moved twice failed the second time with a repair it had already made and thrown
+            // away. Saved BEFORE the parked-run early return as well: a run that parks after
+            // healing keeps the repair, and the tick that resumes it starts from the healed record.
+            if (healed.Count > 0)
+            {
+                collections.SaveTask(task);
+                output.WriteLine(
+                    $"    {healed.Count} step(s) self-healed — saved back into '{task.Name}'.");
+            }
 
             if (checkpoint != null)
             {

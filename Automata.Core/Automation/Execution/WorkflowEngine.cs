@@ -544,6 +544,7 @@ public sealed partial class WorkflowEngine
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
                 state.PushInputs(ReplayEngine.SeedInputs(target, supplied));
+                var healedBefore = state.Healed;
                 try
                 {
                     // Another task's tree, so an index path from THIS task's root would not
@@ -555,6 +556,18 @@ public sealed partial class WorkflowEngine
                 {
                     state.PopInputs();
                     state.TaskStack.Remove(target.Id);
+                }
+
+                // The callee is loaded here and nowhere else, so this is the only place its repairs
+                // can be written back — whoever started the run only ever sees, and only ever
+                // saves, the tree it handed in. Without this a task called by another one
+                // re-discovered the same drift on every single run.
+                if (state.Healed > healedBefore)
+                {
+                    var count = state.Healed - healedBefore;
+                    collections.SaveTask(target);
+                    yield return new StepEvent.Log(
+                        $"{count} step(s) self-healed in '{target.Name}' — saved back into it.");
                 }
                 yield break;
             }
