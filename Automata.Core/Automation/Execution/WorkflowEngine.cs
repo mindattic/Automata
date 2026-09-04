@@ -167,6 +167,7 @@ public sealed partial class WorkflowEngine
         // reaches. Null means the step before was not an `if` at all, which is what makes an
         // orphaned `else` a failure with a name rather than a branch that quietly never runs.
         bool? previousIfHeld = null;
+        string? previousIfId = null;
 
         // While resuming, everything before the parked wait's branch already ran in an earlier
         // pass. -1 during an ordinary walk, which starts at 0 and skips nothing.
@@ -187,10 +188,12 @@ public sealed partial class WorkflowEngine
             }
 
             state.PreviousIfHeld = previousIfHeld;
+            state.PreviousIfId = previousIfId;
             await foreach (var evt in RunStepAsync(steps[index], scope, state, walk.Into(index, tail), ct))
                 yield return evt;
             previousIfHeld = steps[index].Action == StepAction.If
                 && state.IfVerdicts.TryGetValue(steps[index].Id, out var verdict) ? verdict : null;
+            previousIfId = previousIfHeld == null ? null : steps[index].Id;
             if (state.Stop) yield break;
         }
     }
@@ -391,6 +394,19 @@ public sealed partial class WorkflowEngine
                 {
                     await foreach (var e in FailAsync(step, scope, state,
                         "an 'otherwise' has to come straight after an 'if' — there is none before this one"))
+                        yield return e;
+                    yield break;
+                }
+
+                // Adjacency alone would accept whichever `if` ended up in front of this one, which
+                // is how deleting a step can silently hand a branch to the wrong condition. When the
+                // step records which `if` it was written for, that is the one it must still follow.
+                if (!string.IsNullOrEmpty(step.PairedIfId)
+                    && !string.Equals(step.PairedIfId, state.PreviousIfId, StringComparison.Ordinal))
+                {
+                    await foreach (var e in FailAsync(step, scope, state,
+                        "this 'otherwise' belongs to a different 'if' than the one now before it — " +
+                        "move it back, or delete it and add one here"))
                         yield return e;
                     yield break;
                 }

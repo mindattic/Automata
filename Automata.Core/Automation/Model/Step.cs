@@ -176,6 +176,23 @@ public sealed class Step
     /// <summary><see cref="StepAction.If"/>.</summary>
     public ConditionSpec? Condition { get; set; }
 
+    /// <summary>
+    /// <see cref="StepAction.Else"/>: the id of the <see cref="StepAction.If"/> this branch is the
+    /// other half of.
+    /// <para>
+    /// The pairing is otherwise pure ADJACENCY — whatever `if` happens to sit immediately before —
+    /// and adjacency cannot tell "correctly paired" from "accidentally next to a different `if`".
+    /// Deleting an `if` that had another one before it silently hands its `otherwise` to that other
+    /// one: the task still runs, still reports success, and takes the wrong branch. An id makes that
+    /// case loud.
+    /// </para>
+    /// <para>
+    /// Null on a step written before this existed, and on one a person moved deliberately; the
+    /// engine falls back to the adjacency check then, so nothing already on disk breaks.
+    /// </para>
+    /// </summary>
+    public string? PairedIfId { get; set; }
+
     /// <summary><see cref="StepAction.RunTask"/>: the task to invoke.</summary>
     public string? RunTaskId { get; set; }
 

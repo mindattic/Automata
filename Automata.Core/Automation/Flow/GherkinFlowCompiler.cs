@@ -241,6 +241,10 @@ public static class GherkinFlowCompiler
                 steps.Add(step);
 
                 var otherwise = rest[split].Draft.Step;
+                // The split is the one place that knows which guard claimed this `otherwise`, so it
+                // is the place to record it. Without that the pairing is adjacency alone, and a
+                // later edit could hand the branch to a different guard without saying so.
+                otherwise.PairedIfId = step.Id;
                 otherwise.Children = BuildTree(
                     rest.Skip(split + 1).ToList(), outputs, insideLoop, diagnostics);
                 steps.Add(otherwise);

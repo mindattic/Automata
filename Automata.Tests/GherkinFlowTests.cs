@@ -486,6 +486,40 @@ public class GherkinFlowTests
         Assert.That(Shape(second.Tasks), Is.EqualTo(Shape(first.Tasks)), written.Text);
     }
 
+    /// <summary>
+    /// The compiler is the one place that knows which guard claimed an <c>otherwise</c>, so it is
+    /// the place that records it — and it has to survive being written back out and read again, or
+    /// the guarantee would last exactly as long as nobody opened the feature view.
+    /// </summary>
+    [Test]
+    public void AnOtherwiseRemembersWhichGuardClaimedIt()
+    {
+        var source = """
+            Feature: F
+
+              Scenario Outline: Fill it in when there is one
+                Given I open "https://x.example"
+                And row.Name is present
+                And I type "<Name>" into "Name"
+                But otherwise
+                And I click "Skip"
+
+                Examples: roster.json
+            """;
+
+        var first = Compile(source);
+        Assert.That(first.HasErrors, Is.False, Errors(first));
+
+        var body = first.Tasks[0].Steps[0].Children;
+        Assert.That(body[^1].PairedIfId, Is.EqualTo(body[^2].Id),
+            "the otherwise should name the guard immediately before it");
+
+        var second = Compile(GherkinWriter.Write(first.Collection!, first.Tasks).Text);
+        var reBody = second.Tasks[0].Steps[0].Children;
+        Assert.That(reBody[^1].PairedIfId, Is.EqualTo(reBody[^2].Id),
+            "and still name it after a round-trip");
+    }
+
     [Test]
     public void AnOtherwiseWithNoGuardBeforeItIsRefused()
     {

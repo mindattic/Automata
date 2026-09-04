@@ -44,6 +44,12 @@ internal sealed class ReplayRunState
     /// </summary>
     public bool? PreviousIfHeld;
 
+    /// <summary>
+    /// The id of that <see cref="StepAction.If"/>, so an <see cref="StepAction.Else"/> can check it
+    /// is the one it was actually written for and not merely the one that ended up in front of it.
+    /// </summary>
+    public string? PreviousIfId;
+
     /// <summary>Values published by steps that have already run, keyed by step id + output name.
     /// Step ids are GUIDs, so this stays unambiguous even when a RunTask pulls in another task.</summary>
     public readonly Dictionary<string, string> Outputs = new(StringComparer.Ordinal);

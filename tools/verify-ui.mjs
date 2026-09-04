@@ -1514,6 +1514,33 @@ async function main() {
     // example in the page, and what that click resolved to is shown back as a count — so these
     // checks drive the real click in the real target pane and read the real count.
 
+    await group('branching: detaching an otherwise is questioned, not done quietly', async () => {
+      // The quietest way to break a task that exists. An `else` that stops being an `else` KEEPS
+      // its children, and the engine runs an ordinary step's children unconditionally — so steps
+      // that ran only when the condition failed start running every single time, and nothing
+      // anywhere says so.
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const elseRow = panelPage.locator(`.node.step[data-action="else"]`).first();
+      await elseRow.waitFor({ state: 'visible', timeout: 10000 });
+      await elseRow.click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+
+      await panelPage.locator('#ed-action').selectOption('click');
+      await panelPage.locator('#modal').waitFor({ state: 'visible', timeout: 5000 });
+      const asked = await panelPage.locator('#modal-msg').innerText();
+      assertTrue(/run every time/i.test(asked),
+        `the question has to say what actually changes, got "${asked}"`);
+
+      // Backing out leaves the step exactly as it was, dropdown included.
+      await panelPage.locator('#modal-cancel').click();
+      await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the question to close' });
+      assertEqual(await panelPage.locator('#ed-action').inputValue(), 'else',
+        'cancelling must put the dropdown back too');
+      assertTrue(readFileSync(loopFile, 'utf8').includes('"else"'),
+        'and must not have changed the step on disk');
+    });
+
     await group('harvest: the examples are generated on first load, off in their own folder', async () => {
       // Written by the app at startup, into the scratch folder the hook points at — the check
       // that the developer's own Documents\Automata\Demos is never the thing being rewritten.

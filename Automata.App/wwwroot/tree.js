@@ -587,6 +587,14 @@ function createStepAt(taskId, parentStepId, index, action) {
     if (!task) return;
     var step = { id: newId(), action: action, label: 'New ' + action + ' step', children: [] };
     if (!spliceStepsAt(task, parentStepId, index, [step])) return;
+    // An `otherwise` records which `if` it is the other half of at the moment it is made, while the
+    // answer is unambiguous. Adjacency alone cannot tell that apart from one that merely ended up
+    // next to a different condition after a later edit.
+    if (action === 'else') {
+        var list = parentStepId ? (findStep(task.steps, parentStepId) || {}).children : task.steps;
+        var before = (list || [])[index - 1];
+        step.pairedIfId = before && before.action === 'if' ? before.id : null;
+    }
     state.sel = { collectionId: state.sel.collectionId, taskId: taskId, stepId: step.id };
     state.expanded[taskId] = true;
     saveTask(task);

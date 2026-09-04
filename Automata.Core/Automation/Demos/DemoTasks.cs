@@ -773,6 +773,10 @@ public static class DemoTasks
                                 Id = "demo-roster-otherwise",
                                 Action = StepAction.Else,
                                 Label = "Otherwise",
+                                // Named, not merely adjacent: if the guard above it were ever
+                                // deleted this branch would otherwise attach itself to whatever
+                                // condition ended up in front of it, and run the wrong half.
+                                PairedIfId = "demo-roster-no-name",
                                 Children =
                                 [
                                     new Step

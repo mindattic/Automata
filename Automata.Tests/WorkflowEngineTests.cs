@@ -675,6 +675,99 @@ public class WorkflowEngineTests
         Assert.That(done.Message, Does.Contain(datasets.RootPath));
     }
 
+    /// <summary>
+    /// The case adjacency cannot see. Two guards in a row, the second with an `otherwise`; delete
+    /// the second and the `otherwise` is now behind the FIRST one. Nothing about the tree looks
+    /// wrong, the run passes, and the wrong branch fires — which is the one failure mode this
+    /// project treats as unacceptable. Recording which `if` the branch was written for makes it loud.
+    /// </summary>
+    [Test]
+    public async Task Otherwise_ThatNowFollowsADifferentIf_FailsInsteadOfTakingItsVerdict()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "kept", Action = StepAction.If,
+                    Condition = new ConditionSpec { Left = Literal("yes"), Op = ConditionOp.NotEmpty },
+                },
+                // Written for an `if` that is no longer in the list — the one it was paired with was
+                // deleted, leaving it behind "kept".
+                new Step
+                {
+                    Id = "otherwise", Action = StepAction.Else, PairedIfId = "deleted",
+                    Children = [Record("ran", "ran")],
+                },
+            ],
+        };
+
+        var events = await Run(task, Browser());
+
+        var done = events.OfType<StepEvent.StepCompleted>().Last();
+        Assert.Multiple(() =>
+        {
+            Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
+            Assert.That(done.Message, Does.Contain("different 'if'"));
+            Assert.That(datasets.Exists("took.csv"), Is.False, "and the wrong branch must not run");
+        });
+    }
+
+    /// <summary>A branch that IS where it says it belongs runs exactly as before.</summary>
+    [Test]
+    public async Task Otherwise_ThatStillFollowsItsOwnIf_RunsNormally()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "guard", Action = StepAction.If,
+                    Condition = new ConditionSpec { Left = Literal(""), Op = ConditionOp.NotEmpty },
+                },
+                new Step
+                {
+                    Id = "otherwise", Action = StepAction.Else, PairedIfId = "guard",
+                    Children = [Record("ran", "else")],
+                },
+            ],
+        };
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("took.csv").Single()["branch"], Is.EqualTo("else"));
+    }
+
+    /// <summary>
+    /// A task written before the id existed carries none, and must keep working on adjacency alone —
+    /// otherwise this fix would break every branch already on disk.
+    /// </summary>
+    [Test]
+    public async Task Otherwise_WithNoRecordedPairing_StillWorksOnAdjacency()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "guard", Action = StepAction.If,
+                    Condition = new ConditionSpec { Left = Literal(""), Op = ConditionOp.NotEmpty },
+                },
+                new Step { Id = "otherwise", Action = StepAction.Else, Children = [Record("ran", "else")] },
+            ],
+        };
+
+        await Run(task, Browser());
+
+        Assert.That(datasets.Read("took.csv").Single()["branch"], Is.EqualTo("else"));
+    }
+
     // ---- task inputs -----------------------------------------------------------------------------
 
     /// <summary>A task that writes whatever it was given into a dataset, so the value is checkable.</summary>

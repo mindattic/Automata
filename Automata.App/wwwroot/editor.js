@@ -2,7 +2,7 @@
 // host echoes the tree back and the UI re-renders from it.
 
 import {
-    $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, ALL_ACTIONS,
+    $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, locateStep, ALL_ACTIONS,
 } from './core.js';
 import { openConfirmModal } from './modal.js';
 import { addStep } from './tree.js';
@@ -153,8 +153,51 @@ export function renderEditor() {
             '" aria-label="Target ' + key + '" value="' + esc(val) + '" /></div>';
     }
 
+    /// The steps either side of this one in its OWN list. An `else` pairs with exactly the step
+    /// before it, so that is the only neighbour either of them needs to know about.
+    function neighbour(offset) {
+        var loc = locateStep(task.steps, step.id, null);
+        if (!loc) return null;
+        var list = loc.parentId ? (findStep(task.steps, loc.parentId) || {}).children : task.steps;
+        return (list || [])[loc.index + offset] || null;
+    }
+
+    /// Why changing this step's action is about to break a branch, or null when it is not.
+    ///
+    /// Both cases are silent without this. An `else` that stops being an `else` KEEPS its children,
+    /// and the engine runs an ordinary step's children unconditionally — so the steps that ran only
+    /// when the condition failed now run every single time, and nothing anywhere says so. An `if`
+    /// that stops being an `if` leaves its `otherwise` with nothing to be the other half of, which
+    /// at least fails loudly, but failing at run time is a worse way to find out than being asked.
+    function detachWarning(nextAction) {
+        if (step.action === 'else' && nextAction !== 'else') {
+            return 'The steps inside this one run only when the “if” above does not. Change it and ' +
+                'they will run every time.';
+        }
+        var after = neighbour(1);
+        if (step.action === 'if' && nextAction !== 'if' && after && after.action === 'else') {
+            return 'The “Otherwise” below has nothing left to be the other half of. It will fail ' +
+                'the run until it is moved or removed.';
+        }
+        return null;
+    }
+
     function commitEditor() {
-        step.action = $('ed-action').value;
+        var nextAction = $('ed-action').value;
+        var warning = nextAction === step.action ? null : detachWarning(nextAction);
+        if (warning) {
+            // The dropdown goes back while the question is on screen. Nothing has changed yet, and a
+            // select showing something the step is not is the exact lie the rest of this work exists
+            // to remove.
+            $('ed-action').value = step.action;
+            openConfirmModal('Change this step?', warning, 'Change it', function () {
+                applyAction(nextAction);
+                saveTask(task);
+            });
+            return;
+        }
+
+        applyAction(nextAction);
         step.label = $('ed-label').value;
         // A bound field renders a chip rather than an input, so there is nothing to read back —
         // and the literal underneath is deliberately preserved, so unbinding restores it.
@@ -214,6 +257,21 @@ export function renderEditor() {
             step.target = hasAny ? tgt : null;
         }
         saveTask(task);
+    }
+
+    /// Sets the action, and keeps the branch pairing honest as it goes.
+    ///
+    /// An `else` records WHICH `if` it is the other half of, because adjacency alone cannot tell a
+    /// correctly paired branch from one that ended up next to a different condition after an edit.
+    /// Anything that stops being an `else` drops the id rather than carrying a stale one.
+    function applyAction(nextAction) {
+        step.action = nextAction;
+        if (nextAction !== 'else') {
+            if (step.pairedIfId) step.pairedIfId = null;
+            return;
+        }
+        var before = neighbour(-1);
+        step.pairedIfId = before && before.action === 'if' ? before.id : null;
     }
 
     // Commit on blur/change of any field — the host echoes state back and the UI re-renders.
