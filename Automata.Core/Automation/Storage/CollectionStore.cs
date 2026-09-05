@@ -125,12 +125,24 @@ public sealed class CollectionStore
         copy.TaskOrder = [];
         SaveCollection(copy);
 
-        foreach (var task in tasks)
+        // Every task's new id is minted BEFORE any of them is written, because the copies have to
+        // be wired to each other: a runTask step or an input wired to an earlier task's output must
+        // name the copy, not reach back into the collection this was duplicated from. That map
+        // cannot be built one task at a time — task 1 is referenced by task 2, which has not been
+        // cloned yet, and task 2 by task 1.
+        var copies = tasks.Select(StoreUtil.Clone).ToList();
+        var taskIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (original, taskCopy) in tasks.Zip(copies))
         {
-            var taskCopy = StoreUtil.Clone(task);
             taskCopy.Id = StoreUtil.NewId();
+            taskIds[original.Id] = taskCopy.Id;
+        }
+
+        foreach (var taskCopy in copies)
+        {
             taskCopy.CollectionId = copy.Id;
-            StoreUtil.RegenerateStepIds(taskCopy.Steps);
+            StoreUtil.ReidentifySteps(taskCopy);
+            StoreUtil.RemapTaskIds(taskCopy, taskIds);
             SaveTask(taskCopy);
         }
         return copy;
@@ -324,7 +336,13 @@ public sealed class CollectionStore
         // A copy of an example is not the example. Two tasks answering to one demo key would leave
         // the generator restoring whichever it found first and silently leaving the other behind.
         copy.Demo = null;
-        StoreUtil.RegenerateStepIds(copy.Steps);
+        StoreUtil.ReidentifySteps(copy);
+        // The copy's own task id changed too, and a binding may name it outright rather than
+        // leaving it null for "this task" — so the one entry that map needs is this one.
+        StoreUtil.RemapTaskIds(copy, new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [source.Id] = copy.Id,
+        });
         SaveTask(copy);
         return copy;
     }

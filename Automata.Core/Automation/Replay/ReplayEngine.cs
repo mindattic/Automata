@@ -165,8 +165,14 @@ public class ReplayEngine
 
             var delayMs = (int)Math.Round(
                 effective.Retry.DelayMs * Math.Pow(effective.Retry.BackoffMultiplier, attempt - 1));
+            // Redacted HERE and not only at the end. This line is emitted from inside the retry
+            // loop, and several failure messages quote the value — "value read back as 'x'",
+            // "expected text 'x' but found 'y'" — so a masked step that failed and retried wrote
+            // its secret into the run log and events.jsonl while the final message was dutifully
+            // withheld. Retries are exactly when a login step misbehaves.
+            var why = step.Masked ? "details withheld because this step is masked" : message;
             yield return new StepEvent.Log(
-                $"Step '{step.Label}' failed ({message}) — attempt {attempt} of {attempts}, retrying in {delayMs}ms");
+                $"Step '{step.Label}' failed ({why}) — attempt {attempt} of {attempts}, retrying in {delayMs}ms");
             await Task.Delay(delayMs, ct);
             attempt++;
         }

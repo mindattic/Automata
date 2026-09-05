@@ -402,6 +402,47 @@ public class TriggerEvaluatorTests
         Assert.That(TriggerEvaluator.WouldFormACycle(saved, Entry(Cron("0 9 * * *"))), Is.False);
     }
 
+    // ---- a trigger that is already saved is not a new mistake ---------------------------------
+    //
+    // The editor refuses a one-off time in the past, which is right for one somebody is setting
+    // now and wrong for one that has simply already run: the check ran on every save, so a fired
+    // one-off made its whole entry unsaveable — no rename, no extra trigger, no way to switch it
+    // off from the panel it was created in. What separates the two cases is whether the edit is
+    // what put the trigger there.
+
+    [Test]
+    public void ATriggerAlreadyOnTheSavedEntryIsNotNew()
+    {
+        var saved = Entry(Cron("0 9 * * *"));
+
+        Assert.That(TriggerEvaluator.IsNewTrigger(saved, saved.Triggers[0]), Is.False);
+    }
+
+    [Test]
+    public void ATriggerTheEditIntroducedIsNew()
+    {
+        var saved = Entry(Cron("0 9 * * *"));
+
+        Assert.That(TriggerEvaluator.IsNewTrigger(saved, Interval(3600)), Is.True);
+    }
+
+    /// <summary>Same id, different time: an EDIT of a trigger is a new statement about when it fires.</summary>
+    [Test]
+    public void AnEditedTriggerIsNewEvenUnderTheSameId()
+    {
+        var saved = Entry(Cron("0 9 * * *"));
+        var edited = Cron("0 17 * * *");
+        edited.Id = saved.Triggers[0].Id;
+
+        Assert.That(TriggerEvaluator.IsNewTrigger(saved, edited), Is.True);
+    }
+
+    [Test]
+    public void EveryTriggerOfANewEntryIsNew()
+    {
+        Assert.That(TriggerEvaluator.IsNewTrigger(null, Cron("0 9 * * *")), Is.True);
+    }
+
     /// <summary>
     /// Editing an entry that already had a downstream: re-pointing it at that downstream closes the
     /// ring, and the version being SAVED is the one the answer has to be about.

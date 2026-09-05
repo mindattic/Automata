@@ -223,6 +223,39 @@ public class BeyondBoundaryTests
         });
     }
 
+    /// <summary>
+    /// And when the frame never answers, the harvest has to say THAT. Running out of the wait
+    /// budget left the last "waiting" envelope in hand, and the caller read its <c>ok: false</c> as
+    /// the ordinary empty-page answer — reporting "'<i>selector</i>' matched nothing on this page,
+    /// the page has probably changed" about a page that had not changed and a selector that was
+    /// fine. A diagnosis that sends someone to re-pick a working selector is worse than none.
+    /// </summary>
+    [Test]
+    public async Task AHarvestWhoseFrameNeverAnswersSaysSoRatherThanBlamingTheSelector()
+    {
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = _ => """{ "ok": false, "waitingOnFrames": true, "count": 0, "rows": [] }""",
+        };
+
+        var result = await HarvestRunner.RunAsync(browser, new HarvestSpec
+        {
+            ItemSelector = "ul.opaque-list > li.opaque-row",
+            DatasetName = "opaque.csv",
+            ExpectedCount = 24,
+            Fields = [new HarvestField { Name = "ref" }],
+        }, CancellationToken.None, frameAnswerMs: 150);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Ok, Is.False);
+            Assert.That(result.Error, Does.Contain("frame"),
+                "the reason is the frame that did not answer");
+            Assert.That(result.Error, Does.Not.Contain("probably changed"),
+                "and not the selector, which never got a chance to match anything");
+        });
+    }
+
     // ---- the one action that reaches by a different route ------------------------------------------
 
     /// <summary>

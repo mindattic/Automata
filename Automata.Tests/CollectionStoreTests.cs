@@ -359,6 +359,202 @@ public class CollectionStoreTests
         Assert.That(store.LoadTasks(source.Id), Has.Count.EqualTo(1)); // source untouched
     }
 
+    // ---- a copy has to be wired to ITSELF ----------------------------------------------------
+    //
+    // A duplicate gives every step a fresh id, because step ids are only unique within a task and
+    // two tasks answering to one id would make a self-heal or a park ambiguous. What it did NOT do
+    // is rewrite the REFERENCES to those ids, of which a task is full: a binding to an earlier
+    // step's output, an `otherwise` that records which `if` it belongs to, a declared task output
+    // naming the step that produces it, a live wait whose condition reads the element it watches.
+    // Every one of them was left pointing at the ORIGINAL's step, so the copy still loaded, still
+    // looked right in the editor, and failed at run time with "has not been produced yet" about a
+    // value the step right above it publishes.
+
+    /// <summary>The reference a duplicate is most likely to have: type what the step before read.</summary>
+    [Test]
+    public void DuplicatingATask_RewiresAStepOutputBindingToTheCopiedStep()
+    {
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id, "Read then type");
+        var read = new Step
+        {
+            Action = StepAction.ExtractText, Label = "read total",
+            Outputs = [new OutputField { Name = "total" }],
+        };
+        var type = new Step
+        {
+            Action = StepAction.TypeText, Label = "type it",
+            Bindings = new Dictionary<string, BindingRef>
+            {
+                ["Value"] = new() { Kind = BindingKind.StepOutput, SourceStepId = read.Id, OutputField = "total" },
+            },
+        };
+        task.Steps = [read, type];
+        store.SaveTask(task);
+
+        var copy = store.DuplicateTask(task.Id);
+
+        Assert.That(copy.Steps[1].Bindings!["Value"].SourceStepId, Is.EqualTo(copy.Steps[0].Id),
+            "the copy's binding must name the copy's own step, not the original's");
+    }
+
+    /// <summary>
+    /// The rest of the references, in one task: an `otherwise`'s pairing, the task's declared
+    /// output, a write step's column, a loop's own condition, and a wait that watches an element —
+    /// the compiler always points that last one's condition at the wait step itself.
+    /// </summary>
+    [Test]
+    public void DuplicatingATask_RewiresEveryOtherKindOfReferenceToo()
+    {
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id, "Everything");
+        var read = new Step
+        {
+            Action = StepAction.ExtractText, Label = "read", Outputs = [new OutputField { Name = "sku" }],
+        };
+        var guard = new Step
+        {
+            Action = StepAction.If, Label = "if it read",
+            Condition = new ConditionSpec
+            {
+                Left = new BindingRef { Kind = BindingKind.StepOutput, SourceStepId = read.Id, OutputField = "sku" },
+                Op = ConditionOp.NotEmpty,
+            },
+        };
+        var otherwise = new Step { Action = StepAction.Else, Label = "otherwise", PairedIfId = guard.Id };
+        var write = new Step
+        {
+            Action = StepAction.WriteDataset, Label = "save",
+            WriteDataset = new DatasetWriteSpec
+            {
+                DatasetName = "found.csv",
+                Columns = new Dictionary<string, BindingRef>
+                {
+                    ["sku"] = new() { Kind = BindingKind.StepOutput, SourceStepId = read.Id, OutputField = "sku" },
+                },
+            },
+        };
+        var watch = new Step { Action = StepAction.Wait, Label = "wait for it" };
+        watch.Wait = new WaitSpec
+        {
+            Mode = WaitMode.UntilCondition,
+            Condition = new ConditionSpec
+            {
+                Left = new BindingRef { Kind = BindingKind.StepOutput, SourceStepId = watch.Id, OutputField = "value" },
+                Op = ConditionOp.Equals,
+                Right = new BindingRef { Kind = BindingKind.Literal, Literal = "Ready" },
+            },
+        };
+        task.Steps = [read, guard, otherwise, write, watch];
+        task.Outputs = [new TaskOutput { Name = "sku", SourceStepId = read.Id, SourceOutputField = "sku" }];
+        store.SaveTask(task);
+
+        var copy = store.DuplicateTask(task.Id);
+        var (copiedRead, copiedGuard, copiedElse, copiedWrite, copiedWatch) =
+            (copy.Steps[0], copy.Steps[1], copy.Steps[2], copy.Steps[3], copy.Steps[4]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(copiedGuard.Condition!.Left.SourceStepId, Is.EqualTo(copiedRead.Id),
+                "the guard reads the copy's own extract");
+            Assert.That(copiedElse.PairedIfId, Is.EqualTo(copiedGuard.Id),
+                "the otherwise belongs to the copy's own if");
+            Assert.That(copiedWrite.WriteDataset!.Columns["sku"].SourceStepId, Is.EqualTo(copiedRead.Id),
+                "the column is filled from the copy's own extract");
+            Assert.That(copiedWatch.Wait!.Condition!.Left.SourceStepId, Is.EqualTo(copiedWatch.Id),
+                "a watching wait reads itself, so the copy must read the copy");
+            Assert.That(copy.Outputs.Single().SourceStepId, Is.EqualTo(copiedRead.Id),
+                "and what the task publishes comes from the copy's own step");
+        });
+    }
+
+    /// <summary>
+    /// The other half of a remap: it rewrites what it has an answer for and leaves everything else
+    /// exactly as it was. Duplicating ONE task hands the rewrite a map of one id, so every
+    /// reference in the copy that points outside it — a runTask step calling a sibling, a binding
+    /// that names another task's step — is a reference the map is silent about. The natural way to
+    /// write the rewrite ("set it to what the map says") clears all of them.
+    /// </summary>
+    [Test]
+    public void DuplicatingATask_LeavesReferencesOutsideItAlone()
+    {
+        var collection = store.CreateCollection("C");
+        var sibling = NewTask(collection.Id, "Sibling");
+        store.SaveTask(sibling);
+
+        var task = NewTask(collection.Id, "Caller");
+        task.Steps =
+        [
+            new Step { Action = StepAction.RunTask, Label = "call the sibling", RunTaskId = sibling.Id },
+            new Step
+            {
+                Action = StepAction.TypeText, Label = "type what the sibling read",
+                Bindings = new Dictionary<string, BindingRef>
+                {
+                    ["Value"] = new()
+                    {
+                        Kind = BindingKind.StepOutput,
+                        SourceTaskId = sibling.Id,
+                        SourceStepId = sibling.Steps[0].Id,
+                        OutputField = "total",
+                    },
+                },
+            },
+        ];
+        store.SaveTask(task);
+
+        var copy = store.DuplicateTask(task.Id);
+        var binding = copy.Steps[1].Bindings!["Value"];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(copy.Steps[0].RunTaskId, Is.EqualTo(sibling.Id),
+                "the copy still calls the sibling it was written to call");
+            Assert.That(binding.SourceTaskId, Is.EqualTo(sibling.Id));
+            Assert.That(binding.SourceStepId, Is.EqualTo(sibling.Steps[0].Id),
+                "and a step in another task is not one of the ids being re-keyed");
+        });
+    }
+
+    /// <summary>
+    /// A duplicated collection is a whole pipeline, so the wiring BETWEEN its tasks has to follow
+    /// it too. Left alone, task 2 of the copy took its input from task 1 of the ORIGINAL — which
+    /// does not run in this collection, so every run fell back to a default and said so.
+    /// </summary>
+    [Test]
+    public void DuplicatingACollection_RewiresTheTasksToEachOther()
+    {
+        var source = store.CreateCollection("Pipeline");
+        var first = NewTask(source.Id, "Find it");
+        first.Steps[0].Outputs = [new OutputField { Name = "id" }];
+        first.Outputs = [new TaskOutput { Name = "ticket", SourceStepId = first.Steps[0].Id, SourceOutputField = "id" }];
+        store.SaveTask(first);
+
+        var second = NewTask(source.Id, "Use it");
+        second.Inputs = [new TaskInput
+        {
+            Name = "ticket",
+            From = new TaskOutputRef { TaskId = first.Id, TaskName = "Find it", OutputName = "ticket" },
+        }];
+        second.Steps[0].Action = StepAction.RunTask;
+        second.Steps[0].RunTaskId = first.Id;
+        store.SaveTask(second);
+
+        var copy = store.DuplicateCollection(source.Id);
+        var copied = store.LoadTasks(copy.Id);
+        var copiedFirst = copied.Single(t => t.Name == "Find it");
+        var copiedSecond = copied.Single(t => t.Name == "Use it");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(copiedSecond.Inputs.Single().From!.TaskId, Is.EqualTo(copiedFirst.Id),
+                "the copied wiring names the copied upstream task");
+            Assert.That(copiedSecond.Steps[0].RunTaskId, Is.EqualTo(copiedFirst.Id),
+                "and a runTask step calls the copy rather than reaching back into the original");
+            Assert.That(copiedFirst.Outputs.Single().SourceStepId, Is.EqualTo(copiedFirst.Steps[0].Id));
+        });
+    }
+
     [Test]
     public void RenameOntoAnUnreadableFile_SuffixesInsteadOfClobbering()
     {

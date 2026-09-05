@@ -203,6 +203,9 @@ public static partial class RecorderSessionBuilder
                     Action = StepAction.SetValue,
                     Target = evt.Fingerprint,
                     Value = evt.Masked ? "" : evt.Value,
+                    // An autofilled password arrives this way, with no typing in front of it — and
+                    // it is just as much a secret as one somebody typed.
+                    Masked = evt.Masked,
                     Label = $"Set {TargetName(evt.Fingerprint)} to '{Truncate(evt.Masked ? "(masked)" : evt.Value, 30)}'",
                 });
                 return;
@@ -273,6 +276,12 @@ public static partial class RecorderSessionBuilder
     {
         step.Target = evt.Fingerprint;
         step.Value = evt.Masked ? "" : evt.Value;
+        // Withholding the value is only half of it. This is the ONE place that knows the field was
+        // a password, and a step that merely has an empty value is an ordinary step — so the moment
+        // somebody fills the password in in the editor, the engine had no reason to redact it and
+        // reported it in logs and run artifacts like any other text. Sticky, because the change
+        // event that confirms a typing burst must not be able to un-mask what it folds into.
+        if (evt.Masked) step.Masked = true;
         step.Label = evt.Masked
             ? $"Type (masked — fill in editor) into {TargetName(evt.Fingerprint!)}"
             : $"Type '{Truncate(evt.Value, 30)}' into {TargetName(evt.Fingerprint!)}";

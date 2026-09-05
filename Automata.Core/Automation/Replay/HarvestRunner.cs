@@ -23,8 +23,12 @@ public sealed record HarvestResult(
 /// </summary>
 public static class HarvestRunner
 {
+    /// <param name="frameAnswerMs">
+    /// How long to wait for a cross-origin frame to answer. Injected only so the timeout path is
+    /// testable in milliseconds rather than in seconds; every caller takes the default.
+    /// </param>
     public static async Task<HarvestResult> RunAsync(
-        IBrowserSurface browser, HarvestSpec spec, CancellationToken ct)
+        IBrowserSurface browser, HarvestSpec spec, CancellationToken ct, int frameAnswerMs = FrameAnswerMs)
     {
         var invalid = Validate(spec);
         if (invalid != null) return Fail(invalid);
@@ -63,7 +67,7 @@ public static class HarvestRunner
         // attempt reports itself waiting and this collects the answer. Unlike a resolve there is no
         // poll loop to borrow — a harvest reads a page that is already there — so it is a short one
         // of its own.
-        var deadline = Environment.TickCount64 + FrameAnswerMs;
+        var deadline = Environment.TickCount64 + frameAnswerMs;
         while (true)
         {
             try { env = JsonSerializer.Deserialize<Envelope>(await browser.EvalAsync(script, ct), AutomataJson.Options); }
@@ -74,6 +78,17 @@ public static class HarvestRunner
         }
 
         if (env == null) return Fail("the page returned nothing");
+
+        // Out of budget with the frame still being asked. The envelope says ok:false, exactly as an
+        // empty page does, and reading it as one blamed the selector for a page it never saw — so
+        // this is checked FIRST and reported for what it is.
+        if (env.WaitingOnFrames)
+        {
+            return Fail(
+                $"a frame on this page did not answer within {frameAnswerMs}ms, so '{spec.ItemSelector}' " +
+                "was never matched against it — the frame may still be loading, or may have navigated");
+        }
+
         if (!env.Ok)
         {
             return Fail(

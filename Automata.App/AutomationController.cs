@@ -1402,7 +1402,7 @@ public sealed class AutomationController
         if (string.IsNullOrWhiteSpace(entry.Id)) entry.Id = Guid.NewGuid().ToString("n");
 
         var existing = schedule.Get(entry.Id);
-        if (ValidateScheduleEntry(entry) is { } problem)
+        if (ValidateScheduleEntry(entry, existing) is { } problem)
         {
             await logAsync($"⚠ {problem}");
             await PushScheduleAsync(problem);
@@ -1435,8 +1435,15 @@ public sealed class AutomationController
     /// </summary>
     private const int MaxTriggersPerEntry = 8;
 
-    /// <summary>The reason an entry cannot be saved, or null when it is sound.</summary>
-    private string? ValidateScheduleEntry(ScheduleEntry entry)
+    /// <summary>
+    /// The reason an entry cannot be saved, or null when it is sound.
+    /// </summary>
+    /// <param name="saved">
+    /// The entry as it currently stands on disk, or null when this is a new one. Consulted for one
+    /// rule only — see the one-shot case below — and deliberately not for anything else: every
+    /// other check is about the entry being saved, not about how it got that way.
+    /// </param>
+    private string? ValidateScheduleEntry(ScheduleEntry entry, ScheduleEntry? saved)
     {
         if (string.IsNullOrWhiteSpace(entry.Name)) return "A schedule needs a name.";
         if (ScheduleTargetName(entry) == null)
@@ -1470,7 +1477,12 @@ public sealed class AutomationController
 
                 case TriggerKind.OneShot:
                     if (trigger.FireAtUtc == null) return "Pick the date and time to run once at.";
-                    if (trigger.FireAtUtc <= clock.UtcNow)
+                    // Refused only when the edit is what PUT it in the past. Checked unconditionally
+                    // it made a one-off that had already fired unsaveable for good: the entry could
+                    // not be renamed, given a second trigger, or switched off from the panel that
+                    // created it, because saving it back re-offered a time nobody was changing.
+                    if (trigger.FireAtUtc <= clock.UtcNow
+                        && TriggerEvaluator.IsNewTrigger(saved, trigger))
                         return "That one-off time has already passed — pick a later one.";
                     break;
 

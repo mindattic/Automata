@@ -1069,6 +1069,73 @@ public class ReplayEngineTests
         });
     }
 
+    /// <summary>
+    /// A masked step that fails and retries used to print the secret. Redaction was applied to the
+    /// step's FINAL message only, and the "retrying in Nms" log line is emitted from inside the
+    /// retry loop, before that — carrying a message like "value read back as 'hunter2'" straight
+    /// into the run log and events.jsonl. Retries are exactly when a login step misbehaves, so this
+    /// was the likeliest path a masked value had out of the run.
+    /// </summary>
+    [Test]
+    public async Task MaskedStep_DoesNotLeakItsValueWhileRetrying()
+    {
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = script =>
+                script.Contains("__automataApplyValue")
+                    // Read back as something else, so the step fails with the value in its message.
+                    ? """{ "ok": true, "value": "hunter2" }"""
+                    : DefaultResponder(script),
+        };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "pw", Action = StepAction.SetValue, Label = "Password", Masked = true,
+                    Target = Target(), Value = "different",
+                },
+            ],
+        };
+        var settings = FastFloor() with { Retry = new RetryPolicy { MaxAttempts = 2, DelayMs = 1 } };
+
+        var events = await RunToEnd(Engine(), task, OptionsWith(settings), browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.OfType<StepEvent.Log>().Any(l => l.Message.Contains("retrying")), Is.True,
+                "the retry is still reported — the point is what it says, not that it is silent");
+            Assert.That(events.Any(e => e.ToString()!.Contains("hunter2")), Is.False,
+                "and nothing it says carries the value out of the run");
+        });
+    }
+
+    /// <summary>The other message that embeds a step's own value verbatim.</summary>
+    [Test]
+    public async Task MaskedAssert_DoesNotLeakWhatItExpected()
+    {
+        var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "check", Action = StepAction.AssertElement, Label = "Assert", Masked = true,
+                    Target = Target(), Value = "hunter2",
+                },
+            ],
+        };
+        var settings = FastFloor() with { Retry = new RetryPolicy { MaxAttempts = 2, DelayMs = 1 } };
+
+        var events = await RunToEnd(Engine(), task, OptionsWith(settings), browser);
+
+        Assert.That(events.Any(e => e.ToString()!.Contains("hunter2")), Is.False);
+    }
+
     /// <summary>Masking hides a value from watchers, not from the run itself - a later step can
     /// still bind to it.</summary>
     [Test]

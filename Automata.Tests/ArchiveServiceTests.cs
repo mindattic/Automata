@@ -189,6 +189,122 @@ public class ArchiveServiceTests
         Assert.That(zip.GetEntry($"tasks/{task.Id}.json"), Is.Not.Null);
     }
 
+    // ---- an import has to be wired to itself -------------------------------------------------
+    //
+    // The same defect a duplicate had, reached the other way: an import re-keys every step id and
+    // regenerates a colliding task id, and then left every reference to either pointing at what it
+    // named before. An export/import round-trip therefore came back looking identical and running
+    // differently — which is the worst shape a bug can have in a format people move work in.
+
+    [Test]
+    public void ImportingATask_RewiresItsStepReferencesToTheImportedSteps()
+    {
+        var collection = sourceStore.CreateCollection("Wired");
+        var read = new Step
+        {
+            Action = StepAction.ExtractText, Label = "read", Outputs = [new OutputField { Name = "total" }],
+        };
+        var type = new Step
+        {
+            Action = StepAction.TypeText, Label = "type",
+            Bindings = new Dictionary<string, BindingRef>
+            {
+                ["Value"] = new() { Kind = BindingKind.StepOutput, SourceStepId = read.Id, OutputField = "total" },
+            },
+        };
+        var task = new TaskDefinition
+        {
+            CollectionId = collection.Id, Name = "Round trip", Steps = [read, type],
+            Outputs = [new TaskOutput { Name = "total", SourceStepId = read.Id, SourceOutputField = "total" }],
+        };
+        sourceStore.SaveTask(task);
+        var zip = new ArchiveService(sourceStore).ExportTask(task.Id, ZipPath("t.automata.zip"));
+
+        var imported = new ArchiveService(targetStore).Import(zip).Tasks.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(imported.Steps[1].Bindings!["Value"].SourceStepId, Is.EqualTo(imported.Steps[0].Id));
+            Assert.That(imported.Outputs.Single().SourceStepId, Is.EqualTo(imported.Steps[0].Id));
+        });
+    }
+
+    /// <summary>
+    /// Importing a collection back into the workspace it came from: every task id collides, so
+    /// every one is regenerated — and the runTask step and the pipeline wiring between them have
+    /// to follow, or the import quietly calls the tasks it was imported alongside.
+    /// </summary>
+    [Test]
+    public void ImportingACollectionOverItself_RewiresTheTasksToTheImportedCopies()
+    {
+        var collection = sourceStore.CreateCollection("Pipeline");
+        var first = new TaskDefinition
+        {
+            CollectionId = collection.Id, Name = "Find it",
+            Steps = [new Step { Action = StepAction.ExtractText, Label = "read", Outputs = [new OutputField { Name = "id" }] }],
+        };
+        first.Outputs = [new TaskOutput { Name = "ticket", SourceStepId = first.Steps[0].Id, SourceOutputField = "id" }];
+        sourceStore.SaveTask(first);
+
+        var second = new TaskDefinition
+        {
+            CollectionId = collection.Id, Name = "Use it",
+            Inputs = [new TaskInput
+            {
+                Name = "ticket",
+                From = new TaskOutputRef { TaskId = first.Id, TaskName = "Find it", OutputName = "ticket" },
+            }],
+            Steps = [new Step { Action = StepAction.RunTask, Label = "call", RunTaskId = first.Id }],
+        };
+        sourceStore.SaveTask(second);
+
+        var zip = new ArchiveService(sourceStore).ExportCollection(collection.Id, ZipPath("p.automata.zip"));
+        // Imported into the SAME store, so both task ids are already taken.
+        var result = new ArchiveService(sourceStore).Import(zip);
+
+        var importedFirst = result.Tasks.Single(t => t.Name == "Find it");
+        var importedSecond = result.Tasks.Single(t => t.Name == "Use it");
+        Assert.Multiple(() =>
+        {
+            Assert.That(importedFirst.Id, Is.Not.EqualTo(first.Id), "the collision was regenerated");
+            Assert.That(importedSecond.Steps[0].RunTaskId, Is.EqualTo(importedFirst.Id),
+                "and the call follows the copy rather than reaching back into the original");
+            Assert.That(importedSecond.Inputs.Single().From!.TaskId, Is.EqualTo(importedFirst.Id));
+        });
+    }
+
+    /// <summary>
+    /// A single-task zip carries wirings to tasks that did not come with it. Those are dangling,
+    /// and dangling is worth PRESERVING rather than blanking: the editor can say which task a
+    /// wiring named and offer to re-point it, which it cannot do about a reference that was
+    /// cleared on the way in.
+    /// </summary>
+    [Test]
+    public void ImportingATask_LeavesAWiringItHasNoAnswerForAlone()
+    {
+        var collection = sourceStore.CreateCollection("Half a pipeline");
+        var task = new TaskDefinition
+        {
+            CollectionId = collection.Id, Name = "Downstream",
+            Inputs = [new TaskInput
+            {
+                Name = "ticket",
+                From = new TaskOutputRef { TaskId = "upstream-left-behind", TaskName = "Find it", OutputName = "ticket" },
+            }],
+            Steps = [new Step { Action = StepAction.RunTask, Label = "call", RunTaskId = "callee-left-behind" }],
+        };
+        sourceStore.SaveTask(task);
+        var zip = new ArchiveService(sourceStore).ExportTask(task.Id, ZipPath("half.automata.zip"));
+
+        var imported = new ArchiveService(targetStore).Import(zip).Tasks.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(imported.Inputs.Single().From!.TaskId, Is.EqualTo("upstream-left-behind"));
+            Assert.That(imported.Steps[0].RunTaskId, Is.EqualTo("callee-left-behind"));
+        });
+    }
+
     [Test]
     public void SuggestedZipName_SlugsTheDisplayName()
     {

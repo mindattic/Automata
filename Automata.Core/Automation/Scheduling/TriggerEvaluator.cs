@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Automata.Core.Automation.Scheduling;
 
 /// <summary>Why an entry is (or is not) due.</summary>
@@ -202,6 +204,26 @@ public static class TriggerEvaluator
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="trigger"/> is something this edit is INTRODUCING, rather than one
+    /// the entry already carried unchanged.
+    /// <para>
+    /// The distinction exists for one rule: a one-off time in the past is a mistake when somebody
+    /// is setting it now, and simply history when it has already fired. Checked on every save, that
+    /// rule made a fired one-off entry unsaveable — it could not be renamed, given another trigger,
+    /// or switched off from the panel that created it. So "already saved exactly like this" is the
+    /// escape, and it has to compare the whole trigger rather than its id: re-pointing a one-off at
+    /// another past moment is a new statement about when it fires, and still wrong.
+    /// </para>
+    /// </summary>
+    public static bool IsNewTrigger(ScheduleEntry? saved, TriggerDefinition trigger)
+    {
+        if (saved == null) return true;
+        var candidate = JsonSerializer.Serialize(trigger, Model.AutomataJson.Options);
+        return !saved.Triggers.Any(
+            t => JsonSerializer.Serialize(t, Model.AutomataJson.Options) == candidate);
     }
 
     public static TimeZoneInfo ResolveZone(string? id)

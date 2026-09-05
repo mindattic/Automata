@@ -247,6 +247,64 @@ public class RecorderCoalescingTests
         Assert.That(steps[0].Label, Does.Contain("masked"));
     }
 
+    /// <summary>
+    /// Withholding the value is only half of it. The recorder is the ONE place that knows a field
+    /// was a password, and it has to say so on the step — a step that merely has an empty value is
+    /// an ordinary step, so the moment somebody fills the password in in the editor the engine
+    /// treats it like any other text and reports it in logs and run artifacts.
+    /// </summary>
+    [Test]
+    public void MaskedPasswordInput_MarksTheStepMasked()
+    {
+        var pw = Field("#pw", label: "Password", typeAttr: "password");
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("input", pw, "text", value: "", masked: true),
+        ]);
+
+        Assert.That(steps[0].Masked, Is.True);
+    }
+
+    /// <summary>Masking is sticky across a burst: the change event that confirms the field cannot
+    /// un-mask the step it folds into.</summary>
+    [Test]
+    public void MaskedTypingFollowedByItsChange_StaysMasked()
+    {
+        var pw = Field("#pw", label: "Password", typeAttr: "password");
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("input", pw, "text", value: "", masked: true),
+            Ev("change", pw, "text", value: "", masked: true),
+        ]);
+
+        Assert.That(steps, Has.Count.EqualTo(1));
+        Assert.That(steps[0].Masked, Is.True);
+    }
+
+    /// <summary>An autofilled password arrives as a change with nothing before it — still a secret.</summary>
+    [Test]
+    public void MaskedAutofillChange_MarksTheSetValueStepMasked()
+    {
+        var pw = Field("#pw", label: "Password", typeAttr: "password");
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("change", pw, "text", value: "", masked: true),
+        ]);
+
+        Assert.That(steps[0].Action, Is.EqualTo(StepAction.SetValue));
+        Assert.That(steps[0].Masked, Is.True);
+    }
+
+    /// <summary>And an ordinary field is not marked, or every step would report nothing.</summary>
+    [Test]
+    public void AnOrdinaryFieldIsNotMasked()
+    {
+        var q = Field("input[name=q]", label: "Search");
+        var steps = RecorderSessionBuilder.Build([Ev("input", q, "text", "cats")]);
+
+        Assert.That(steps[0].Masked, Is.False);
+    }
+
     [Test]
     public void AutofillChangeWithoutTyping_BecomesSetValue()
     {

@@ -147,15 +147,23 @@ public sealed class ArchiveService
         }
         collection.Name = StoreUtil.UniqueName(collection.Name, existingCollections.Select(c => c.Name));
 
+        // Two passes, because the second one needs the whole map. A collection imported back over
+        // itself has EVERY task id taken, so every one is regenerated — and a runTask step or an
+        // input wired to another task in the same zip has to follow its own copy rather than call
+        // whatever was already in the workspace under that id.
         foreach (var task in tasks)
         {
-            if (existingTaskIds.Contains(task.Id))
-            {
-                idMap[task.Id] = StoreUtil.NewId();
-                task.Id = idMap[task.Id];
-            }
+            if (!existingTaskIds.Contains(task.Id)) continue;
+            var fresh = StoreUtil.NewId();
+            idMap[task.Id] = fresh;
+            task.Id = fresh;
+        }
+
+        foreach (var task in tasks)
+        {
             task.CollectionId = collection.Id;
-            StoreUtil.RegenerateStepIds(task.Steps);
+            StoreUtil.ReidentifySteps(task);
+            StoreUtil.RemapTaskIds(task, idMap);
         }
 
         collection.TaskOrder = collection.TaskOrder
@@ -193,7 +201,7 @@ public sealed class ArchiveService
 
         task.CollectionId = parent.Id;
         task.Name = StoreUtil.UniqueName(task.Name, store.LoadTasks(parent.Id).Select(t => t.Name));
-        StoreUtil.RegenerateStepIds(task.Steps);
+        StoreUtil.ReidentifySteps(task);
         store.SaveTask(task);
 
         log.LogInformation("Imported task '{Name}' into '{Collection}'", task.Name, parent.Name);
