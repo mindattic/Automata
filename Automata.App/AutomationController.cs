@@ -1402,7 +1402,7 @@ public sealed class AutomationController
         if (string.IsNullOrWhiteSpace(entry.Id)) entry.Id = Guid.NewGuid().ToString("n");
 
         var existing = schedule.Get(entry.Id);
-        if (ValidateScheduleEntry(entry, existing) is { } problem)
+        if (ValidateScheduleEntry(entry) is { } problem)
         {
             await logAsync($"⚠ {problem}");
             await PushScheduleAsync(problem);
@@ -1436,7 +1436,7 @@ public sealed class AutomationController
     private const int MaxTriggersPerEntry = 8;
 
     /// <summary>The reason an entry cannot be saved, or null when it is sound.</summary>
-    private string? ValidateScheduleEntry(ScheduleEntry entry, ScheduleEntry? existing)
+    private string? ValidateScheduleEntry(ScheduleEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.Name)) return "A schedule needs a name.";
         if (ScheduleTargetName(entry) == null)
@@ -1487,18 +1487,9 @@ public sealed class AutomationController
 
         // A chain is allowed — "after the ingest, reconcile" is the point — but a cycle is not,
         // because every entry in one would sit waiting for another entry in the same loop and none
-        // of them would ever start. Reached by walking forward from the upstream entry: if this
-        // entry is already somewhere downstream of it, closing the link would form the loop.
-        var upstreamIds = entry.Triggers
-            .Where(t => t.Kind == TriggerKind.AfterEntry && t.AfterEntryId != null)
-            .Select(t => t.AfterEntryId!);
-        var saved = existing == null ? entries : entries.Where(e => e.Id != entry.Id).ToList();
-        foreach (var upstreamId in upstreamIds)
-        {
-            var reachable = TriggerEvaluator.Chain(saved, upstreamId, succeeded: true);
-            if (reachable.Any(e => e.Id == entry.Id))
-                return "That would make a loop — the schedule it follows already waits for this one.";
-        }
+        // of them would ever start.
+        if (TriggerEvaluator.WouldFormACycle(entries, entry))
+            return "That would make a loop — the schedule it follows already waits for this one.";
 
         return null;
     }

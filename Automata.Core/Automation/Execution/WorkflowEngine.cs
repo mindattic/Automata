@@ -406,6 +406,17 @@ public sealed partial class WorkflowEngine
         || (step.Action == StepAction.Wait
             && step.Wait?.Mode is WaitMode.UntilCondition or WaitMode.UntilSignal);
 
+    /// <summary>
+    /// Performs one orchestrated step.
+    /// <para>
+    /// <b>Every case that passes then runs its own children</b>, exactly as an ordinary step does —
+    /// the tree lets any step hold children (drag one onto another, or Alt+Right), so a case that
+    /// did not descend silently dropped whatever had been nested under it. Only <c>if</c>,
+    /// <c>otherwise</c> and <c>forEach</c> differ, and they differ on purpose: their children are
+    /// the branch or the loop body, and deciding whether and how often those run is what the step
+    /// IS.
+    /// </para>
+    /// </summary>
     private async IAsyncEnumerable<StepEvent> RunControlFlowAsync(
         Step step,
         RunScope scope,
@@ -599,6 +610,10 @@ public sealed partial class WorkflowEngine
                     yield return new StepEvent.Log(
                         $"{count} step(s) self-healed in '{target.Name}' — saved back into it.");
                 }
+
+                if (state.Stop) yield break;
+                await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                    yield return evt;
                 yield break;
             }
 
@@ -638,6 +653,8 @@ public sealed partial class WorkflowEngine
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, what, null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
+                await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                    yield return evt;
                 yield break;
             }
 
@@ -690,6 +707,8 @@ public sealed partial class WorkflowEngine
                     $"{spec.Op.ToString().ToLowerInvariant()} of {spec.ColumnName} in {spec.DatasetName}", text);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
+                await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                    yield return evt;
                 yield break;
             }
 
@@ -786,6 +805,8 @@ public sealed partial class WorkflowEngine
                             $"condition met{saw}", null);
                         state.LastStatus = StepStatus.Passed;
                         state.Passed++;
+                        await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
+                            yield return evt;
                         yield break;
                     }
                     if (error != null)

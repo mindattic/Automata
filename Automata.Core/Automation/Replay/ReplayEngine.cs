@@ -225,7 +225,8 @@ public class ReplayEngine
         // and cross-task lookups, neither of which a single-task replay has. Rejecting
         // them explicitly beats a misleading "unsupported action" from the switch default.
         if (step.Action is StepAction.ForEach or StepAction.If or StepAction.Else
-            or StepAction.RunTask or StepAction.WriteDataset or StepAction.Aggregate)
+            or StepAction.RunTask or StepAction.WriteDataset or StepAction.Aggregate
+            or StepAction.ExtractAll)
         {
             return (StepStatus.Failed,
                 $"{step.Action} is a control-flow step — run this task through the workflow engine", null);

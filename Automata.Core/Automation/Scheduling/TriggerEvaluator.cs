@@ -160,6 +160,50 @@ public static class TriggerEvaluator
         return ordered;
     }
 
+    /// <summary>
+    /// Whether saving <paramref name="candidate"/> would close a loop of after-triggers, in which
+    /// every entry sits waiting for another entry in the same loop and none of them ever starts.
+    /// <para>
+    /// The question is asked FORWARD FROM THE CANDIDATE, not from the entries it follows: if
+    /// something the candidate sets off is already what the candidate is waiting for, the link
+    /// closes the ring. Asking it the other way round — walking down from the upstream entry and
+    /// looking for the candidate — cannot work, because the candidate is new or is the very entry
+    /// being replaced, so it is never in the list being walked and the answer is always "no".
+    /// </para>
+    /// </summary>
+    public static bool WouldFormACycle(IReadOnlyList<ScheduleEntry> saved, ScheduleEntry candidate)
+    {
+        var upstreamIds = candidate.Triggers
+            .Where(t => t.Kind == TriggerKind.AfterEntry && !string.IsNullOrWhiteSpace(t.AfterEntryId))
+            .Select(t => t.AfterEntryId!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (upstreamIds.Count == 0) return false;
+
+        // The candidate stands in for whatever version of it is on disk: a loop is a property of
+        // the triggers about to be saved, not of the ones already there.
+        var withCandidate = saved.Where(e => e.Id != candidate.Id).Append(candidate).ToList();
+
+        // Structural, unlike Chain and Dependents: every after-link is followed whatever outcome
+        // it wants and whether or not its entry is switched on. A ring made of "after this fails"
+        // links is still a ring, and one that is only broken by a disabled entry becomes real the
+        // moment somebody ticks that box — by which point nothing is asking this question.
+        var seen = new HashSet<string>(StringComparer.Ordinal) { candidate.Id };
+        var queue = new Queue<string>();
+        queue.Enqueue(candidate.Id);
+        while (queue.Count > 0)
+        {
+            var from = queue.Dequeue();
+            foreach (var entry in withCandidate)
+            {
+                if (!entry.Triggers.Any(t => t.Kind == TriggerKind.AfterEntry && t.AfterEntryId == from))
+                    continue;
+                if (upstreamIds.Contains(entry.Id)) return true;
+                if (seen.Add(entry.Id)) queue.Enqueue(entry.Id);
+            }
+        }
+        return false;
+    }
+
     public static TimeZoneInfo ResolveZone(string? id)
     {
         if (string.IsNullOrWhiteSpace(id)) return TimeZoneInfo.Local;

@@ -39,6 +39,39 @@ public class GherkinFlowTests
         });
     }
 
+    /// <summary>
+    /// Two Scenarios may share a name — legal Gherkin, and what copy-pasting one produces. The
+    /// compiler used to build its name lookup with ToDictionary and throw out of the whole compile
+    /// with a message about a duplicate key, which reached the user as an unhandled failure of the
+    /// import or the draft rather than as a diagnostic.
+    /// </summary>
+    [Test]
+    public void TwoScenariosWithTheSameName_CompileAndSayWhichWins()
+    {
+        var result = Compile("""
+            Feature: Restock
+
+              Scenario: Sign in
+                Given I open "https://shop.example/login"
+
+              Scenario: Sign in
+                Given I open "https://shop.example/login2"
+
+              Scenario: Order
+                Given I run task "Sign in"
+            """);
+
+        Assert.That(result.HasErrors, Is.False, Errors(result));
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Tasks, Has.Count.EqualTo(3));
+            Assert.That(result.Tasks[2].Steps[0].RunTaskId, Is.EqualTo(result.Tasks[0].Id),
+                "the first Scenario of that name is the one the reference means");
+            Assert.That(result.Diagnostics.Any(d => d.Message.Contains("both called 'Sign in'")), Is.True,
+                "the ambiguity is reported rather than resolved in silence");
+        });
+    }
+
     [Test]
     public void BackgroundStepsRunBeforeEveryScenario()
     {

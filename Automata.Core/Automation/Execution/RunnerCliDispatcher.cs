@@ -105,7 +105,13 @@ public sealed class RunnerCliDispatcher
 
     // ---- run -------------------------------------------------------------------------------
 
-    private async Task<int> RunAsync(string[] args, CancellationToken ct)
+    /// <param name="trigger">
+    /// How the run was started, recorded on its manifest — see <see cref="RunManifest.Trigger"/>.
+    /// Defaults to the command line, because that is who calls <c>run</c>; a tick passes what
+    /// actually started it, or every scheduled and chained run would be filed as "manual" and the
+    /// run history could not answer the first question anybody asks of it.
+    /// </param>
+    private async Task<int> RunAsync(string[] args, CancellationToken ct, string trigger = "manual")
     {
         var taskRef = Option(args, "--task");
         var collectionRef = Option(args, "--collection");
@@ -161,7 +167,7 @@ public sealed class RunnerCliDispatcher
             }
         }
 
-        var run = runs.CreateRun(kind, tasks[0].CollectionId, targetName, trigger: "manual");
+        var run = runs.CreateRun(kind, tasks[0].CollectionId, targetName, trigger);
         output.WriteLine($"Run {run.RunId[..8]} — {targetName}");
 
         return await RunTaskListAsync(
@@ -487,17 +493,19 @@ public sealed class RunnerCliDispatcher
         Action<bool> reportFailure)
     {
         var ran = 0;
-        var queue = new Queue<ScheduleEntry>();
-        queue.Enqueue(entry);
+        var queue = new Queue<(ScheduleEntry Entry, string Trigger)>();
+        // The entry the tick found due started on a clock; everything the queue grows after it
+        // started because something else finished, and its run record should say which.
+        queue.Enqueue((entry, "schedule"));
 
         while (queue.Count > 0 && !ct.IsCancellationRequested)
         {
-            var current = queue.Dequeue();
+            var (current, trigger) = queue.Dequeue();
             // An entry runs at most once per tick, so a cycle exhausts itself rather than looping.
             if (!started.Add(current.Id)) continue;
 
             output.WriteLine($"Due: {current.Name}");
-            var code = await RunTargetAsync(current, ct);
+            var code = await RunTargetAsync(current, ct, trigger);
             var succeeded = code == RunnerExitCode.Success;
             ran++;
             reportFailure(!succeeded);
@@ -508,18 +516,19 @@ public sealed class RunnerCliDispatcher
             foreach (var dependent in TriggerEvaluator.Dependents(all, current.Id, succeeded))
             {
                 output.WriteLine($"  starts: {dependent.Name}");
-                queue.Enqueue(dependent);
+                queue.Enqueue((dependent, "dependency"));
             }
         }
         return ran;
     }
 
-    private Task<int> RunTargetAsync(ScheduleEntry entry, CancellationToken ct) =>
+    private Task<int> RunTargetAsync(ScheduleEntry entry, CancellationToken ct, string trigger) =>
         RunAsync(
             entry.Target == ScheduleTargetKind.Task
                 ? ["run", "--task", entry.TargetId]
                 : ["run", "--collection", entry.TargetId],
-            ct);
+            ct,
+            trigger);
 
     // ---- schedule ---------------------------------------------------------------------------
 
@@ -549,17 +558,28 @@ public sealed class RunnerCliDispatcher
 
             case "add":
             {
-                var target = Option(args, "--collection") ?? Option(args, "--task");
-                var isTask = Option(args, "--task") != null;
+                var collectionArg = Option(args, "--collection");
+                var taskArg = Option(args, "--task");
                 var cron = Option(args, "--cron");
                 var every = Option(args, "--every-minutes");
                 var after = Option(args, "--after");
 
-                if (target == null)
+                if (collectionArg == null && taskArg == null)
                 {
                     output.WriteLine("error: schedule add needs --collection <id|name> or --task <id|name>");
                     return RunnerExitCode.BadArguments;
                 }
+                // Refused rather than picked between. Taking one and ignoring the other would
+                // schedule something the command line did not ask for, and a schedule pointing at
+                // the wrong thing is only discovered at 3am.
+                if (collectionArg != null && taskArg != null)
+                {
+                    output.WriteLine("error: give --collection or --task, not both");
+                    return RunnerExitCode.BadArguments;
+                }
+
+                var isTask = taskArg != null;
+                var target = taskArg ?? collectionArg!;
                 if (cron == null && every == null && after == null)
                 {
                     output.WriteLine("error: give --cron \"<expr>\", --every-minutes <n>, or --after <entry-id>");

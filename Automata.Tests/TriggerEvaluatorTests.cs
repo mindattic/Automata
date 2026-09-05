@@ -335,6 +335,91 @@ public class TriggerEvaluatorTests
 
         Assert.That(TriggerEvaluator.Dependents([Entry(Cron("* * * * *")), dependent], "e1", true), Is.Empty);
     }
+
+    // ---- the loop that must never be saved -------------------------------------------------------
+    //
+    // Asked forward FROM the entry being saved. The editor used to ask it the other way round —
+    // walk down from the entry this one follows and look for this one — over a list this entry had
+    // just been removed from, so the answer was always "no loop" and every ring saved cleanly.
+
+    [Test]
+    public void SavingAnEntryThatClosesATwoWayLoopIsRefused()
+    {
+        // "e2 runs after e1" is already saved; now e1 is edited to run after e2.
+        var saved = new List<ScheduleEntry> { Entry(Cron("0 9 * * *")), After("e2", "e1") };
+        var candidate = After("e1", "e2");
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, candidate), Is.True);
+    }
+
+    [Test]
+    public void SavingAnEntryThatClosesALongerLoopIsRefused()
+    {
+        var saved = new List<ScheduleEntry> { Entry(Cron("0 9 * * *")), After("e2", "e1"), After("e3", "e2") };
+        var candidate = After("e1", "e3");
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, candidate), Is.True);
+    }
+
+    /// <summary>A ring whose links fire on failure is still a ring.</summary>
+    [Test]
+    public void ALoopMadeOfOnFailureLinksIsRefusedToo()
+    {
+        var saved = new List<ScheduleEntry> { Entry(Cron("0 9 * * *")), After("e2", "e1", UpstreamOutcome.Failed) };
+        var candidate = After("e1", "e2", UpstreamOutcome.Failed);
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, candidate), Is.True);
+    }
+
+    /// <summary>
+    /// A ring broken only by a switched-off entry is still refused: it becomes a real one the
+    /// moment that box is ticked, and nothing asks this question again at that point.
+    /// </summary>
+    [Test]
+    public void ALoopThroughADisabledEntryIsRefusedToo()
+    {
+        var middle = After("e2", "e1");
+        middle.Enabled = false;
+        var saved = new List<ScheduleEntry> { Entry(Cron("0 9 * * *")), middle, After("e3", "e2") };
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, After("e1", "e3")), Is.True);
+    }
+
+    [Test]
+    public void APlainChainIsNotALoop()
+    {
+        var saved = new List<ScheduleEntry> { Entry(Cron("0 9 * * *")), After("e2", "e1") };
+        var candidate = After("e3", "e2");
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, candidate), Is.False);
+    }
+
+    [Test]
+    public void AnEntryOnAClockAloneIsNotALoop()
+    {
+        var saved = new List<ScheduleEntry> { After("e2", "e1") };
+
+        Assert.That(TriggerEvaluator.WouldFormACycle(saved, Entry(Cron("0 9 * * *"))), Is.False);
+    }
+
+    /// <summary>
+    /// Editing an entry that already had a downstream: re-pointing it at that downstream closes the
+    /// ring, and the version being SAVED is the one the answer has to be about.
+    /// </summary>
+    [Test]
+    public void TheTriggersBeingSavedAreWhatIsJudged_NotTheOnesOnDisk()
+    {
+        var onDisk = Entry(Cron("0 9 * * *"));
+        var saved = new List<ScheduleEntry> { onDisk, After("e2", "e1") };
+        var edited = After("e1", "e2");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(TriggerEvaluator.WouldFormACycle(saved, edited), Is.True);
+            Assert.That(TriggerEvaluator.WouldFormACycle(saved, onDisk), Is.False,
+                "the version already on disk is still fine");
+        });
+    }
 }
 
 [TestFixture]

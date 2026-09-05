@@ -578,6 +578,58 @@ public class RunnerCliDispatcherTests
         });
     }
 
+    /// <summary>
+    /// A run manifest's Trigger is the only record of how a run started, and everything the tick
+    /// launched used to be filed as "manual" — the same word a person typing `run` gets, which
+    /// made the field unable to answer the question it exists for.
+    /// </summary>
+    [Test]
+    public async Task TickRecordsHowEachRunWasActuallyStarted()
+    {
+        SeedTask("Ingest", "Pull", Nav());
+        SeedTask("Reconcile", "Match", Nav());
+        await Dispatcher().DispatchAsync(["schedule", "add", "--collection", "Ingest", "--cron", "0 9 * * *", "--timezone", "UTC"]);
+        var ingestId = schedule.Load()[0].Id;
+        await Dispatcher().DispatchAsync(["schedule", "add", "--collection", "Reconcile", "--after", ingestId]);
+        clock.Advance(TimeSpan.FromHours(1));
+
+        await Dispatcher().DispatchAsync(["tick"]);
+
+        var byName = runs.ListRuns().ToDictionary(r => r.TargetName, r => r.Trigger);
+        Assert.Multiple(() =>
+        {
+            Assert.That(byName["Ingest"], Is.EqualTo("schedule"));
+            Assert.That(byName["Reconcile"], Is.EqualTo("dependency"));
+        });
+    }
+
+    [Test]
+    public async Task ARunStartedByHandIsStillRecordedAsManual()
+    {
+        SeedTask("C", "Job", Nav());
+
+        await Dispatcher().DispatchAsync(["run", "--task", "Job"]);
+
+        Assert.That(runs.ListRuns().Single().Trigger, Is.EqualTo("manual"));
+    }
+
+    /// <summary>Naming both is a mistake, and picking one silently would schedule the wrong thing.</summary>
+    [Test]
+    public async Task ScheduleAddRefusesBothATaskAndACollection()
+    {
+        SeedTask("C", "Job", Nav());
+
+        var code = await Dispatcher().DispatchAsync(
+            ["schedule", "add", "--collection", "C", "--task", "Job", "--cron", "0 9 * * *"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(code, Is.EqualTo(RunnerExitCode.BadArguments));
+            Assert.That(Written, Does.Contain("not both"));
+            Assert.That(schedule.Load(), Is.Empty);
+        });
+    }
+
     [Test]
     public async Task ADisabledEntryIsNotRunByATick()
     {

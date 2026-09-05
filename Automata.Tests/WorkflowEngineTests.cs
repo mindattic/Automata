@@ -634,6 +634,92 @@ public class WorkflowEngineTests
         });
     }
 
+    /// <summary>
+    /// The step tree lets ANY step hold children — drag one onto another, or Alt+Right — so a
+    /// control-flow case that did not walk its own children ran the step and silently dropped
+    /// everything nested under it. Only if/otherwise/forEach decide for themselves whether their
+    /// children run; the rest behave like every ordinary step.
+    /// </summary>
+    [TestCaseSource(nameof(StepsThatMustStillRunTheirChildren))]
+    public async Task AControlFlowStepRunsItsOwnChildren(Step parent)
+    {
+        datasets.Write("stock.csv", [new Dictionary<string, string> { ["qty"] = "7" }], append: false);
+        var browser = Browser();
+        parent.Children = [Nav("after", "https://child.example")];
+
+        var events = await Run(new TaskDefinition { Name = "T", Steps = [parent] }, browser);
+
+        Assert.That(NavigatedUrls(browser), Does.Contain("https://child.example"),
+            $"a step nested under a {parent.Action} step must still run");
+        Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+    }
+
+    private static IEnumerable<Step> StepsThatMustStillRunTheirChildren()
+    {
+        yield return new Step
+        {
+            Id = "save", Action = StepAction.WriteDataset, Label = "save",
+            WriteDataset = new DatasetWriteSpec
+            {
+                DatasetName = "bought.csv",
+                Columns = new Dictionary<string, BindingRef>
+                {
+                    ["sku"] = new() { Kind = BindingKind.Literal, Literal = "WT-100" },
+                },
+            },
+        };
+        yield return new Step
+        {
+            Id = "total", Action = StepAction.Aggregate, Label = "total",
+            Aggregate = new AggregateSpec { DatasetName = "stock.csv", ColumnName = "qty", Op = AggregateOp.Sum },
+        };
+        yield return new Step
+        {
+            Id = "hold", Action = StepAction.Wait, Label = "hold",
+            Wait = new WaitSpec
+            {
+                Mode = WaitMode.UntilCondition,
+                PollMs = 10,
+                TimeoutMs = 500,
+                Condition = new ConditionSpec
+                {
+                    Left = new BindingRef { Kind = BindingKind.Literal, Literal = "yes" },
+                    Op = ConditionOp.NotEmpty,
+                },
+            },
+        };
+    }
+
+    [Test]
+    public async Task RunTask_RunsTheStepsNestedUnderItAfterTheCalleeFinishes()
+    {
+        var callee = new TaskDefinition
+        {
+            Name = "Callee", CollectionId = collections.EnsureDefaultCollection().Id,
+            Steps = [Nav("inner", "https://callee.example")],
+        };
+        collections.SaveTask(callee);
+
+        var browser = Browser();
+        var caller = new TaskDefinition
+        {
+            Name = "Caller",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "call", Action = StepAction.RunTask, Label = "call", RunTaskId = callee.Id,
+                    Children = [Nav("after", "https://after.example")],
+                },
+            ],
+        };
+
+        await Run(caller, browser);
+
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://callee.example", "https://after.example" }));
+    }
+
     [Test]
     public async Task WriteDataset_WithAnUnresolvableColumn_FailsAndWritesNothing()
     {

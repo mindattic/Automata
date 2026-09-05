@@ -429,7 +429,19 @@ public static class GherkinFlowCompiler
     /// <summary>A <c>run task</c> step names a task; ids only exist once every task is built.</summary>
     private static void ResolveTaskReferences(List<TaskDefinition> tasks, List<FlowDiagnostic> diagnostics)
     {
-        var byName = tasks.ToDictionary(t => t.Name, t => t.Id, StringComparer.OrdinalIgnoreCase);
+        // Built one at a time rather than with ToDictionary, because two Scenarios may share a
+        // name — legal Gherkin, and the obvious result of copy-pasting one — and a duplicate key
+        // threw out of the whole compile with a message about a dictionary. The first one wins the
+        // name, and the ambiguity is reported rather than resolved silently.
+        var byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in tasks)
+        {
+            if (byName.TryAdd(task.Name, task.Id)) continue;
+            diagnostics.Add(new FlowDiagnostic(FlowSeverity.Warning, 0, 0,
+                $"two Scenarios are both called '{task.Name}' — 'I run task' will mean the first of " +
+                "them; rename one to say which"));
+        }
+
         foreach (var task in tasks) Walk(task.Steps);
 
         void Walk(List<Step> steps)

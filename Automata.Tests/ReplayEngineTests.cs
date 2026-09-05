@@ -843,8 +843,11 @@ public class ReplayEngineTests
     /// </summary>
     [TestCase(StepAction.ForEach)]
     [TestCase(StepAction.If)]
+    [TestCase(StepAction.Else)]
     [TestCase(StepAction.RunTask)]
     [TestCase(StepAction.WriteDataset)]
+    [TestCase(StepAction.Aggregate)]
+    [TestCase(StepAction.ExtractAll)]
     public async Task OrchestratedActions_AreRejectedWithAClearReason(StepAction action)
     {
         var browser = new FakeBrowserSurface { DefaultEvalResponse = DefaultResponder };

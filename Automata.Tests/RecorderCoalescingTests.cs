@@ -111,6 +111,78 @@ public class RecorderCoalescingTests
         Assert.That(steps[0].Label, Does.Contain("Canada").And.Contain("Country"));
     }
 
+    /// <summary>
+    /// Two dropdowns filled one after the other are two picks. Collapsing on "the last step was a
+    /// SelectOption" alone lost the first one entirely and left the survivor claiming the second
+    /// dropdown's value under the first dropdown's name.
+    /// </summary>
+    [Test]
+    public void TwoDifferentDropdowns_StayTwoSteps()
+    {
+        var country = new ElementFingerprint { Tag = "select", CssSelector = "#country", NearbyLabelText = "Country" };
+        var province = new ElementFingerprint { Tag = "select", CssSelector = "#province", NearbyLabelText = "Province" };
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("click", country, "select"),
+            Ev("change", country, "select", selectedText: "Canada"),
+            Ev("click", province, "select"),
+            Ev("change", province, "select", selectedText: "Ontario"),
+        ]);
+
+        Assert.That(steps, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps[0].Value, Is.EqualTo("Canada"));
+            Assert.That(steps[0].Target!.CssSelector, Is.EqualTo("#country"));
+            Assert.That(steps[1].Value, Is.EqualTo("Ontario"));
+            Assert.That(steps[1].Target!.CssSelector, Is.EqualTo("#province"));
+        });
+    }
+
+    /// <summary>Changing one's mind about the SAME dropdown is still one step, at the final value.</summary>
+    [Test]
+    public void SameDropdownChangedTwice_CollapsesToTheFinalPick()
+    {
+        var select = new ElementFingerprint { Tag = "select", CssSelector = "#country", NearbyLabelText = "Country" };
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("change", select, "select", selectedText: "Canada"),
+            Ev("change", select, "select", selectedText: "Mexico"),
+        ]);
+
+        Assert.That(steps, Has.Count.EqualTo(1));
+        Assert.That(steps[0].Value, Is.EqualTo("Mexico"));
+    }
+
+    /// <summary>
+    /// A click on an option and the select's own change are one pick, and the step has to end up
+    /// pointing at the SELECT: replaying one aimed at an &lt;option&gt; fails with "not a native
+    /// select: OPTION".
+    /// </summary>
+    [Test]
+    public void OptionClickThenSelectChange_TargetsTheSelect()
+    {
+        var option = new ElementFingerprint
+        {
+            Tag = "option", CssSelector = "#country > option:nth-of-type(2)", VisibleText = "Canada",
+        };
+        var select = new ElementFingerprint { Tag = "select", CssSelector = "#country", NearbyLabelText = "Country" };
+        var steps = RecorderSessionBuilder.Build(
+        [
+            Ev("click", option, "option", value: "Canada"),
+            Ev("change", select, "select", selectedText: "Canada"),
+        ]);
+
+        Assert.That(steps, Has.Count.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps[0].Action, Is.EqualTo(StepAction.SelectOption));
+            Assert.That(steps[0].Value, Is.EqualTo("Canada"));
+            Assert.That(steps[0].Target!.CssSelector, Is.EqualTo("#country"));
+            Assert.That(steps[0].Label, Does.Contain("Country"));
+        });
+    }
+
     [Test]
     public void FileChange_BecomesUploadFileNeedingALocalPath()
     {

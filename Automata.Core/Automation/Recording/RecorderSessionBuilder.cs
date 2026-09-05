@@ -24,8 +24,18 @@ public static partial class RecorderSessionBuilder
         long lastNavTs = long.MinValue;
         string? lastNavUrl = null;
 
+        // The step an option click just added, and only that one. A select's change event has to
+        // fold into it, because the clicked <option> and the <select> that changed are different
+        // elements and the pair cannot be matched on identity the way a checkbox's click+change
+        // can. Remembering WHICH step it is is what stops that fold from also swallowing the
+        // previous dropdown's pick when two different dropdowns are used one after the other.
+        Step? optionJustClicked = null;
+
         foreach (var evt in events)
         {
+            var pendingOption = optionJustClicked;
+            optionJustClicked = null;
+
             switch (evt.Kind)
             {
                 case "navigate":
@@ -41,7 +51,7 @@ public static partial class RecorderSessionBuilder
                     break;
 
                 case "click":
-                    OnClick(steps, evt);
+                    optionJustClicked = OnClick(steps, evt);
                     break;
 
                 case "input":
@@ -49,7 +59,7 @@ public static partial class RecorderSessionBuilder
                     break;
 
                 case "change":
-                    OnChange(steps, evt);
+                    OnChange(steps, evt, pendingOption);
                     break;
 
                 case "key":
@@ -68,28 +78,32 @@ public static partial class RecorderSessionBuilder
         return steps;
     }
 
-    private static void OnClick(List<Step> steps, RecorderEvent evt)
+    /// <summary>
+    /// Returns the <see cref="StepAction.SelectOption"/> step this click created, when the click
+    /// was on an option — the one step the select's own change event that follows may fold into.
+    /// Null for every other click.
+    /// </summary>
+    private static Step? OnClick(List<Step> steps, RecorderEvent evt)
     {
-        if (evt.Fingerprint == null) return;
+        if (evt.Fingerprint == null) return null;
         switch (evt.TargetKind)
         {
             case "select":
             case "file":
                 // Opening a dropdown / a native file picker does nothing by itself — the
                 // meaningful action arrives as the change event.
-                return;
+                return null;
 
             case "checkbox":
                 UpsertCheckState(steps, evt, evt.Checked ?? true);
-                return;
+                return null;
 
             case "radio":
                 UpsertRadio(steps, evt);
-                return;
+                return null;
 
             case "option":
-                UpsertSelectOption(steps, evt, evt.Value);
-                return;
+                return UpsertSelectOption(steps, evt, evt.Value, foldInto: null);
 
             default:
                 var text = evt.Fingerprint.VisibleText ?? evt.Fingerprint.AriaLabel ?? TargetName(evt.Fingerprint);
@@ -100,7 +114,7 @@ public static partial class RecorderSessionBuilder
                     Label = $"Click '{Truncate(text, 40)}'",
                     IsCommitPoint = LooksLikeCommit(evt.Fingerprint),
                 });
-                return;
+                return null;
         }
     }
 
@@ -125,7 +139,7 @@ public static partial class RecorderSessionBuilder
         steps.Add(step);
     }
 
-    private static void OnChange(List<Step> steps, RecorderEvent evt)
+    private static void OnChange(List<Step> steps, RecorderEvent evt, Step? pendingOption)
     {
         if (evt.Fingerprint == null) return;
         switch (evt.TargetKind)
@@ -139,8 +153,20 @@ public static partial class RecorderSessionBuilder
                 return;
 
             case "select":
-                UpsertSelectOption(steps, evt, evt.SelectedText);
+            {
+                // Exactly two things fold into a pick already on the list, and nothing else does:
+                // the option click this very change completes, and a second change on the SAME
+                // select (the user changed their mind). A change reported by a DIFFERENT select is
+                // a second dropdown, and folding it in used to overwrite the first one's value and
+                // lose the pick entirely.
+                var open = steps.LastOrDefault();
+                var foldInto = open is { Action: StepAction.SelectOption }
+                    && (ReferenceEquals(open, pendingOption) || SameElement(open.Target, evt.Fingerprint))
+                    ? open
+                    : null;
+                UpsertSelectOption(steps, evt, evt.SelectedText, foldInto);
                 return;
+            }
 
             case "file":
                 steps.Add(new Step
@@ -213,23 +239,34 @@ public static partial class RecorderSessionBuilder
         });
     }
 
-    private static void UpsertSelectOption(List<Step> steps, RecorderEvent evt, string? optionText)
+    /// <summary>
+    /// Records one dropdown pick, folding into <paramref name="foldInto"/> when this event is the
+    /// second half of a pick already begun. Returns the step the pick now lives in.
+    /// </summary>
+    private static Step UpsertSelectOption(
+        List<Step> steps, RecorderEvent evt, string? optionText, Step? foldInto)
     {
-        var last = steps.LastOrDefault();
-        // An option click followed by the select's change event describes ONE pick.
-        if (last is { Action: StepAction.SelectOption })
+        if (foldInto != null)
         {
-            last.Value = optionText ?? last.Value;
-            last.Label = $"Select '{Truncate(last.Value, 30)}' in {TargetName(last.Target ?? evt.Fingerprint!)}";
-            return;
+            foldInto.Value = optionText ?? foldInto.Value;
+            // The SELECT wins the target. An option click leaves the <option> behind as the step's
+            // element, and replaying that fails with "not a native select: OPTION" — so when the
+            // select itself is what reported this event, it replaces what the click recorded.
+            if (evt.TargetKind == "select") foldInto.Target = evt.Fingerprint;
+            foldInto.Label =
+                $"Select '{Truncate(foldInto.Value, 30)}' in {TargetName(foldInto.Target ?? evt.Fingerprint!)}";
+            return foldInto;
         }
-        steps.Add(new Step
+
+        var step = new Step
         {
             Action = StepAction.SelectOption,
             Target = evt.Fingerprint,
             Value = optionText,
             Label = $"Select '{Truncate(optionText, 30)}' in {TargetName(evt.Fingerprint!)}",
-        });
+        };
+        steps.Add(step);
+        return step;
     }
 
     private static void ApplyTypedValue(Step step, RecorderEvent evt)
