@@ -1,5 +1,6 @@
 using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Model;
+using Automata.Core.Automation.Profiles;
 using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Settings;
@@ -89,6 +90,7 @@ public sealed class RunnerCliDispatcher
                 "uninstall" => await UninstallAsync(ct),
                 "status" => Status(),
                 "demos" => DemosCommand(args),
+                "profiles" => ProfilesCommand(args),
                 _ => Unknown(args[0]),
             };
         }
@@ -706,6 +708,46 @@ public sealed class RunnerCliDispatcher
         }
     }
 
+    /// <summary>
+    /// The acceptance profiles are installed only when this is run, and never on launch: they point
+    /// at sites nobody here controls, so seeding them into everyone's workspace would put three
+    /// tasks that can fail for reasons outside this repo in front of someone who never asked for
+    /// them. There is no regenerate, because a profile is a starting point you are expected to
+    /// adapt — see <see cref="AcceptanceProfileSeeder"/>.
+    /// </summary>
+    private int ProfilesCommand(string[] args)
+    {
+        var sub = args.Length > 1 ? args[1].ToLowerInvariant() : "list";
+        var seeder = new AcceptanceProfileSeeder(collections);
+        switch (sub)
+        {
+            case "list":
+            {
+                var collection = collections.LoadCollections()
+                    .FirstOrDefault(c => c.Name == AcceptanceProfiles.CollectionName);
+                var installed = collection == null
+                    ? []
+                    : collections.LoadTasks(collection.Id).Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+                foreach (var profile in AcceptanceProfiles.All())
+                    output.WriteLine($"{(installed.Contains(profile.Id) ? "installed" : "missing"),-10} {profile.Name}");
+                return RunnerExitCode.Success;
+            }
+
+            case "seed":
+            {
+                var report = seeder.Seed();
+                if (report.Added.Count > 0) output.WriteLine($"Added: {string.Join(", ", report.Added)}");
+                if (report.Kept.Count > 0) output.WriteLine($"Left alone: {string.Join(", ", report.Kept)}");
+                if (report.Added.Count == 0 && report.Kept.Count == 0) output.WriteLine("Nothing to do.");
+                return RunnerExitCode.Success;
+            }
+
+            default:
+                output.WriteLine($"error: unknown profiles command '{sub}'");
+                return RunnerExitCode.BadArguments;
+        }
+    }
+
     private static string Describe(DemoState state) => state switch
     {
         DemoState.Missing => "missing",
@@ -882,6 +924,11 @@ public sealed class RunnerCliDispatcher
           demos seed                    write any example that is missing; refresh untouched ones
           demos regenerate              put EVERY example back to the shipped version, edits and
                                         all; move or duplicate one out of Demos to keep it
+
+          profiles list                 the acceptance scenarios, and whether they are installed
+          profiles seed                 install any that are missing, into "Acceptance". These run
+                                        against real sites, so they are never seeded on launch and
+                                        never refreshed — adapt them and they stay adapted
           --help                        this text
 
         Exit codes: 0 success, 1 a run failed, 2 fault, 3 bad arguments.

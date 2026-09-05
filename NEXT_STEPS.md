@@ -1352,6 +1352,46 @@ the handler's name. The name appears again where the event is subscribed, and sl
 reads an empty body and cheerfully finds no cases at all - a checker that passes because it looked
 in the wrong place is worse than no checker.
 
+### Phase 29 - three scenarios against sites nobody here controls (2026-09-04)
+
+Everything checked until now runs against pages this repo also generates, which is what makes a
+failure mean something: a demo breaking means Automata broke. The acceptance scenarios are the
+opposite kind of thing, and the difference decides everything about how they are built.
+
+**They are not demos, and they are not in the green bar.** `automata-runner profiles seed` installs
+them into a collection called "Acceptance", on request and never on launch, and
+`tools/verify-live.mjs` refuses to do anything without `--live`. A Google redesign is not a
+regression in this repo, and a number that cannot tell those apart is worth less than no number - so
+the live suite is written to be read rather than counted, and prints the titles it collected.
+
+Unlike Demos, **a profile is only ever added, never refreshed**. There is no hash and no
+regenerate, because a profile is a starting point you are meant to adapt - re-record its sign-in,
+point it at your own provider, tighten a selector after a site moved - and nothing here is entitled
+to decide your version is wrong. Seeding matches on ID rather than name, so a profile you renamed is
+still that profile and does not come back as a second copy.
+
+The mail scenario is the one that needs an account, so where it goes and who it signs in as come
+from `AUTOMATA_MAIL_URL` / `_USER` / `_PASS` rather than from the task. A task file is something you
+export and hand to somebody, and a password written into one would travel with it. That also makes
+it the only place `BindingKind.EnvVar` is demonstrated - it had been exempt in `DemoCoverageTests`
+for the honest reason that no offline example could show it. Without credentials the suite reports
+it **skipped, naming what is missing**, which is not a failure.
+
+Two things the first live run found, which is the entire argument for having one:
+
+- **A wait targets ONE element.** The Bing profile waited on `li.b_algo`, which matches every result
+  on the page; the resolver refused it as ambiguous, exactly as it should, and the run failed in a
+  way that looked like Bing had changed. It waits on the results list now, and a test keeps every
+  profile's target selectors singular.
+- **Self-healing repaired the Google search box into something worse.** The box matched by name, so
+  the fingerprint was refreshed - and what got written back was `id: "ti6dpd"`, a generated string
+  that will be different on the next page load, plus a generated class `gLFyf`. Neither is caught by
+  today's reject patterns (`/\d{4,}|^ember|^radix|^:r/` and `/^css-|^sc-|[0-9a-f]{6,}/`), so the
+  repair is not just useless, it is worse than the recording it replaced and it rewrites the file on
+  every run. **That is phase 30's work, and this is how it was found.** So the live suite reports
+  what a heal WROTE rather than merely that one happened - "a step self-healed" reads like good news
+  and this one was not.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

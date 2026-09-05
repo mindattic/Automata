@@ -199,6 +199,13 @@ Beyond the unit tests, three acceptance harnesses drive the real app and the rea
 `tools/verify-demos.mjs` (every generated example, run in a browser), and `tools/verify-shop.mjs`
 (the harvest-and-loop total, checked three ways against the pages themselves).
 
+A fourth is deliberately outside that set. `tools/verify-live.mjs --live` runs the **acceptance
+profiles** — a Google search, a Bing search and a webmail inbox — against the real sites, after
+`automata-runner profiles seed` installs them. It is never part of the green bar, because a search
+engine redesigning itself is not a regression in this repo and a check that cannot tell those apart
+is worth less than none. The mail profile reads its account from `AUTOMATA_MAIL_URL`,
+`AUTOMATA_MAIL_USER` and `AUTOMATA_MAIL_PASS`, and skips itself by name when they are not set.
+
 Known limitations: closed shadow roots and CROSS-origin iframes are unreachable — the page cannot
 see into either, so reaching them needs per-frame evaluation over CDP rather than one script in the
 top document. Open shadow roots and same-origin iframes are resolved into. Recording still happens

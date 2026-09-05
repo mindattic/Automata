@@ -34,7 +34,10 @@ public class DemoCoverageTests
     /// <see cref="BindingKind.EnvVar"/>: its whole point is a value that is NOT in the store, read
     /// from the machine at run time. A seeded example could only demonstrate it by depending on a
     /// variable the user has not set, which would ship an example that fails on every fresh
-    /// install. The editor offers it and the resolver reads it; there is nowhere honest to show it.
+    /// install. The editor offers it and the resolver reads it; there is nowhere honest to show it
+    /// HERE. The webmail acceptance profile does show it - it is where a mailbox password has to
+    /// come from - which is exactly why that one is seeded on request rather than on launch, and
+    /// why <see cref="AcceptanceProfileTests"/> asserts the binding rather than this file.
     /// </para>
     private static readonly HashSet<object> NotDemonstrable = [WaitMode.UntilSignal, BindingKind.EnvVar];
 

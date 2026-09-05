@@ -364,6 +364,48 @@ public class RunnerCliDispatcherTests
         });
     }
 
+    // ---- acceptance profiles ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Never on launch, only when asked: these run against sites nobody here controls, so putting
+    /// them in everyone's workspace would hand someone three tasks that can fail for reasons that
+    /// have nothing to do with this repo.
+    /// </summary>
+    [Test]
+    public async Task ProfilesAreNotInstalledUntilTheyAreAskedFor()
+    {
+        Assert.That(await Dispatcher().DispatchAsync(["profiles", "list"]), Is.EqualTo(RunnerExitCode.Success));
+        Assert.That(Written, Does.Contain("missing"));
+        Assert.That(collections.LoadCollections().Any(c => c.Name == "Acceptance"), Is.False);
+
+        Assert.That(await Dispatcher().DispatchAsync(["profiles", "seed"]), Is.EqualTo(RunnerExitCode.Success));
+        Assert.That(Written, Does.Contain("Added:"));
+
+        output = new StringWriter();
+        await Dispatcher().DispatchAsync(["profiles", "list"]);
+        Assert.That(Written, Does.Contain("installed"));
+        Assert.That(Written, Does.Not.Contain("missing"));
+    }
+
+    [Test]
+    public async Task SeedingProfilesTwiceSaysItLeftThemAlone()
+    {
+        await Dispatcher().DispatchAsync(["profiles", "seed"]);
+        output = new StringWriter();
+
+        Assert.That(await Dispatcher().DispatchAsync(["profiles", "seed"]), Is.EqualTo(RunnerExitCode.Success));
+        Assert.That(Written, Does.Contain("Left alone:"));
+        Assert.That(Written, Does.Not.Contain("Added:"));
+    }
+
+    [Test]
+    public async Task AnUnknownProfilesCommandIsRejected()
+    {
+        Assert.That(await Dispatcher().DispatchAsync(["profiles", "frobnicate"]),
+            Is.EqualTo(RunnerExitCode.BadArguments));
+        Assert.That(Written, Does.Contain("unknown profiles command"));
+    }
+
     // ---- status --------------------------------------------------------------------------------
 
     [Test]
