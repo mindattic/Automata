@@ -153,8 +153,27 @@ public static class DatasetIO
         foreach (var row in incoming) AppendRow(sb, columns, row);
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        if (rewriteAll) File.WriteAllText(path, sb.ToString());
-        else File.AppendAllText(path, sb.ToString());
+        if (rewriteAll)
+        {
+            File.WriteAllText(path, sb.ToString());
+            return;
+        }
+
+        // A file THIS code wrote always ends in a newline. One a person made — exported from a
+        // spreadsheet, saved from an editor — very often does not, and appending straight onto it
+        // welds the first new row to the last existing one and loses them both.
+        if (LacksTrailingNewline(path)) File.AppendAllText(path, "\n");
+        File.AppendAllText(path, sb.ToString());
+    }
+
+    /// <summary>Whether the last byte of an existing, non-empty file is something other than a
+    /// line feed. Reads one byte rather than the file, because this runs before every append.</summary>
+    private static bool LacksTrailingNewline(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (stream.Length == 0) return false;
+        stream.Seek(-1, SeekOrigin.End);
+        return stream.ReadByte() != '\n';
     }
 
     private static void AppendRow(StringBuilder sb, List<string> columns, IReadOnlyDictionary<string, string> row)

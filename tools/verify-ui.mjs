@@ -1726,6 +1726,14 @@ async function main() {
       await waitFor(async () => await panelPage.locator('#editor details.target').count() === 1,
         { timeoutMs: 5000, label: 'the target box to appear for a condition wait' });
 
+      // A wait must have an end, and the end has to be on screen. The editor used to write no
+      // timeout at all, which the engine read as "poll forever" — a run that neither finished nor
+      // said why, holding its browser until somebody noticed.
+      await panelPage.locator('#ed-wait-timeout').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-wait-poll').waitFor({ state: 'visible', timeout: 10000 });
+      assertTrue(Number(await panelPage.locator('#ed-wait-timeout').inputValue()) > 0,
+        'a condition wait must offer a timeout, already filled in');
+
       // The declared output is what makes the reading nameable — the binding picker enumerates
       // declared outputs and nothing else, so a wait that published nothing could not be asked
       // about even by itself.
@@ -1734,6 +1742,16 @@ async function main() {
       const saved = JSON.parse(readFileSync(taskFile, 'utf8'));
       assertEqual(JSON.stringify((saved.steps[0].outputs || []).map((o) => o.name)), '["value"]',
         'a condition wait must declare the reading it publishes');
+      assertTrue(saved.steps[0].wait.timeoutMs > 0,
+        'the wait that reached disk has no timeout on it, so it would poll forever');
+      assertTrue(saved.steps[0].wait.pollMs > 0,
+        'the wait that reached disk has no poll interval on it');
+
+      // And a number typed here is the number that runs.
+      await panelPage.locator('#ed-wait-timeout').fill('45000');
+      await panelPage.locator('#ed-wait-timeout').dispatchEvent('change');
+      await waitFor(() => JSON.parse(readFileSync(taskFile, 'utf8')).steps[0].wait.timeoutMs === 45000,
+        { timeoutMs: 5000, label: 'an edited give-up time to reach disk' });
 
       // And the picker offers it. Source-read rather than clicked open: the option is built by
       // sourcesFor, and what matters is that a wait with a target is the one step whose own output

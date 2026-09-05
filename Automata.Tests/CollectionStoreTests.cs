@@ -416,4 +416,62 @@ public class CollectionStoreTests
         Assert.That(tasks.Select(t => t.Name), Is.EqualTo(new[] { "Beta", "Alpha", "AAA stray" }));
     }
 
+    /// <summary>
+    /// Deleting a task tidies the order of the collection it was actually IN. The remembered
+    /// path was believed regardless of which folder was being asked about, so a delete could
+    /// match on the first collection it walked, remove the right file and then clean the wrong
+    /// manifest — leaving the real collection ordering a task that no longer existed.
+    /// </summary>
+    [Test]
+    public void DeleteTask_TidiesTheOrderOfTheCollectionTheTaskWasActuallyIn()
+    {
+        var first = store.CreateCollection("Aaa first");
+        var second = store.CreateCollection("Bbb second");
+
+        // A task in each, so the delete has to pick the right one.
+        var decoy = NewTask(first.Id, "Decoy");
+        store.SaveTask(decoy);
+        var doomed = NewTask(second.Id, "Doomed");
+        store.SaveTask(doomed);
+
+        // The second save is what puts the doomed task's path into the store's memory — the first
+        // one wrote a file that was not there to be found yet. Editing a task twice is the ordinary
+        // case, and it is the case the delete below used to get wrong. Its NAME stays put, because
+        // a rename moves the file and the memory of the old path falls away with it.
+        doomed.StartUrl = "https://edited.example";
+        store.SaveTask(doomed);
+
+        store.DeleteTask(doomed.Id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.GetTask(doomed.Id), Is.Null, "the task itself is gone");
+            Assert.That(store.GetCollection(second.Id)!.TaskOrder, Does.Not.Contain(doomed.Id),
+                "and its own collection no longer orders an id that points at nothing");
+            Assert.That(store.GetCollection(first.Id)!.TaskOrder, Is.EqualTo(new[] { decoy.Id }),
+                "while the other collection is left exactly as it was");
+        });
+    }
+
+    /// <summary>The same confusion the other way round: a save must not find "its" file in
+    /// somebody else's folder just because that is where it last saw it.</summary>
+    [Test]
+    public void SavingATaskAfterItMoved_LeavesNoCopyBehindInTheOldCollection()
+    {
+        var from = store.CreateCollection("From");
+        var to = store.CreateCollection("To");
+        var task = NewTask(from.Id, "Traveller");
+        store.SaveTask(task);
+
+        var moved = store.MoveTask(task.Id, to.Id);
+        moved.Name = "Traveller renamed";
+        store.SaveTask(moved);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.LoadTasks(from.Id), Is.Empty, "nothing is left in the old collection");
+            Assert.That(store.LoadTasks(to.Id).Select(t => t.Name),
+                Is.EqualTo(new[] { "Traveller renamed" }));
+        });
+    }
 }

@@ -310,10 +310,20 @@ public static class BrowserActions
             var raw = await browser.EvalAsync(script, ct);
             if (!IsWaitingOnFrames(raw)) return raw;
             if (Environment.TickCount64 + FrameActPollMs > deadline)
+            {
+                // Giving up leaves a slot in the page that the frame's answer will eventually land
+                // in, keyed by what was asked. Left there, the NEXT action with the same body is
+                // handed this one's stale result instead of its own — so the slot goes first.
+                await browser.EvalAsync(ForgetForwardedActionJs, ct);
                 return """{"ok":false,"error":"the frame holding the element never answered"}""";
+            }
             await Task.Delay(FrameActPollMs, ct);
         }
     }
+
+    /// <summary>Drops the pending forwarded action, so a later one cannot inherit its answer.</summary>
+    private const string ForgetForwardedActionJs =
+        "(function(){ window.__automataDeepAct = null; return '{}'; })()";
 
     /// <summary>Whether a result is "no answer yet" rather than an answer.</summary>
     private static bool IsWaitingOnFrames(string raw)

@@ -213,6 +213,16 @@ internal sealed class ReplayRunState
         foreach (var (name, json) in Rows) child.Rows[name] = json;
         foreach (var taskId in TaskStack) child.TaskStack.Add(taskId);
 
+        // The task's inputs come with the row, and so does the run's zoom. A loop is a PLACE
+        // inside a task, not a task of its own: a step that could read an input or was running at
+        // 50% the line before the loop must still be able to inside it. Without this a binding to
+        // an input failed with "nothing supplied it" for no reason the author could see, and the
+        // first navigate in a loop quietly went back to 100%.
+        child.inputScopes.Clear();
+        foreach (var scope in inputScopes)
+            child.inputScopes.Add(new Dictionary<string, string>(scope, StringComparer.OrdinalIgnoreCase));
+        child.ZoomPercent = ZoomPercent;
+
         // Before the columns, so a dataset that really has a column called "#" overrides it. The
         // row's own data is what the author is looking at; the position is this loop's bookkeeping,
         // and losing an argument to a real column is the right way round.
@@ -234,11 +244,20 @@ internal sealed class ReplayRunState
         return child;
     }
 
-    /// <summary>Folds a finished row's tallies back into the loop that spawned it.</summary>
+    /// <summary>
+    /// Folds a finished row's tallies back into the loop that spawned it.
+    /// <para>
+    /// The zoom comes back too, and only the zoom. Rows deliberately leave the page where the next
+    /// one starts from — that is what makes a loop worth writing — and the zoom is part of that
+    /// page. A row's OUTPUTS stay its own, which is the isolation <see cref="ForkForRow"/> exists
+    /// for; a zoom is not a value anybody bound to, it is the size the browser is now.
+    /// </para>
+    /// </summary>
     public void MergeFrom(ReplayRunState child)
     {
         Passed += child.Passed;
         Healed += child.Healed;
+        ZoomPercent = child.ZoomPercent;
         if (child.Failed) Failed = true;
         if (child.Stop) Stop = true;
     }

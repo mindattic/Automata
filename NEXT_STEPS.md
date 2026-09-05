@@ -1784,6 +1784,66 @@ same eight sites finds no authored name being thrown away on MDN, Hacker News or
 Wikipedia, and only vowel-less abbreviations on Bing - which the two-signal rule has always
 sacrificed on purpose, and which make poor identity anyway.
 
+### A bug hunt through what phases 1-35 left behind (2026-09-05)
+
+Not a phase. Nothing new was added; the whole working tree was read looking for defects, and nine
+were found. Two of them were the interesting kind — features that each worked when tested alone and
+were broken the moment they met.
+
+**A loop could not see the task's inputs.** `ReplayRunState.ForkForRow` builds a child scope per
+row and copies everything a row can read: outputs, variables, the row itself, the task stack. It
+did not copy the INPUT stack, so `inputScopes` in the child started as one empty dictionary and
+every `{{input.term}}` inside a `forEach` came back "nothing supplied the input 'term', and it has
+no default" — about a value that had been supplied. Inputs (phase 16) and loops (phase 9) were each
+tested on their own and never together, which is exactly the seam this kind of bug lives in. Fixed
+by copying the whole stack, so a call three tasks deep still sees its own frame and not its
+caller's.
+
+**And it could not see the run's zoom.** Same fork, same omission. A `setZoom` step (phase 14)
+holds its percentage on the run rather than the page, because navigating resets a page to 100% and
+the engine re-applies the run's zoom afterwards — but a row that started life at 100% had nothing
+to re-apply, so the first navigate inside a loop silently undid the zoom and every click after it
+landed somewhere else. The reverse leaked too: a zoom set INSIDE a loop was thrown away with the
+row. The zoom now goes both ways, and only the zoom — outputs stay a row's own, which is the
+isolation the fork exists for.
+
+**A wait on a condition never gave up.** `WaitSpec.TimeoutMs` was `int?` with no default, the
+engine read "no timeout" as "poll forever", and the editor never wrote one — there was no field for
+it. So every wait-until-a-condition authored in the app (phase 33) was an unbounded loop; only the
+generated examples escaped, because `DemoTasks` hardcodes 15 seconds. The same reasoning that keeps
+`untilSignal` out of the editor ("offering it would offer a wait that never ends") applied to the
+mode next to it and nobody noticed. Now: a default on the model, a floor in the engine for JSON
+that predates it, and two boxes in the editor — give-up time and poll interval — so the number that
+runs is on screen where it can be argued with.
+
+**Resuming into an `if` broke the `otherwise` after it.** A resumed run fast-forwards to the parked
+wait without re-evaluating anything on the way, which is right — there is no page left to decide a
+condition against. But the verdict is what an `else` pairs with, so the resumed walk reached the
+`otherwise`, found no `if` in front of it, and failed the run over a branch decided hours earlier.
+The verdict is now written down on the way past: the walk got inside those children, so the
+condition held.
+
+**A delete tidied the wrong collection's ordering.** `FindTaskFileById(dir, id)` believed its cache
+without checking the remembered path was in `dir` — and the method's own cache-eviction code, three
+lines below, already reasoned about exactly that. So `DeleteTask`, which walks every collection
+folder in turn, could match on the first one, delete the right file and then clean the wrong
+manifest, leaving the real collection ordering an id that pointed at nothing.
+
+The other four are smaller: appending to a CSV that does not end in a newline (a spreadsheet
+export, not one this code wrote) welded the first new row onto the last existing one; an
+`extractAll` step with no spec took the run down with a `NullReferenceException` where every
+sibling case reports what is missing; `ExclusiveFileLock.Dispose` could leave its in-process gate
+held forever if the handle threw on close, and a share denial arriving after the budget escaped as
+a raw `UnauthorizedAccessException` instead of the sentence explaining it; and a forwarded frame
+action the host gave up on left its answer in the page for the next identical action to inherit.
+
+Sixteen tests came with them, and each was run against the unfixed code first — seven engine and
+store cases failed as predicted, and the editor check took `verify-ui` to 83/84 before the fix went
+back. A test that has never failed has not been shown to test anything.
+
+Green at the end of it: **511 NUnit tests**, `verify-ui` 84/84, `verify-js` 13/13, `verify-demos`
+all pass, `verify-shop` all pass, `verify-live --live` all pass.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

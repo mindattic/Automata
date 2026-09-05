@@ -378,7 +378,12 @@ public sealed class CollectionStore
 
     private string? FindTaskFileById(string dir, string taskId)
     {
+        // The remembered path has to be in THIS directory, not merely still hold this task. The
+        // question is "where is this task's file inside `dir`", and answering with a file in
+        // another collection is how DeleteTask came to delete the right file and then tidy the
+        // wrong collection's TaskOrder, leaving an id behind that pointed at nothing.
         if (taskFileById.TryGetValue(taskId, out var remembered)
+            && PathsEqual(Path.GetDirectoryName(remembered), dir)
             && ReadJson<TaskDefinition>(remembered)?.Id == taskId)
         {
             return remembered;

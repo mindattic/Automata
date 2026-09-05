@@ -258,4 +258,42 @@ public class DatasetIOTests
         Assert.That(DatasetIO.ReadCsv(Path_("nope.csv")), Is.Empty);
         Assert.That(DatasetIO.ReadJsonArray(Path_("nope.json")), Is.Empty);
     }
+
+    /// <summary>
+    /// A CSV this code wrote always ends in a newline; one exported from a spreadsheet very often
+    /// does not. Appending straight onto such a file welded the first new row onto the last
+    /// existing one, losing both — and the file still parsed, so nothing said so.
+    /// </summary>
+    [Test]
+    public void Append_ToAFileWithNoTrailingNewline_DoesNotWeldOntoItsLastRow()
+    {
+        var path = Path_("hand-made.csv");
+        File.WriteAllText(path, "sku,price\nWT-100,19.99");
+
+        DatasetIO.Write(path,
+            [new Dictionary<string, string> { ["sku"] = "WT-200", ["price"] = "24.50" }],
+            append: true);
+
+        var rows = DatasetIO.Read(path);
+        Assert.Multiple(() =>
+        {
+            Assert.That(rows, Has.Count.EqualTo(2));
+            Assert.That(rows[0]["sku"], Is.EqualTo("WT-100"));
+            Assert.That(rows[1]["sku"], Is.EqualTo("WT-200"));
+            Assert.That(rows[1]["price"], Is.EqualTo("24.50"));
+        });
+    }
+
+    /// <summary>And the ordinary case is untouched: a file this code wrote already ends in one,
+    /// so nothing gains a blank row.</summary>
+    [Test]
+    public void Append_ToAFileThisCodeWrote_AddsNoBlankRow()
+    {
+        var path = Path_("ours.csv");
+        DatasetIO.Write(path, [new Dictionary<string, string> { ["sku"] = "WT-100" }], append: false);
+        DatasetIO.Write(path, [new Dictionary<string, string> { ["sku"] = "WT-200" }], append: true);
+
+        Assert.That(DatasetIO.Read(path).Select(r => r["sku"]),
+            Is.EqualTo(new[] { "WT-100", "WT-200" }));
+    }
 }

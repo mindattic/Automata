@@ -38,8 +38,27 @@ public sealed class WaitSpec
 
     public string? SignalName { get; set; }
 
-    /// <summary>Overall cap for a condition/signal wait, in milliseconds.</summary>
-    public int? TimeoutMs { get; set; }
+    /// <summary>
+    /// Overall cap for a condition/signal wait, in milliseconds.
+    /// <para>
+    /// Defaulted rather than left open, for the same reason <see cref="WaitMode.UntilSignal"/> is
+    /// not offered in the editor: a wait with no end is a run that never finishes and never says
+    /// why. A condition that is going to hold holds long before this; one that is not is a mistake
+    /// in the task, and the step reports what it last saw instead of holding a browser forever.
+    /// </para>
+    /// </summary>
+    public int? TimeoutMs { get; set; } = DefaultConditionTimeoutMs;
+
+    /// <summary>The cap a condition wait runs to when nothing said otherwise.</summary>
+    public const int DefaultConditionTimeoutMs = 300_000;
+
+    /// <summary>
+    /// The cap a condition wait actually runs to. Null or a non-positive number means nobody chose
+    /// one — a task saved before this had a default, or hand-edited JSON — and the answer is the
+    /// default rather than "forever".
+    /// </summary>
+    public static int EffectiveTimeoutMs(int? timeoutMs) =>
+        timeoutMs is > 0 ? timeoutMs.Value : DefaultConditionTimeoutMs;
 
     /// <summary>
     /// A wait longer than this checkpoints the run and closes its browser instead of holding one

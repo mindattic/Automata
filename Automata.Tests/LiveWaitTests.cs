@@ -271,6 +271,55 @@ public class LiveWaitTests
             Is.True, "the value the wait saw did not reach the step after it");
     }
 
+    // ---- a wait always has an end ----------------------------------------------------------------
+    //
+    // The editor never wrote a timeout, so every wait-until-a-condition authored in the app arrived
+    // here with none — and the engine read that as "poll forever". A condition that was never going
+    // to hold produced a run that neither finished nor said why, holding its browser until somebody
+    // noticed. These pin the floor, in the one place both the engine and the editor read it from.
+
+    [Test]
+    public void AFreshWaitSpec_AlreadyHasAnEnd()
+    {
+        Assert.That(new WaitSpec().TimeoutMs, Is.EqualTo(WaitSpec.DefaultConditionTimeoutMs));
+    }
+
+    [TestCase(null)]
+    [TestCase(0)]
+    [TestCase(-1)]
+    public void AWaitNobodyGaveATimeout_GivesUpAtTheDefaultRatherThanNever(int? stated)
+    {
+        Assert.That(WaitSpec.EffectiveTimeoutMs(stated), Is.EqualTo(WaitSpec.DefaultConditionTimeoutMs));
+    }
+
+    [Test]
+    public void AWaitThatWasGivenATimeout_KeepsIt()
+    {
+        Assert.That(WaitSpec.EffectiveTimeoutMs(1234), Is.EqualTo(1234));
+    }
+
+    /// <summary>The editor writes the same number the engine falls back to, so a step authored in
+    /// the app and one hand-edited out of it wait the same length.</summary>
+    [Test]
+    public void TheEditorAndTheEngineAgreeOnHowLongAWaitRunsForByDefault()
+    {
+        var core = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            RepoRoot(), "Automata.App", "wwwroot", "core.js"));
+
+        Assert.That(core, Does.Contain(
+            $"export const DEFAULT_WAIT_TIMEOUT_MS = {WaitSpec.DefaultConditionTimeoutMs};"));
+    }
+
+    /// <summary>Walks up from the test binary to the folder holding the solution.</summary>
+    private static string RepoRoot()
+    {
+        var dir = new System.IO.DirectoryInfo(TestContext.CurrentContext.TestDirectory);
+        while (dir != null && !System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "Automata.slnx")))
+            dir = dir.Parent;
+        Assert.That(dir, Is.Not.Null, "could not find the repository root from the test directory");
+        return dir!.FullName;
+    }
+
     // ---- the two places the same fact is written down --------------------------------------------
 
     /// <summary>

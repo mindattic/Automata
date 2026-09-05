@@ -1125,6 +1125,220 @@ public class WorkflowEngineTests
         Assert.That(datasets.Read("seen.csv").Select(r => r["term"]), Is.EqualTo(new[] { "wolf", "otter" }));
     }
 
+    /// <summary>
+    /// A loop is a place inside a task, not a task of its own. A binding to an input resolved fine
+    /// the line before the loop and failed inside it, because the forked row scope started with no
+    /// inputs at all — so the step reported "nothing supplied it" about a value that was supplied.
+    /// </summary>
+    [Test]
+    public async Task TaskInput_IsStillReadableInsideAForEach()
+    {
+        datasets.Write("skus.csv", [
+            new Dictionary<string, string> { ["sku"] = "aaa" },
+            new Dictionary<string, string> { ["sku"] = "bbb" },
+        ], append: false);
+
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Inputs = [new TaskInput { Name = "term", Default = "wolf" }],
+            Steps =
+            [
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach, Label = "Each sku",
+                    ForEach = new ForEachSpec
+                    {
+                        Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "skus.csv" },
+                    },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "save", Action = StepAction.WriteDataset,
+                            WriteDataset = new DatasetWriteSpec
+                            {
+                                DatasetName = "seen.csv",
+                                Append = true,
+                                Columns = new Dictionary<string, BindingRef>
+                                {
+                                    ["sku"] = new() { Kind = BindingKind.DatasetColumn, ColumnName = "sku" },
+                                    ["term"] = new() { Kind = BindingKind.TaskInput, ParameterName = "term" },
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var events = await Run(task, Browser());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+            Assert.That(datasets.Read("seen.csv").Select(r => r["term"]),
+                Is.EqualTo(new[] { "wolf", "wolf" }), "every row sees the input the run started with");
+        });
+    }
+
+    /// <summary>
+    /// A called task's inputs are its own, and a loop inside it must see THOSE rather than the
+    /// caller's — the row scope copies the whole stack, not merely the outermost frame.
+    /// </summary>
+    [Test]
+    public async Task AForEachInsideACalledTask_SeesTheCalleesOwnInputs()
+    {
+        datasets.Write("one.csv", [new Dictionary<string, string> { ["n"] = "1" }], append: false);
+
+        var callee = new TaskDefinition
+        {
+            Id = "callee", Name = "Callee",
+            Inputs = [new TaskInput { Name = "term", Default = "fallback" }],
+            Steps =
+            [
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach,
+                    ForEach = new ForEachSpec
+                    {
+                        Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "one.csv" },
+                    },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "save", Action = StepAction.WriteDataset,
+                            WriteDataset = new DatasetWriteSpec
+                            {
+                                DatasetName = "seen.csv",
+                                Append = true,
+                                Columns = new Dictionary<string, BindingRef>
+                                {
+                                    ["term"] = new() { Kind = BindingKind.TaskInput, ParameterName = "term" },
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+        collections.SaveTask(callee);
+
+        var caller = new TaskDefinition
+        {
+            Id = "caller", Name = "Caller",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "call", Action = StepAction.RunTask, RunTaskId = "callee",
+                    RunTaskInputs = new Dictionary<string, BindingRef>
+                    {
+                        ["term"] = new() { Kind = BindingKind.Literal, Literal = "handed-over" },
+                    },
+                },
+            ],
+        };
+
+        await Run(caller, Browser());
+
+        Assert.That(datasets.Read("seen.csv").Single()["term"], Is.EqualTo("handed-over"));
+    }
+
+    // ---- zoom is a property of the run, not of one page --------------------------------------
+
+    /// <summary>A zoom set before a loop still applies inside it. Navigating resets a page to 100%
+    /// and the engine re-applies the run's zoom afterwards — but a row that started life at 100%
+    /// had nothing to re-apply, so the first navigate inside a loop silently undid it.</summary>
+    [Test]
+    public async Task Zoom_SetBeforeALoop_IsReappliedAfterANavigateInsideIt()
+    {
+        datasets.Write("skus.csv", [new Dictionary<string, string> { ["sku"] = "aaa" }], append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step { Id = "zoom", Action = StepAction.SetZoom, Label = "Zoom out", ZoomPercent = 50 },
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach,
+                    ForEach = new ForEachSpec
+                    {
+                        Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "skus.csv" },
+                    },
+                    Children = [Nav("inside")],
+                },
+            ],
+        };
+
+        await Run(task, browser);
+
+        var zooms = browser.Calls.Where(c => c.Method == "SetZoom").Select(c => c.Args).ToList();
+        Assert.That(zooms, Is.EqualTo(new[] { "0.5", "0.5" }),
+            "once for the step, once to restore it after the navigate inside the loop");
+    }
+
+    /// <summary>And a zoom set INSIDE a loop outlives it, because rows deliberately leave the page
+    /// where the next thing starts from.</summary>
+    [Test]
+    public async Task Zoom_SetInsideALoop_IsStillInForceAfterIt()
+    {
+        datasets.Write("skus.csv", [new Dictionary<string, string> { ["sku"] = "aaa" }], append: false);
+
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach,
+                    ForEach = new ForEachSpec
+                    {
+                        Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "skus.csv" },
+                    },
+                    Children = [new Step { Id = "zoom", Action = StepAction.SetZoom, ZoomPercent = 50 }],
+                },
+                Nav("after"),
+            ],
+        };
+
+        await Run(task, browser);
+
+        var zooms = browser.Calls.Where(c => c.Method == "SetZoom").Select(c => c.Args).ToList();
+        Assert.That(zooms, Is.EqualTo(new[] { "0.5", "0.5" }),
+            "the navigate after the loop restores what the loop set, rather than leaving it at 100%");
+    }
+
+    // ---- a step whose spec never got filled in ------------------------------------------------
+
+    /// <summary>Every other control-flow step says what is missing; this one dereferenced a null
+    /// spec and took the whole run down with a NullReferenceException instead.</summary>
+    [Test]
+    public async Task ExtractAll_WithNoSpec_FailsTheStepRatherThanCrashingTheRun()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps = [new Step { Id = "harvest", Action = StepAction.ExtractAll, Label = "Harvest" }],
+        };
+
+        var events = await Run(task, Browser());
+
+        var completed = events.OfType<StepEvent.StepCompleted>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed.Status, Is.EqualTo(StepStatus.Failed));
+            Assert.That(completed.Message, Does.Contain("dataset"));
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.False);
+        });
+    }
+
     // ---- ragged data, presence, and otherwise -------------------------------------------------------
 
     /// <summary>

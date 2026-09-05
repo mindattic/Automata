@@ -49,7 +49,7 @@ public class ReplayEngine
         return read.Ok ? read.Value ?? "" : null;
     }
 
-    /// <summary>The range a browser's own zoom menu offers.    /// <summary>The range a browser's own zoom menu offers. Outside it a step is far more likely
+    /// <summary>The range a browser's own zoom menu offers. Outside it a step is far more likely
     /// to be a typo — 6 for 60 — than an intention, and a page at 6% is not automatable.</summary>
     internal const int MinZoomPercent = 25;
     internal const int MaxZoomPercent = 500;

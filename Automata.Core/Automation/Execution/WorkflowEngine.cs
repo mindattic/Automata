@@ -266,6 +266,12 @@ public sealed partial class WorkflowEngine
                 state.Stop = true;
                 yield break;
             }
+            // The run parked somewhere INSIDE this step, so if it is an `if` its condition held —
+            // that is the only way the walk got in there. Written down rather than re-evaluated,
+            // because an `otherwise` after it needs a verdict to be the other half of and there is
+            // no page left to decide one against.
+            if (step.Action == StepAction.If) state.IfVerdicts[step.Id] = true;
+
             await foreach (var evt in RunStepsAsync(step.Children, scope, state, walk, ct))
                 yield return evt;
             yield break;
@@ -690,7 +696,13 @@ public sealed partial class WorkflowEngine
             case StepAction.ExtractAll:
             {
                 var spec = step.Harvest;
-                var result = await HarvestRunner.RunAsync(scope.Browser, spec!, ct);
+                if (spec == null || string.IsNullOrWhiteSpace(spec.DatasetName))
+                {
+                    await foreach (var e in FailAsync(step, scope, state, "no dataset name set")) yield return e;
+                    yield break;
+                }
+
+                var result = await HarvestRunner.RunAsync(scope.Browser, spec, ct);
 
                 // A harvest that read nothing usable is a failure, not an empty success. Writing an
                 // empty dataset here would let the ForEach that consumes it loop zero times and
@@ -702,7 +714,7 @@ public sealed partial class WorkflowEngine
                     yield break;
                 }
 
-                datasets.Write(spec!.DatasetName, result.Rows, spec.Append);
+                datasets.Write(spec.DatasetName, result.Rows, spec.Append);
 
                 // Published so an `if` can branch on how much was found, and so a later step can
                 // name the dataset without the author retyping it.
@@ -738,7 +750,11 @@ public sealed partial class WorkflowEngine
                 }
 
                 var pollMs = Math.Max(50, spec.PollMs);
-                var deadline = spec.TimeoutMs is > 0 ? Environment.TickCount64 + spec.TimeoutMs.Value : (long?)null;
+                // Always bounded. A spec with no timeout on it — one saved before the default
+                // existed, or hand-edited — used to poll forever, which is a run that never
+                // finishes and never says why.
+                var timeoutMs = WaitSpec.EffectiveTimeoutMs(spec.TimeoutMs);
+                var deadline = Environment.TickCount64 + timeoutMs;
                 // A wait with a TARGET is watching the page; one without is re-asking a question
                 // about values the run already holds. Both are useful and they are not the same
                 // thing, so the presence of a target is what says which this is.
@@ -786,14 +802,14 @@ public sealed partial class WorkflowEngine
                             yield break;
                         }
                     }
-                    if (deadline != null && Environment.TickCount64 >= deadline)
+                    if (Environment.TickCount64 >= deadline)
                     {
                         // What it last saw, not just that it gave up: "still not met" alone leaves a
                         // person guessing between a selector that matched nothing and a value that
                         // never became the one they asked for.
                         var saw = live == null ? "" : $"; {DescribeTarget(live)} last read {lastRead}";
                         await foreach (var e in FailAsync(step, scope, state,
-                            $"condition still not met after {spec.TimeoutMs}ms{saw}")) yield return e;
+                            $"condition still not met after {timeoutMs}ms{saw}")) yield return e;
                         yield break;
                     }
                     await Task.Delay(pollMs, ct);

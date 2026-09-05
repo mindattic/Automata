@@ -94,8 +94,10 @@ public sealed class ExclusiveFileLock : IDisposable
             {
                 Thread.Sleep(20);
             }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                // Out of budget. Windows reports a share-mode denial either way round depending on
+                // how the other holder opened it, so both land here rather than only the one.
                 throw new IOException(
                     $"Timed out waiting for another process to finish writing '{targetPath}'. " +
                     "Another Automata run may still be working on it.", ex);
@@ -116,7 +118,10 @@ public sealed class ExclusiveFileLock : IDisposable
 
     public void Dispose()
     {
-        handle.Dispose();
-        gate.Release();
+        // The gate is released whatever the handle does. A file handle that throws on close is
+        // rare, but a gate never released is permanent: every later writer of that path in this
+        // process waits its full budget and then reports a timeout that will never clear.
+        try { handle.Dispose(); }
+        finally { gate.Release(); }
     }
 }

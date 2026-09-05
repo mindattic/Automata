@@ -415,6 +415,56 @@ public class ParkAndResumeTests
         Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
     }
 
+    /// <summary>
+    /// Resuming into an `if` skips its condition, which is right — but the verdict is what an
+    /// `otherwise` after it pairs with. Without one written down, the resumed run reached the
+    /// `otherwise` to find no `if` in front of it and failed the whole run over a branch that had
+    /// already been decided hours earlier.
+    /// </summary>
+    [Test]
+    public async Task Resuming_IntoAnIf_LeavesTheOtherwiseAfterItStillPaired()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "branch", Action = StepAction.If, Label = "If",
+                    Condition = new ConditionSpec
+                    {
+                        Left = new BindingRef { Kind = BindingKind.Literal, Literal = "" },
+                        Op = ConditionOp.NotEmpty,
+                    },
+                    Children = [LongWait("inner"), Nav("after")],
+                },
+                new Step
+                {
+                    Id = "otherwise", Action = StepAction.Else, Label = "Otherwise",
+                    PairedIfId = "branch",
+                    Children = [Nav("skipped")],
+                },
+            ],
+        };
+        var checkpoint = new ParkCheckpoint(
+            Midnight, "a wait", [0, 0], "inner", "Wait", [], new Dictionary<string, string>(), 1, 0);
+
+        var browser = Browser();
+        var events = await Run(task, browser, Options(), checkpoint);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+            Assert.That(NavigatedUrls(browser), Has.Count.EqualTo(1),
+                "the step after the wait runs; the otherwise branch does not, because the if held");
+            Assert.That(
+                events.OfType<StepEvent.StepCompleted>().Single(e => e.StepId == "otherwise").Message,
+                Does.Contain("substeps skipped"),
+                "the otherwise reports being skipped rather than failing for want of an if");
+        });
+    }
+
     [Test]
     public async Task Resuming_TheValuesFromBeforeTheWaitAreAvailableAgain()
     {

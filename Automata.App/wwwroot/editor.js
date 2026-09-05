@@ -3,7 +3,7 @@
 
 import {
     $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, locateStep,
-    ALL_ACTIONS, ACTION_LABEL,
+    ALL_ACTIONS, ACTION_LABEL, DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_WAIT_POLL_MS,
 } from './core.js';
 import { openConfirmModal } from './modal.js';
 import { addStepInside } from './tree.js';
@@ -217,7 +217,20 @@ export function renderEditor() {
                 : mode === 'untilCondition'
                 ? '<p class="hint">Give this step a target below to WATCH that element — it is'
                   + ' re-read on every poll. Without one, the condition only re-checks values the'
-                  + ' run has already captured, which cannot change while it waits.</p>'
+                  + ' run has already captured, which cannot change while it waits.</p>' +
+                  // Shown, and never blank. A wait with no end is a run that never finishes and
+                  // never says why, so the number it will actually give up at is on screen where
+                  // it can be argued with.
+                  '<div class="field"><span>Give up after</span>' +
+                  '<input type="number" id="ed-wait-timeout" min="1000"' +
+                  ' aria-label="Milliseconds before this wait gives up" value="' +
+                  esc(spec.timeoutMs > 0 ? spec.timeoutMs : DEFAULT_WAIT_TIMEOUT_MS) +
+                  '" /><span class="unit">ms</span></div>' +
+                  '<div class="field"><span>Check every</span>' +
+                  '<input type="number" id="ed-wait-poll" min="50"' +
+                  ' aria-label="Milliseconds between checks" value="' +
+                  esc(spec.pollMs > 0 ? spec.pollMs : DEFAULT_WAIT_POLL_MS) +
+                  '" /><span class="unit">ms</span></div>'
                 : '<div class="field"><span>Duration</span>' +
                   '<input type="number" id="ed-wait-ms" min="0" aria-label="Milliseconds to wait" value="' +
                   esc(spec.durationMs != null ? spec.durationMs : 1000) + '" /><span class="unit">ms</span></div>');
@@ -292,7 +305,12 @@ export function renderEditor() {
             var wait = Object.assign({}, step.wait || {}, { mode: mode });
             if (mode === 'untilCondition') {
                 // The condition itself is read by commitFlowFields below.
-                wait.pollMs = wait.pollMs || 2000;
+                var pollMs = parseInt(($('ed-wait-poll') || {}).value, 10);
+                wait.pollMs = pollMs > 0 ? pollMs : DEFAULT_WAIT_POLL_MS;
+                // Never null. Left unset this used to mean "poll forever", which is the one
+                // outcome a wait must not have — the run neither finishes nor says why.
+                var giveUpMs = parseInt(($('ed-wait-timeout') || {}).value, 10);
+                wait.timeoutMs = giveUpMs > 0 ? giveUpMs : DEFAULT_WAIT_TIMEOUT_MS;
                 // A watching wait publishes what it finally saw, so a later step can use the value
                 // rather than go and read it a second time. Declared here rather than left implicit
                 // because the binding picker enumerates declared outputs and nothing else.

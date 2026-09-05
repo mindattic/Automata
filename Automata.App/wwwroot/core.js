@@ -282,6 +282,15 @@ export const UNARY = ['notEmpty', 'empty', 'exists', 'notExists', 'isTrue', 'isF
 /// WorkflowEngine.LiveWaitOutput, and is the name that wait's own condition binds to.
 export const LIVE_WAIT_OUTPUT = 'value';
 
+/// What a condition wait gives up after when nobody chose a number. Matches
+/// WaitSpec.DefaultConditionTimeoutMs — the engine floors a missing or non-positive timeout to the
+/// same value, so a step saved here and a step hand-edited on disk end up waiting the same length.
+export const DEFAULT_WAIT_TIMEOUT_MS = 300000;
+
+/// How often a condition wait re-checks, when nobody chose. Shorter than the model's own default
+/// because a wait authored in front of a live page is one somebody is watching.
+export const DEFAULT_WAIT_POLL_MS = 2000;
+
 /// True when this step watches an element rather than re-asking about captured values: a wait on a
 /// condition, with a target, re-reads that target on every poll. It lives here rather than beside
 /// the other wait helpers because both the editor and the binding picker need it, and a shared
