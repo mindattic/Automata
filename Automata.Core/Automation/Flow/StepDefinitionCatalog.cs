@@ -53,6 +53,10 @@ public static class StepDefinitionCatalog
     // grammar unambiguous without needing a real parser.
     private const string Q = "\"([^\"]*)\"";
 
+    /// <summary>The output a watching wait publishes its live reading under. Must match
+    /// <c>WorkflowEngine.LiveWaitOutput</c>; a test asserts they are the same string.</summary>
+    internal const string LiveWaitOutput = "value";
+
     /// <summary>
     /// A bare reference: a captured value (<c>price</c>), the whole current row (<c>row</c>), or
     /// one of its columns (<c>row.sku</c>, <c>row.#</c>).
@@ -157,6 +161,39 @@ public static class StepDefinitionCatalog
                     DurationMs = FlowValues.DurationMs(int.Parse(m.Groups[1].Value), m.Groups[2].Value),
                 },
             })),
+
+            // Before the clock-time form, and for the same reason "I run task X from its start
+            // page" comes before "I run task X": both begin "I wait until", and the shorter one
+            // would match the front of this and leave the rest as an unrecognised tail.
+            Def($"I wait until {Q} says {Q}", $@"I wait until {Q} says {Q}", m =>
+            {
+                var step = Targeted(StepAction.Wait, m.Groups[1].Value,
+                    $"Wait until {m.Groups[1].Value} says '{m.Groups[2].Value}'");
+                // A target is what makes this a wait that WATCHES: the engine re-reads it every
+                // poll and publishes the reading under this step's own id, which is what the
+                // condition then compares. Without one the phrase would compile to a wait that
+                // re-checks a value nothing can change.
+                step.Outputs = [new OutputField { Name = LiveWaitOutput }];
+                step.Wait = new WaitSpec
+                {
+                    Mode = WaitMode.UntilCondition,
+                    PollMs = 500,
+                    TimeoutMs = 30_000,
+                    Condition = new ConditionSpec
+                    {
+                        Left = new BindingRef
+                        {
+                            Kind = BindingKind.StepOutput,
+                            SourceStepId = step.Id,
+                            OutputField = LiveWaitOutput,
+                            Label = "what this step reads from the page",
+                        },
+                        Op = ConditionOp.Equals,
+                        Right = new BindingRef { Kind = BindingKind.Literal, Literal = m.Groups[2].Value },
+                    },
+                };
+                return Draft(step);
+            }),
 
             Def($"I wait until <HH:mm> [{Q}]", @"I wait until (\d{1,2}:\d{2})(?:\s+" + Q + ")?", m => Draft(new Step
             {

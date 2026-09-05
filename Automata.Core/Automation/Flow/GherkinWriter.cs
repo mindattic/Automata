@@ -135,7 +135,7 @@ public static class GherkinWriter
             StepAction.AssertElement => $"{target} contains {value}",
             StepAction.ExtractText when step.Outputs is [{ Name: var name }, ..] && !string.IsNullOrWhiteSpace(name)
                 => $"I extract text from {target} as {name}",
-            StepAction.Wait => WaitPhrase(step),
+            StepAction.Wait => WaitPhrase(step, target),
             StepAction.If => GuardPhrase(step),
             StepAction.Else => "otherwise",
             StepAction.RunTask => "I run task " + FlowValues.Quote(RunTaskName(step))
@@ -145,7 +145,7 @@ public static class GherkinWriter
         };
     }
 
-    private static string? WaitPhrase(Step step)
+    private static string? WaitPhrase(Step step, string target)
     {
         var spec = step.Wait;
         if (spec == null) return null;
@@ -154,8 +154,28 @@ public static class GherkinWriter
             WaitMode.Duration => $"I wait {spec.DurationMs ?? 0}ms",
             WaitMode.UntilTimeOfDay when spec.TimeOfDay is { } t =>
                 $"I wait until {t:HH\\:mm}" + (string.IsNullOrWhiteSpace(spec.TimeZoneId) ? "" : " " + FlowValues.Quote(spec.TimeZoneId)),
+            WaitMode.UntilCondition => WatchPhrase(step, spec, target),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// A wait that WATCHES an element, said back the way it was written.
+    /// <para>
+    /// Only the plain shape has a phrase — a target, an equals, a literal — because that is the
+    /// shape the phrase can express without lying. A condition wait comparing two step outputs, or
+    /// asking whether something is greater than something else, still writes as
+    /// <c>&lt;no Gherkin form&gt;</c>: better to say a step cannot be written than to write one
+    /// that reads back as a different step.
+    /// </para>
+    /// </summary>
+    private static string? WatchPhrase(Step step, WaitSpec spec, string target)
+    {
+        if (step.Target == null || spec.Condition is not { Op: ConditionOp.Equals } condition) return null;
+        if (condition.Left.Kind != BindingKind.StepOutput || condition.Left.SourceStepId != step.Id) return null;
+        if (condition.Right is not { Kind: BindingKind.Literal } right || right.Literal == null) return null;
+
+        return $"I wait until {target} says {FlowValues.Quote(right.Literal)}";
     }
 
     private static string? GuardPhrase(Step step)

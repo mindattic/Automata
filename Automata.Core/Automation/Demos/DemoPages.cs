@@ -397,15 +397,17 @@ public static class DemoPages
         <head><meta charset="utf-8"><title>Automata demo — a page that takes its time</title>{{Css}}</head>
         <body>
           <h1>A page that takes its time</h1>
-          <p class="lede">The status settles after a moment, and the panel below does not exist
-             yet at all — it is added a second later.</p>
+          <p class="lede">The status goes through three states, the panel below does not exist yet
+             at all, and the last state change happens LONG after anything has read the page.</p>
           <div id="status" class="pending">starting</div>
           <div id="slot"></div>
           <script>
+            // Three states, not two, and the third one is the point. A run reads the status while
+            // it still says "working"; anything that then waits on the value it READ is waiting on
+            // a string that will never change again. Only a wait that goes back to the page sees
+            // "ready" arrive.
             setTimeout(function () {
-              var status = document.getElementById('status');
-              status.textContent = 'ready';
-              status.className = '';
+              document.getElementById('status').textContent = 'working';
             }, 300);
 
             setTimeout(function () {
@@ -415,6 +417,12 @@ public static class DemoPages
               late.textContent = 'The late panel is here.';
               document.getElementById('slot').appendChild(late);
             }, 1200);
+
+            setTimeout(function () {
+              var status = document.getElementById('status');
+              status.textContent = 'ready';
+              status.className = '';
+            }, 2600);
           </script>
         </body>
         </html>

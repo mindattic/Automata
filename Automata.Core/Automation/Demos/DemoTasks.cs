@@ -58,6 +58,10 @@ public static class DemoTasks
     /// <summary>Dataset the order example writes one row to per check that held.</summary>
     public const string OrderChecksDataset = "order-checks.csv";
 
+    /// <summary>Where the slow example writes the two readings that prove its wait watched the
+    /// page rather than re-checking what had already been read.</summary>
+    public const string SlowReadingsDataset = "slow-readings.csv";
+
     /// <summary>Dataset the roster example writes one row to per person it added.</summary>
     public const string RosterAddedDataset = "roster-added.csv";
 
@@ -391,14 +395,20 @@ public static class DemoTasks
                 Id = "demo-slow-ready",
                 Action = StepAction.Wait,
                 Label = "Carry on once the status reads 'ready'",
+                // A target on a wait means it WATCHES this element — reads it afresh every poll
+                // rather than re-asking a question about the value the step above captured. That
+                // captured value still says "working" and always will, so this wait can only pass
+                // by going back to the page.
+                Target = Css("div", "#status"),
+                Outputs = [new OutputField { Name = "value", Description = "What the status said when the wait ended" }],
                 Wait = new WaitSpec
                 {
                     Mode = WaitMode.UntilCondition,
                     PollMs = 250,
-                    TimeoutMs = 5_000,
+                    TimeoutMs = 15_000,
                     Condition = new ConditionSpec
                     {
-                        Left = StepText("demo-slow-status", "Read the status"),
+                        Left = StepText("demo-slow-ready", "this step's live reading", "value"),
                         Op = ConditionOp.Equals,
                         Right = Literal("ready"),
                     },
@@ -411,6 +421,31 @@ public static class DemoTasks
                 Label = "Confirm the late panel really arrived",
                 Target = Css("div", "#late"),
                 Value = "The late panel is here.",
+            },
+            new Step
+            {
+                Id = "demo-slow-record",
+                Action = StepAction.WriteDataset,
+                Label = "Write down both readings, which are not the same",
+                // The evidence, and the reason this example writes a file at all: one column is what
+                // the page said when it was read, the other is what the wait saw by watching. A run
+                // where the wait had re-checked the captured value could not produce two different
+                // words here — it could only time out.
+                WriteDataset = new DatasetWriteSpec
+                {
+                    DatasetName = SlowReadingsDataset,
+                    Format = "csv",
+                    // One row per run, replacing the last one. The file is evidence about THIS
+                    // run's two readings; a growing pile of identical pairs would say nothing more
+                    // and would make the example non-repeatable, which the chain example — it runs
+                    // this one again — would find immediately.
+                    Append = false,
+                    Columns = new Dictionary<string, BindingRef>
+                    {
+                        ["captured"] = StepText("demo-slow-status", "Read the status"),
+                        ["watched"] = StepText("demo-slow-ready", "Carry on once the status reads 'ready'", "value"),
+                    },
+                },
             },
         ]);
 
@@ -1535,11 +1570,11 @@ public static class DemoTasks
     };
 
     /// <summary>A binding to the "text" output of an earlier step.</summary>
-    private static BindingRef StepText(string stepId, string label) => new()
+    private static BindingRef StepText(string stepId, string label, string field = "text") => new()
     {
         Kind = BindingKind.StepOutput,
         SourceStepId = stepId,
-        OutputField = "text",
+        OutputField = field,
         Label = label,
     };
 

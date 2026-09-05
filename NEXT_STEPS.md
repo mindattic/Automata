@@ -1593,6 +1593,72 @@ never show that a closed root was actually opened), `verify-demos` all pass, `ve
 `verify-live --live` all pass. Google failed the heal-holds check once and passed on a retry against
 the same binary — the rate-limit flake phases 29 and 31 already documented, not a regression.
 
+### Phase 33 - a wait that actually waits (2026-09-04)
+
+`WaitMode.UntilCondition` polled `Evaluate(spec.Condition, state)` and nothing wrote to `state` while
+the loop ran - one browser, one thing in flight, by design since phase 31. So the condition compared
+the same captured string to itself until it timed out. **It could hold immediately or time out, and
+no third outcome existed**: an assertion with a timeout wearing a wait's name.
+
+**A target is what makes it a wait.** A `wait` step may now carry a `Target`, and if it does the
+engine re-resolves and re-reads that element on every poll, publishes the reading under the step's
+own id, and evaluates the condition against that. A wait WITHOUT a target keeps the old behaviour
+exactly, and that is deliberate rather than leftover - re-asking a question about values the run
+already holds is a real thing to want after a called task or a loop row. The presence of a target is
+what says which of the two this is, and it is the only step where having one changes what the step
+DOES rather than which element it does it to.
+
+The condition names the step it is on, which is the one self-reference in the model and is worth
+being explicit about: a watching wait publishes its reading BEFORE its condition is evaluated, every
+poll, so its own output genuinely is in scope for itself. `DemoCoverageTests` now encodes that as a
+named exception rather than a hole.
+
+Three rules, each of them the interesting half of a failure that would otherwise be silent:
+
+- **An element that has not appeared yet is "not yet", not a failure.** A binding to a missing value
+  normally fails a step at once - that is phase 19's rule, and it is right, because a column that is
+  not there is nearly always a mis-typed column name. But it is exactly wrong for a wait, which
+  would then fail on its FIRST poll, before the page had a chance to render. So a condition that
+  cannot be evaluated for want of a reading keeps polling.
+- **A condition that can never hold fails immediately.** The other half, and the reason the rule
+  above is stated as narrowly as it is: comparing something that is not a number is a mistake in the
+  task, and waiting out a thirty-second timeout before saying so only delays the news.
+- **A timeout says what it last saw.** "Condition still not met" alone leaves a person choosing
+  between a selector that matched nothing and a value that never became the one they asked for -
+  opposite fixes. It now reads `#status last read 'working'`, or `#status last read (not on the
+  page)`.
+
+One read per poll gets **400ms**, not the step's timeout: the wait already has its own poll interval
+and its own deadline, and a resolve that sat there for ten seconds would turn a 250ms poll into a
+ten-second one and blow straight through the deadline the task asked for. The read also does NOT
+self-heal - a heal rewrites the step's identity, and doing that once per poll would let a long wait
+quietly re-record itself against whatever the page happened to be showing. A wait watches; it does
+not edit.
+
+**The example now fails on the old engine, which is the whole point.** `slow.html` moves its status
+through three states - `starting`, `working`, then `ready` a full second after anything has read the
+page - and the task reads the status while it still says `working`. A wait re-checking that captured
+value could only ever time out. The example ends by writing both readings to `slow-readings.csv`,
+one column each, and `verify-demos` asserts they differ: `working` and `ready`, the same element at
+two moments. A log line saying a wait waited is not evidence; two different words in one row is.
+
+Gherkin gained `I wait until "#status" says "ready"`, ordered before `I wait until 14:00` for the
+same reason `I run task X from its start page` comes before `I run task X` - both begin the same way
+and the shorter one would match the front and leave a tail nobody understands. The writer only
+writes back the plain shape (a target, an equals, a literal); a condition wait comparing two step
+outputs still writes as `<no Gherkin form>`, because saying a step cannot be written is better than
+writing one that reads back as a different step. The self-reference is re-pointed at the real step id
+by the compiler, since the id is minted a line after the catalog builds the step.
+
+In the window: choosing "until a condition holds" reveals the Target box, declares the `value`
+output, and the condition's source picker offers **"this step → what it reads from the page, now"**
+as its first option. Without that last part the feature would exist only for hand-written JSON,
+which is the same as not existing.
+
+Green at the end of it: **492 NUnit tests**, `verify-ui` **83/83** (one new group, driving the wait
+editor), `verify-js` 12/12, `verify-demos` all pass including the new two-readings check,
+`verify-shop` all pass.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1600,12 +1666,12 @@ yet** below.
 
 ## Not done yet
 
-- **Interactive end-to-end verification** — build+launch smoke test passed (no crash), but the
-  full loop (record a Google search → refine → Validate → Dry Run → Run → export/import →
-  re-run) needs a human at the keyboard. The original Phase-1 caveat about the postMessage
-  bridge being only smoke-tested still stands.
-- **Acceptance scenarios as saved profiles**: Google search → titles, Bing search → titles,
-  webmail inbox → first 20 subject lines.
+- **A human at the keyboard, once.** `verify-ui` drives both real panes over CDP and covers the
+  record/splice, export/import and repair flows, and the bridge check compares every `post` against
+  every handler - so the Phase-1 caveat about the postMessage bridge being only smoke-tested is
+  gone. What no check replaces is somebody sitting down and recording a Google search by hand,
+  refining it, and running it: not because a step is unproven, but because how it FEELS to do that
+  is the thing this product is for and nothing automated can report on it.
 - **Fingerprint heuristic tuning** against real sites (auto-generated id/class reject patterns).
 - **Orchestration (old Phase 4)**: several instances running the SAME task at once with different
   parameter bindings. **Cut in phase 31, along with every other form of concurrency.** Everything
@@ -1629,9 +1695,3 @@ yet** below.
   is not the same as fixing it: the fix is either a resolver-shaped path to
   `DOM.setFileInputFiles` (it takes an objectId, so a RemoteObject for the resolved element would
   do it) or accepting that this action alone needs CDP per frame.
-- **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
-  `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
-  running, and no other step is in flight. So it is
-  really an assertion with a timeout, not a wait. Making it a wait means re-reading the page each
-  poll - a condition over a live element rather than over a captured output. The `slow` example uses
-  it in the only shape that currently works, as a guard on a value already read.

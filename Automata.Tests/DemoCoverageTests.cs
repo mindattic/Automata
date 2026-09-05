@@ -216,6 +216,13 @@ public class DemoCoverageTests
     /// Every binding to a step output has to name a step that declares it, and one that runs
     /// earlier — the engine reports an unresolved binding as a step failure, which in a demo reads
     /// as the product being broken.
+    /// <para>
+    /// There is exactly one step whose own output is in scope for itself, and it is worth naming
+    /// rather than waving through: a WATCHING wait reads its target and publishes the reading
+    /// before its condition is evaluated, on every poll. So its condition binding points at itself
+    /// by design, and a wait whose condition pointed at anything else would not be watching
+    /// anything.
+    /// </para>
     /// </summary>
     [Test]
     public void EveryStepOutputBindingNamesAnEarlierStepThatPublishesIt()
@@ -225,6 +232,11 @@ public class DemoCoverageTests
             var published = new HashSet<string>(StringComparer.Ordinal);
             foreach (var step in Walk(demo.Steps))
             {
+                // Published BEFORE its own bindings are checked, and only for this one shape.
+                if (Watches(step))
+                    foreach (var output in step.Outputs ?? [])
+                        published.Add($"{step.Id}/{output.Name}");
+
                 foreach (var binding in BindingsOf(step))
                 {
                     if (binding.Kind != BindingKind.StepOutput) continue;
@@ -238,6 +250,13 @@ public class DemoCoverageTests
             }
         }
     }
+
+    /// <summary>A wait that re-reads an element every poll, rather than re-asking about values the
+    /// run already holds. The target is what says which it is.</summary>
+    private static bool Watches(Step step) =>
+        step.Action == StepAction.Wait
+        && step.Wait is { Mode: WaitMode.UntilCondition }
+        && step.Target != null;
 
     private static IEnumerable<BindingRef> BindingsOf(Step step)
     {

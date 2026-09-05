@@ -5,7 +5,7 @@
 // condition's operands go through the same binding picker as any other value. The only free text
 // is a literal you were always going to type anyway.
 
-import { $, esc, state, post, OPS, UNARY, describeBinding } from './core.js';
+import { $, esc, state, post, OPS, UNARY, describeBinding, LIVE_WAIT_OUTPUT, waitWatches } from './core.js';
 import { openBindingPicker } from './binding-field.js';
 
 
@@ -309,6 +309,8 @@ function harvestHtml(step) {
                 (h.dedupeBy === f.name ? ' selected' : '') + '>' + esc(f.name) + '</option>';
         }).join('') + '</select></div>';
 }
+
+export { LIVE_WAIT_OUTPUT, waitWatches };
 
 /// True when this step's wait needs a condition editor rather than a duration or a clock time.
 export function waitNeedsCondition(step) {

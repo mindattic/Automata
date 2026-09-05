@@ -131,6 +131,7 @@ public static class GherkinFlowCompiler
             }
             var draft = matched.Value.Definition.Build(matched.Value.Match);
             draft.Step.Id = StoreUtil.NewId();
+            RepointSelfReference(draft.Step);
             drafts.Add((draft, step.Location));
         }
 
@@ -489,4 +490,22 @@ public static class GherkinFlowCompiler
         }
         return settings.IsEmpty ? null : settings;
     }
+
+    /// <summary>
+    /// A watching wait's condition names its OWN step, and the id it has to name is only minted a
+    /// line above — so the catalog builds the binding with whatever id the step was constructed
+    /// with and this puts the real one in.
+    /// <para>
+    /// The alternative was a sentinel id the resolver would have to understand, which would put a
+    /// magic string in the run-time path to save a line in the compile-time one.
+    /// </para>
+    /// </summary>
+    internal static void RepointSelfReference(Step step)
+    {
+        if (step.Action != StepAction.Wait) return;
+        if (step.Wait is not { Mode: WaitMode.UntilCondition, Condition: { } condition }) return;
+        if (step.Target == null || condition.Left.Kind != BindingKind.StepOutput) return;
+        condition.Left.SourceStepId = step.Id;
+    }
+
 }

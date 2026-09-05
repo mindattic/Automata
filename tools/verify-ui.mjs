@@ -1684,6 +1684,48 @@ async function main() {
         { timeoutMs: 5000, label: 'the chosen zoom level to reach disk' });
     });
 
+    // A wait is the only step where HAVING a target changes what the step does rather than which
+    // element it does it to: with one it watches that element, re-reading it on every poll; without
+    // one it only re-asks a question about values the run already holds, which nothing can change
+    // while it waits. So the editor has to offer the target box on exactly that mode, and has to
+    // offer the wait's own reading as something the condition can be about — otherwise there is no
+    // way to say the thing through a picker at all, and the feature exists only for hand-written
+    // JSON.
+    await group('flow: a wait on a condition can be pointed at an element to watch', async () => {
+      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      await panelPage.locator('#tree .node.step').first().click();
+      await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
+      await panelPage.locator('#ed-action').selectOption('wait');
+      await panelPage.locator('#ed-wait-mode').waitFor({ state: 'visible', timeout: 10000 });
+
+      // A fixed duration has nothing to point at, and offering a target there would suggest it did.
+      await panelPage.locator('#ed-wait-mode').selectOption('duration');
+      await panelPage.locator('#ed-wait-ms').waitFor({ state: 'visible', timeout: 10000 });
+      assertEqual(await panelPage.locator('#editor details.target').count(), 0,
+        'a wait for a fixed duration must not ask for an element');
+
+      await panelPage.locator('#ed-wait-mode').selectOption('untilCondition');
+      await waitFor(async () => await panelPage.locator('#editor details.target').count() === 1,
+        { timeoutMs: 5000, label: 'the target box to appear for a condition wait' });
+
+      // The declared output is what makes the reading nameable — the binding picker enumerates
+      // declared outputs and nothing else, so a wait that published nothing could not be asked
+      // about even by itself.
+      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"untilCondition"'),
+        { timeoutMs: 5000, label: 'the wait mode to reach disk' });
+      const saved = JSON.parse(readFileSync(taskFile, 'utf8'));
+      assertEqual(JSON.stringify((saved.steps[0].outputs || []).map((o) => o.name)), '["value"]',
+        'a condition wait must declare the reading it publishes');
+
+      // And the picker offers it. Source-read rather than clicked open: the option is built by
+      // sourcesFor, and what matters is that a wait with a target is the one step whose own output
+      // is in scope for itself.
+      const sources = readFileSync(
+        path.join(repoRoot, 'Automata.App/wwwroot/binding-field.js'), 'utf8');
+      assertTrue(sources.includes('waitWatches(step)'),
+        'the binding picker does not offer a watching wait its own live reading');
+    });
+
     await group('flow: an aggregate step reduces a column and publishes one named answer', async () => {
       const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
       await panelPage.locator('#tree .node.step').first().click();

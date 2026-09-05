@@ -190,6 +190,20 @@ try {
     'status does not list it',
   );
 
+  // ---- the wait that watched -----------------------------------------------------------------
+  // The slow example's page changes its status three times, and the run READS it while it still
+  // says "working". So the two columns it writes can only differ if the wait went back to the page
+  // — a wait that re-checked the value already captured could not produce "ready" here at all, it
+  // could only time out. This is the check that would have failed before phase 33, and passing it
+  // by accident is not available: the two words come from the same element at different moments.
+  const readings = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'slow-readings.csv'));
+  check(
+    'the wait watched the page rather than re-checking what had already been read',
+    readings.length === 1 && readings[0].captured === 'working' && readings[0].watched === 'ready',
+    `captured/watched were ${JSON.stringify(readings.map((r) => [r.captured, r.watched]))} — ` +
+      'they must differ, or the wait proved nothing',
+  );
+
   // ---- the ragged asset --------------------------------------------------------------------------
   // The roster example is the one that reads a JSON blob nobody harvested — a list where not every
   // row carries every field. Its own assertion checks the tally; this checks the asset really was

@@ -9,7 +9,7 @@
 // Composition beyond "this source, optionally wrapped in a literal" is deliberately out of scope
 // here. That belongs to the authoring layer, not to a dropdown.
 
-import { esc, findStep, state, describeBinding } from './core.js';
+import { esc, findStep, state, describeBinding, waitWatches, LIVE_WAIT_OUTPUT } from './core.js';
 import { openListPicker, openRenameModal, openInfoModal } from './modal.js';
 
 function flatten(steps, out) {
@@ -28,6 +28,19 @@ export function sourcesFor(task, step) {
     var index = all.indexOf(step);
     if (index < 0) index = all.length;
     var sources = [];
+
+    // A WATCHING wait is the one step whose own output is in scope for itself: it reads its element
+    // and publishes the reading BEFORE its condition is evaluated, every poll. Offered first,
+    // because on a wait with a target it is almost always the thing being asked about — and if it
+    // were not offered at all there would be no way to say so through a picker.
+    if (waitWatches(step)) {
+        sources.push({
+            stepId: step.id,
+            output: LIVE_WAIT_OUTPUT,
+            label: 'this step → what it reads from the page, now',
+        });
+    }
+
     all.slice(0, index).forEach(function (s) {
         (s.outputs || []).forEach(function (o) {
             if (!o.name) return;

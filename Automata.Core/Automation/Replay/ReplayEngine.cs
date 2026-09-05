@@ -29,7 +29,27 @@ public class ReplayEngine
         this.log = log ?? NullLogger<ReplayEngine>.Instance;
     }
 
-    /// <summary>The range a browser's own zoom menu offers. Outside it a step is far more likely
+    /// <summary>
+    /// Resolve a fingerprint once and read what it says, for a caller that is going to ask again in
+    /// a moment. Null when the element is not there — which is an answer, not a failure, because
+    /// the only caller is a wait and "not yet" is what a wait exists for.
+    /// <para>
+    /// Deliberately does NOT self-heal. A heal rewrites the step's identity, and rewriting it once
+    /// per poll would let a long wait quietly re-record the step against whatever the page happened
+    /// to be showing at the time. A wait watches; it does not edit.
+    /// </para>
+    /// </summary>
+    public async Task<string?> ReadLiveAsync(
+        IBrowserSurface browser, ElementFingerprint target, int timeoutMs, CancellationToken ct)
+    {
+        var resolved = await resolver.ResolveAsync(
+            browser, target, highlight: false, refingerprint: false, timeoutMs, ct);
+        if (!resolved.Found) return null;
+        var read = await BrowserActions.ReadResolvedTextAsync(browser, ct);
+        return read.Ok ? read.Value ?? "" : null;
+    }
+
+    /// <summary>The range a browser's own zoom menu offers.    /// <summary>The range a browser's own zoom menu offers. Outside it a step is far more likely
     /// to be a typo — 6 for 60 — than an intention, and a page at 6% is not automatable.</summary>
     internal const int MinZoomPercent = 25;
     internal const int MaxZoomPercent = 500;

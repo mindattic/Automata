@@ -12,10 +12,15 @@ import { phraseFor } from './phrases.js';
 import { fieldControlHtml, openBindingPicker, loopDatasetsInScope
 } from './binding-field.js';
 import {
-    flowFieldsHtml, waitNeedsCondition, waitConditionHtml, commitFlowFields, wireFlowFields, optionsFor
+    flowFieldsHtml, waitNeedsCondition, waitConditionHtml, commitFlowFields, wireFlowFields, optionsFor,
+    LIVE_WAIT_OUTPUT
 } from './flow-fields.js';
 
 // Steps that act on the page need an element; control-flow steps act on the run.
+//
+// `wait` is the one that depends on how it is set: a wait on a condition may WATCH an element,
+// reading it afresh every poll, and that is the only way a wait can wait for the page rather than
+// re-ask a question about values the run already holds. See waitWatches below.
 var NEEDS_TARGET = {
     navigate: false, group: false, wait: false,
     if: false, else: false, forEach: false, runTask: false, writeDataset: false,
@@ -131,7 +136,7 @@ export function renderEditor() {
     editorEl.classList.remove('hidden');
 
     var t = step.target || {};
-    var needsTarget = NEEDS_TARGET[step.action] !== false;
+    var needsTarget = NEEDS_TARGET[step.action] !== false || waitNeedsCondition(step);
     var valuePh = NEEDS_VALUE[step.action];
     var targetSummary = t.cssSelector || t.xPath || '(no target captured — fill the fields below)';
 
@@ -209,7 +214,10 @@ export function renderEditor() {
                   esc(spec.timeOfDay ? String(spec.timeOfDay).slice(0, 5) : '') + '" />' +
                   '<input type="text" id="ed-wait-zone" aria-label="Time zone id, blank for this machine"' +
                   ' placeholder="this machine" value="' + esc(spec.timeZoneId) + '" /></div>'
-                : mode === 'untilCondition' ? ''
+                : mode === 'untilCondition'
+                ? '<p class="hint">Give this step a target below to WATCH that element — it is'
+                  + ' re-read on every poll. Without one, the condition only re-checks values the'
+                  + ' run has already captured, which cannot change while it waits.</p>'
                 : '<div class="field"><span>Duration</span>' +
                   '<input type="number" id="ed-wait-ms" min="0" aria-label="Milliseconds to wait" value="' +
                   esc(spec.durationMs != null ? spec.durationMs : 1000) + '" /><span class="unit">ms</span></div>');
@@ -285,10 +293,19 @@ export function renderEditor() {
             if (mode === 'untilCondition') {
                 // The condition itself is read by commitFlowFields below.
                 wait.pollMs = wait.pollMs || 2000;
+                // A watching wait publishes what it finally saw, so a later step can use the value
+                // rather than go and read it a second time. Declared here rather than left implicit
+                // because the binding picker enumerates declared outputs and nothing else.
+                step.outputs = [{
+                    name: LIVE_WAIT_OUTPUT, type: 'string',
+                    description: 'What this element said when the wait ended',
+                }];
             } else if (mode === 'duration') {
+                step.outputs = null;
                 var waitMs = parseInt(($('ed-wait-ms') || {}).value, 10);
                 wait.durationMs = isNaN(waitMs) ? 1000 : waitMs;
             } else {
+                step.outputs = null;
                 var time = ($('ed-wait-time') || {}).value || '';
                 wait.timeOfDay = time ? time + ':00' : null;
                 wait.timeZoneId = (($('ed-wait-zone') || {}).value || '').trim() || null;

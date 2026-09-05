@@ -278,6 +278,19 @@ export const OPS = [
 export const UNARY = ['notEmpty', 'empty', 'exists', 'notExists', 'isTrue', 'isFalse'];
 
 /// How a bound value reads in one short phrase — `row.sku`, `input: term`, `env: TOKEN`.
+/// The output a WATCHING wait publishes its live reading under. Matches
+/// WorkflowEngine.LiveWaitOutput, and is the name that wait's own condition binds to.
+export const LIVE_WAIT_OUTPUT = 'value';
+
+/// True when this step watches an element rather than re-asking about captured values: a wait on a
+/// condition, with a target, re-reads that target on every poll. It lives here rather than beside
+/// the other wait helpers because both the editor and the binding picker need it, and a shared
+/// answer in the module they both already import beats an import cycle between them.
+export function waitWatches(step) {
+    return !!step && step.action === 'wait' && !!step.wait
+        && step.wait.mode === 'untilCondition' && !!step.target;
+}
+
 export function describeBinding(binding) {
     if (!binding) return '';
     if (binding.label) return binding.label;

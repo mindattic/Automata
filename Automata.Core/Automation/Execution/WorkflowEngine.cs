@@ -739,26 +739,61 @@ public sealed partial class WorkflowEngine
 
                 var pollMs = Math.Max(50, spec.PollMs);
                 var deadline = spec.TimeoutMs is > 0 ? Environment.TickCount64 + spec.TimeoutMs.Value : (long?)null;
+                // A wait with a TARGET is watching the page; one without is re-asking a question
+                // about values the run already holds. Both are useful and they are not the same
+                // thing, so the presence of a target is what says which this is.
+                var live = step.Target;
+                var lastRead = live == null ? null : "(not read yet)";
+
                 while (true)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var (holds, error) = Evaluate(spec.Condition, state);
-                    if (error != null)
+
+                    if (live != null)
                     {
-                        await foreach (var e in FailAsync(step, scope, state, error)) yield return e;
-                        yield break;
+                        // Published under this step's own id, so the condition names it the way it
+                        // names any other captured value and the picker has nothing new to learn.
+                        // Re-published every poll, which is the whole difference: until this, the
+                        // loop compared the same captured string to itself until it timed out.
+                        var reading = await replay.ReadLiveAsync(scope.Browser, live, OneReadTimeoutMs, ct);
+                        var key = ReplayRunState.OutputKey(step.Id, LiveWaitOutput);
+                        if (reading == null) state.Outputs.Remove(key);
+                        else state.Outputs[key] = reading;
+                        lastRead = reading == null ? "(not on the page)" : $"'{reading}'";
                     }
+
+                    var (holds, error) = Evaluate(spec.Condition, state);
                     if (holds)
                     {
-                        yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, "condition met", null);
+                        var saw = live == null ? "" : $" — {DescribeTarget(live)} read {lastRead}";
+                        yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
+                            $"condition met{saw}", null);
                         state.LastStatus = StepStatus.Passed;
                         state.Passed++;
                         yield break;
                     }
+                    if (error != null)
+                    {
+                        // An element that has not appeared yet is exactly what a wait waits for, so
+                        // a condition that cannot be evaluated for want of a reading is "not yet"
+                        // rather than a failure. A condition that cannot be evaluated for any OTHER
+                        // reason — a mis-typed column, a value that is not a number — is a mistake
+                        // in the task and fails now rather than at the end of the timeout.
+                        if (live == null || state.Outputs.ContainsKey(
+                                ReplayRunState.OutputKey(step.Id, LiveWaitOutput)))
+                        {
+                            await foreach (var e in FailAsync(step, scope, state, error)) yield return e;
+                            yield break;
+                        }
+                    }
                     if (deadline != null && Environment.TickCount64 >= deadline)
                     {
+                        // What it last saw, not just that it gave up: "still not met" alone leaves a
+                        // person guessing between a selector that matched nothing and a value that
+                        // never became the one they asked for.
+                        var saw = live == null ? "" : $"; {DescribeTarget(live)} last read {lastRead}";
                         await foreach (var e in FailAsync(step, scope, state,
-                            $"condition still not met after {spec.TimeoutMs}ms")) yield return e;
+                            $"condition still not met after {spec.TimeoutMs}ms{saw}")) yield return e;
                         yield break;
                     }
                     await Task.Delay(pollMs, ct);
@@ -781,6 +816,24 @@ public sealed partial class WorkflowEngine
         if (!scope.Options.EffectiveFor(step).ContinueOnStepError) state.Stop = true;
         await Task.CompletedTask;
     }
+
+    // ---- a wait that watches the page ---------------------------------------------------------
+
+    /// <summary>The output name a condition wait publishes its live reading under.</summary>
+    internal const string LiveWaitOutput = "value";
+
+    /// <summary>
+    /// How long ONE poll's read may take. Short on purpose: the wait already has its own poll
+    /// interval and its own overall timeout, and a resolve that sat here for the step's full
+    /// timeout would turn a 250ms poll into a ten-second one and blow through the deadline the
+    /// task actually asked for.
+    /// </summary>
+    private const int OneReadTimeoutMs = 400;
+
+    /// <summary>The shortest true thing that can be said about which element a wait is watching.</summary>
+    private static string DescribeTarget(ElementFingerprint target) =>
+        target.CssSelector ?? (target.Id != null ? "#" + target.Id : null) ??
+        target.VisibleText ?? target.AriaLabel ?? target.Tag ?? "the target";
 
     // ---- aggregates ------------------------------------------------------------------------
 
