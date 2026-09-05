@@ -140,7 +140,7 @@ public class SchemaMigrationTests
     {
         var store = new CollectionStore(root);
         var collection = store.CreateCollection("Scoped");
-        collection.Settings = new EngineSettingsOverride { MaxConcurrency = 3 };
+        collection.Settings = new EngineSettingsOverride { DefaultStepTimeoutMs = 3000 };
         store.SaveCollection(collection);
 
         store.SaveTask(new TaskDefinition
@@ -158,7 +158,7 @@ public class SchemaMigrationTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(back.Settings!.MaxConcurrency, Is.EqualTo(3));
+            Assert.That(back.Settings!.DefaultStepTimeoutMs, Is.EqualTo(3000));
             Assert.That(task.Settings!.Retry!.MaxAttempts, Is.EqualTo(3));
             Assert.That(task.Settings.Retry.DelayMs, Is.EqualTo(50));
             Assert.That(task.Steps[0].Settings!.SelfHeal, Is.False);

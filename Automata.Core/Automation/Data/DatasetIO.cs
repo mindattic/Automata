@@ -39,8 +39,8 @@ public static class DatasetIO
     /// <b>The lock spans the whole read-modify-write, not just the write.</b> An append reads the
     /// existing rows, works out the union of columns and writes the result back; locking only the
     /// final write would still let two writers each read the same "before" and clobber each other's
-    /// rows. This is the door every run's dataset writing goes through, including a parallel
-    /// for-each where several rows finish at once.
+    /// rows. This is the door every run's dataset writing goes through, and the app and the
+    /// headless runner can be writing the same file at the same moment.
     /// </para>
     /// </summary>
     /// <param name="claimFirstWrite">

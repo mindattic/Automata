@@ -35,7 +35,6 @@ public sealed class AutomationController
     private readonly RunStore runs;
     private readonly ScheduleStore schedule;
     private readonly ParkedRunStore parkedRuns;
-    private readonly LiveLaneStore liveLanes;
     private readonly DemoSeeder demos;
     private readonly IClock clock;
 
@@ -84,7 +83,6 @@ public sealed class AutomationController
         RunStore runs,
         ScheduleStore schedule,
         ParkedRunStore parkedRuns,
-        LiveLaneStore liveLanes,
         DemoSeeder demos,
         IClock clock,
         FlowAuthoringService authoring,
@@ -101,7 +99,6 @@ public sealed class AutomationController
         this.runs = runs;
         this.schedule = schedule;
         this.parkedRuns = parkedRuns;
-        this.liveLanes = liveLanes;
         this.demos = demos;
         this.clock = clock;
         this.authoring = authoring;
@@ -292,10 +289,6 @@ public sealed class AutomationController
 
             case "getRuns":
                 await PushRunsAsync();
-                return true;
-
-            case "getLanes":
-                await PushLanesAsync();
                 return true;
 
             case "openRuns":
@@ -639,7 +632,13 @@ public sealed class AutomationController
     /// continuing to the remaining tasks even if one fails — tasks in a collection are usually
     /// independent, so one failing shouldn't block the others. Reports a final pass/fail summary.
     /// Cancel (see <c>collectionCancelRequested</c>) stops the whole collection, not just whichever
-    /// task happens to be running.</summary>
+    /// task happens to be running.
+    /// <para>
+    /// The order is the point where tasks are wired together: what each one declares as an output
+    /// is kept and offered to the tasks after it, through the same <see cref="TaskPipeline"/> the
+    /// headless runner uses. A pipeline that behaved differently in the window from how it behaves
+    /// at 3am would be worse than no pipeline at all.
+    /// </para></summary>
     private async Task RunCollectionAsync(string collectionId, bool allowRepair)
     {
         var collection = store.GetCollection(collectionId);
@@ -662,12 +661,13 @@ public sealed class AutomationController
         // Collection-scope policy: whether one task failing ends the collection. The floor is
         // true (keep going), which is what this loop has always done.
         var policy = EngineSettingsResolver.Resolve(settingsStore.Load(), collection.Settings);
+        var carried = new TaskPipeline.Carried();
         var passed = 0;
         foreach (var task in tasks)
         {
             if (collectionCancelRequested) break;
             await execPanelScript($"window.ssPanel.onTaskStarted({JsonSerializer.Serialize(new { taskId = task.Id, collectionId }, AutomataJson.Options)})");
-            if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false))
+            if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false, carried: carried))
             {
                 passed++;
             }
@@ -699,7 +699,14 @@ public sealed class AutomationController
         await RunEngineAsync(taskId, allowRepair: false, gap: new GapTarget(parentStepId, index, nextStepId));
     }
 
-    private async Task<bool> RunEngineAsync(string taskId, bool allowRepair, GapTarget? gap, bool ownsLifecycle = true)
+    /// <param name="carried">
+    /// What earlier tasks in this collection published. Null for a task run on its own — which is
+    /// exactly what a wired task falling back to its defaults is FOR: the wiring is how a
+    /// collection feeds it, never a requirement it cannot be run without.
+    /// </param>
+    private async Task<bool> RunEngineAsync(
+        string taskId, bool allowRepair, GapTarget? gap, bool ownsLifecycle = true,
+        TaskPipeline.Carried? carried = null)
     {
         var surface = targetSurface();
         if (surface == null)
@@ -728,12 +735,14 @@ public sealed class AutomationController
         // individual step all reach the engine through the same path.
         var globalSettings = settingsStore.Load();
         var collectionSettings = store.GetCollection(task.CollectionId)?.Settings;
+        var (taskInputs, inputNotes) = TaskPipeline.Resolve(task, carried ?? new TaskPipeline.Carried(), null);
         var options = new ReplayOptions
         {
             Control = replayControl,
+            Inputs = taskInputs,
             AllowLlmRepair = allowRepair,
             PauseBeforeStepId = gap?.PauseBeforeStepId,
-            // Parking exists to give a pooled browser lane back during a long wait. This window
+            // Parking exists to give the browser back during a long wait. This window
             // has exactly one browser pane, and it is not pooled — releasing it would free nothing
             // and would make a run the user is watching disappear from under them. So a long wait
             // here holds the pane and says so; the headless runner is what parks and resumes.
@@ -762,6 +771,7 @@ public sealed class AutomationController
 
         if (ownsLifecycle) await execPanelScript("window.ssPanel.onRunState(true)");
         await logAsync($"▶ Run '{task.Name}' — log: {runLog.FilePath}");
+        foreach (var note in inputNotes) await logAsync($"  {note}");
         try
         {
             await foreach (var evt in engine.RunAsync(task, options, surface, replayCts.Token))
@@ -788,6 +798,9 @@ public sealed class AutomationController
                         await execPanelScript($"window.ssPanel.onPaused({JsonSerializer.Serialize(p.StepId)})");
                         if (gap is { PauseBeforeStepId: not null } g && p.StepId == g.PauseBeforeStepId)
                             await ArmRecordingForInsertAsync(task.Id, g.ParentStepId, g.Index, runStillSuspended: true);
+                        break;
+                    case StepEvent.TaskPublished handed:
+                        carried?.Record(handed.TaskId, handed.Values);
                         break;
                     case StepEvent.RunCompleted rc:
                         success = rc.Success;
@@ -854,6 +867,8 @@ public sealed class AutomationController
                                      (c.ExtractedText != null ? $" ⇒ \"{c.ExtractedText}\"" : ""),
         StepEvent.StepPaused p => $"⏸ Paused at '{p.Label}' — press Continue.",
         StepEvent.RunCompleted r => $"{(r.Success ? "✓" : "✗")} {r.Summary}",
+        StepEvent.TaskPublished h => $"⇢ '{h.TaskName}' published {string.Join(", ", h.Values.Keys)} " +
+                                     "for the tasks after it",
         StepEvent.Log l => l.Message,
         _ => evt.ToString() ?? "",
     };
@@ -1539,39 +1554,6 @@ public sealed class AutomationController
             localTimeZoneId = TimeZoneInfo.Local.Id,
         }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onSchedule({json})");
-    }
-
-    /// <summary>
-    /// The browser lanes running right now, in every Automata process — which in practice means
-    /// <c>automata-runner</c>'s.
-    /// <para>
-    /// This window has one browser pane and no pool, so it has no lanes of its own worth showing;
-    /// what it can do is watch the headless runner's. Deliberately read fresh on every poll rather
-    /// than cached: the whole value of the strip is that it is current.
-    /// </para>
-    /// </summary>
-    public Task PushLanesAsync()
-    {
-        var processes = liveLanes.List().Select(p => new
-        {
-            processId = p.ProcessId,
-            processName = p.ProcessName,
-            targetName = p.TargetName,
-            runId = p.RunId,
-            maxConcurrency = p.MaxConcurrency,
-            updatedUtc = p.UpdatedUtc,
-            lanes = p.Lanes.Select(l => new
-            {
-                laneId = l.LaneId,
-                profileKey = l.ProfileKey,
-                busy = l.Busy,
-                taskName = l.TaskName,
-                stepLabel = l.CurrentStepLabel,
-                startedUtc = l.StartedUtc,
-            }),
-        });
-        var json = JsonSerializer.Serialize(new { processes }, AutomataJson.Options);
-        return execPanelScript($"window.ssPanel.onLanes({json})");
     }
 
     /// <summary>

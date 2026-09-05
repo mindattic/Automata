@@ -1,10 +1,11 @@
-// Acceptance check for the whole input/output loop: harvest a list off a page, iterate it, and
-// collect a value from each row — once one at a time, once several at once.
+// Acceptance check for the whole input/output loop: harvest a list off a page, then walk it one
+// row at a time collecting a value from each.
 //
-// The check is THREE-WAY on purpose. Comparing the two runs to each other is not enough: both
-// could skip the same rows, or read the same wrong element, and agree perfectly while being wrong.
-// So the generated product pages are read directly for their prices and that total is the oracle;
-// each run must match it, and matching each other then follows.
+// The run is never compared against another run. Two runs of the same task can skip the same rows
+// or read the same wrong element and agree perfectly while both being wrong — so the oracle is
+// INDEPENDENT: the generated product pages are read straight off disk for their prices, and the
+// run has to match that total. Running it twice then proves only what a second run should prove,
+// which is that it does not double-count.
 //
 //   node tools/verify-shop.mjs [--keep]
 //
@@ -12,7 +13,7 @@
 // Documents\Automata store is never touched, which is why every AUTOMATA_* root is set below.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -38,11 +39,10 @@ const roots = {
   AUTOMATA_DATASETS_ROOT: join(scratch, 'datasets'),
   AUTOMATA_RUNS_ROOT: join(scratch, 'runs'),
   AUTOMATA_PARKED_ROOT: join(scratch, 'parked'),
-  AUTOMATA_LIVE_ROOT: join(scratch, 'live'),
   AUTOMATA_DEMOS_ROOT: join(scratch, 'demos'),
   AUTOMATA_SCHEDULE_PATH: join(scratch, 'schedule.json'),
   AUTOMATA_SETTINGS_PATH: join(scratch, 'settings.json'),
-  AUTOMATA_LANE_PROFILE_ROOT: join(scratch, 'lanes'),
+  AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
 
@@ -51,7 +51,7 @@ function runner(...args) {
   return { code: result.status, out: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 }
 
-// A lane's WebView2 profile can still be held by a browser process that has not finished exiting,
+// A WebView2 profile can still be held by a browser process that has not finished exiting,
 // so a locked scratch directory is a nuisance rather than a failure — it must not turn a passing
 // check into a crash.
 function cleanup() {
@@ -62,7 +62,7 @@ function cleanup() {
   try {
     rmSync(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
   } catch {
-    console.log(`\nNote: could not remove ${scratch} yet (a lane's browser still holds it).`);
+    console.log(`\nNote: could not remove ${scratch} yet (a browser still holds it).`);
     console.log('The next run of this check will sweep it up.');
   }
 }
@@ -85,26 +85,16 @@ function sweepOldScratch() {
 }
 
 try {
-  // MaxConcurrency is tighten-only by design: the global value is the machine's ceiling and a task
-  // may lower it but never raise it. So to see real lanes, the ceiling has to be granted here —
-  // this check owns its scratch workspace, and granting it is exactly what a machine's owner does
-  // in Settings. Without this the parallel example runs one row at a time and would agree with the
-  // sequential one for entirely the wrong reason.
   sweepOldScratch();
   mkdirSync(scratch, { recursive: true });
-  writeFileSync(
-    roots.AUTOMATA_SETTINGS_PATH,
-    JSON.stringify({ engineDefaults: { maxConcurrency: 4 } }, null, 2),
-    'utf8',
-  );
 
   // ---- seed --------------------------------------------------------------------------------
   const seeded = runner('demos', 'seed');
   check('demos seed writes the pages and the examples', seeded.code === 0, seeded.out.trim());
 
   // ---- the oracle: what the generated pages actually say -----------------------------------
-  // Read straight off disk, with no run involved. This is the number both runs have to agree
-  // with, and it is why a shared mistake in both runs cannot pass this check.
+  // Read straight off disk, with no run involved. This is the number the run has to agree with,
+  // and it is why a mistake inside the engine cannot pass this check by being consistent.
   const shopDir = join(roots.AUTOMATA_DEMOS_ROOT, 'shop');
   const itemPages = readdirSync(shopDir).filter((f) => f.startsWith('item-') && f.endsWith('.html'));
   let expectedCents = 0;
@@ -119,7 +109,7 @@ try {
     `pages=${itemPages.length} total=${money(expectedCents)}`,
   );
 
-  // ---- find the two demo tasks -------------------------------------------------------------
+  // ---- find the demo task ------------------------------------------------------------------
   const tasksByKey = {};
   const demosDir = join(roots.AUTOMATA_COLLECTIONS_ROOT, 'Demos');
   for (const file of readdirSync(demosDir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
@@ -127,27 +117,15 @@ try {
     if (task.demo?.key) tasksByKey[task.demo.key] = task;
   }
   check(
-    'both shop examples were seeded',
-    Boolean(tasksByKey['shop-prices-sequential'] && tasksByKey['shop-prices-parallel']),
+    'the shop example was seeded',
+    Boolean(tasksByKey['shop-prices']),
     Object.keys(tasksByKey).join(', '),
   );
-  if (failures) throw new Error('cannot continue without the examples');
+  if (failures) throw new Error('cannot continue without the example');
 
-  // ---- run them ----------------------------------------------------------------------------
-  const sequential = runner('run', '--task', tasksByKey['shop-prices-sequential'].id);
-  check('one at a time: the run passes', sequential.code === 0, tail(sequential.out));
-
-  const parallel = runner('run', '--task', tasksByKey['shop-prices-parallel'].id);
-  check('several at once: the run passes', parallel.code === 0, tail(parallel.out));
-
-  // A ForEach may only ASK for concurrency; the resolved ceiling grants it. If the ceiling won,
-  // this run was secretly sequential and would agree with the other for the wrong reason — so the
-  // engine's own throttle notice failing to appear is what proves the lanes really ran together.
-  check(
-    'several at once was not silently throttled back to one lane',
-    !/resolves to 1 here/.test(parallel.out),
-    'the engine reported that Max concurrency held it to a single lane',
-  );
+  // ---- run it ------------------------------------------------------------------------------
+  const first = runner('run', '--task', tasksByKey['shop-prices'].id);
+  check('the run passes', first.code === 0, tail(first.out));
 
   // ---- the harvest itself ------------------------------------------------------------------
   const products = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-products.csv'));
@@ -167,35 +145,31 @@ try {
     products[0]?.url,
   );
 
-  // ---- the three-way comparison ------------------------------------------------------------
-  const seqRows = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices-sequential.csv'));
-  const parRows = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices-parallel.csv'));
-
-  for (const [label, rows] of [['one at a time', seqRows], ['several at once', parRows]]) {
-    check(
-      `${label}: collected a price for every product, with no row twice`,
-      rows.length === itemPages.length && new Set(rows.map((r) => r.sku)).size === itemPages.length,
-      `${rows.length} row(s), ${new Set(rows.map((r) => r.sku)).size} distinct sku(s)`,
-    );
-  }
-
-  const seqTotal = sumCents(seqRows);
-  const parTotal = sumCents(parRows);
-
+  // ---- the run against the oracle ----------------------------------------------------------
+  const rows = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices.csv'));
   check(
-    `one at a time totals what the pages say (${money(expectedCents)})`,
-    seqTotal === expectedCents,
-    `got ${money(seqTotal)}`,
+    'collected a price for every product, with no row twice',
+    rows.length === itemPages.length && new Set(rows.map((r) => r.sku)).size === itemPages.length,
+    `${rows.length} row(s), ${new Set(rows.map((r) => r.sku)).size} distinct sku(s)`,
   );
   check(
-    `several at once totals what the pages say (${money(expectedCents)})`,
-    parTotal === expectedCents,
-    `got ${money(parTotal)}`,
+    `the collected prices total what the pages say (${money(expectedCents)})`,
+    sumCents(rows) === expectedCents,
+    `got ${money(sumCents(rows))}`,
   );
+
+  // ---- and again, which is a different question ---------------------------------------------
+  // The loop appends a row per product to one file. Without the write step claiming the first
+  // write of each run, a second run would report twice the products and twice the money — and it
+  // would look entirely plausible.
+  const second = runner('run', '--task', tasksByKey['shop-prices'].id);
+  check('a second run passes too', second.code === 0, tail(second.out));
+
+  const after = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices.csv'));
   check(
-    'raising the concurrency did not change the answer',
-    seqTotal === parTotal,
-    `${money(seqTotal)} vs ${money(parTotal)}`,
+    'running it again replaces the results rather than doubling them',
+    after.length === itemPages.length && sumCents(after) === expectedCents,
+    `${after.length} row(s) totalling ${money(sumCents(after))}`,
   );
 } catch (error) {
   check('the check ran to completion', false, error.message);

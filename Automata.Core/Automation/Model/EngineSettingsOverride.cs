@@ -22,16 +22,6 @@ public sealed record RetryPolicy
     public double BackoffMultiplier { get; set; } = 1.0;
 }
 
-/// <summary>What a failure in one lane does to the lanes running beside it.</summary>
-public enum FailureIsolation
-{
-    /// <summary>Let sibling lanes finish. Matches today's "continue past a failed task".</summary>
-    IsolateLane,
-
-    /// <summary>Cancel every other lane in the same run.</summary>
-    FailFast,
-}
-
 /// <summary>
 /// Engine settings for one scope in the global → collection → task → step chain.
 /// <para>
@@ -60,14 +50,6 @@ public sealed class EngineSettingsOverride
     /// <summary>Keep running the remaining tasks in a collection after one fails.</summary>
     public bool? ContinueOnTaskError { get; set; }
 
-    public FailureIsolation? Isolation { get; set; }
-
-    /// <summary>
-    /// Ceiling on concurrent browser lanes. A deeper scope may only LOWER what it inherits, never
-    /// raise it, so one task can never starve the machine by out-declaring the global setting.
-    /// </summary>
-    public int? MaxConcurrency { get; set; }
-
     /// <summary>Named browser profile: the same name means the same userDataFolder, and therefore
     /// shared cookies and logins. Different names are fully isolated.</summary>
     public string? BrowserProfile { get; set; }
@@ -86,7 +68,7 @@ public sealed class EngineSettingsOverride
     public bool IsEmpty =>
         DefaultStepTimeoutMs is null && SelfHeal is null && AllowLlmRepair is null &&
         Retry is null && ContinueOnStepError is null && ContinueOnTaskError is null &&
-        Isolation is null && MaxConcurrency is null && ScreenshotOnFailure is null &&
+        ScreenshotOnFailure is null &&
         string.IsNullOrEmpty(BrowserProfile) && string.IsNullOrEmpty(LlmProvider);
 }
 
@@ -101,8 +83,6 @@ public sealed record ResolvedSettings(
     RetryPolicy Retry,
     bool ContinueOnStepError,
     bool ContinueOnTaskError,
-    FailureIsolation Isolation,
-    int MaxConcurrency,
     string BrowserProfile,
     bool ScreenshotOnFailure,
     string LlmProvider);

@@ -1,7 +1,6 @@
 // Sidebar view tabs (Build / Schedule / Data / Runs).
 
 import { $, post } from './core.js';
-import { startLanePolling, stopLanePolling } from './lanes.js';
 
 // WAI-ARIA APG tabs, manual activation: arrows move focus only, Enter/Space (native button
 // activation) selects. Inactive panels get the real `hidden` attribute so their content
@@ -27,9 +26,6 @@ function selectTab(tab) {
 export function showBuildTab() {
     var build = $('tab-build');
     if (build && build.getAttribute('aria-selected') !== 'true') selectTab(build);
-    // Selecting a tab this way bypasses the click handler, so the lane poll has to be stopped
-    // here too - otherwise a run that pulls the user back to Build leaves it running forever.
-    stopLanePolling();
 }
 
 tabsEl.addEventListener('click', function (e) {
@@ -42,11 +38,6 @@ tabsEl.addEventListener('click', function (e) {
     // Runs and datasets are files on disk that change outside this window, so re-read them on
     // arrival rather than trusting whatever was cached at startup.
     if (tab.id === 'tab-runs') post('getRuns');
-    // The live lane strip is the one thing in the sidebar that has to keep asking. Polling starts
-    // when its panel is on screen and stops when it leaves, so a window parked on Build never
-    // re-reads the disk to update markup nobody can see.
-    if (tab.id === 'tab-runs') startLanePolling();
-    else stopLanePolling();
     // Same for the schedule: the runner writes next-due times into it on every tick, so what
     // this window last saw is stale the moment anything fires.
     if (tab.id === 'tab-schedule') post('getSchedule');

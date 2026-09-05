@@ -18,7 +18,6 @@ import './settings.js';
 import './demos.js';
 import './data.js';
 import './runs.js';
-import './lanes.js';
 import './schedule.js';
 import { wireAuthoring } from './flow.js';
 import './bridge.js';

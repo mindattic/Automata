@@ -38,7 +38,7 @@ public class DemoSeederTests
     private TaskDefinition Task(string key) =>
         collections.GetTask(Status(seeder.Survey(), key).TaskId!)!;
 
-    private const string Key = "shop-prices-sequential";
+    private const string Key = "shop-prices";
 
     // ---- first load -------------------------------------------------------------------------
 

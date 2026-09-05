@@ -149,7 +149,7 @@ internal sealed class ReplayRunState
     /// Datasets a "start fresh each run" write has already claimed. <b>Shared by reference with
     /// every forked row state</b> — deliberately the one thing a fork does not isolate, because
     /// "has this run started this dataset yet?" is a question about the run and there is no other
-    /// scope that can answer it. Guarded, since a parallel for-each asks from several lanes at once.
+    /// scope that can answer it.
     /// </summary>
     private readonly HashSet<string> freshened;
 
@@ -196,10 +196,9 @@ internal sealed class ReplayRunState
     /// A child scope for one iteration of a for-each: it can read everything published before the
     /// loop, and its own writes stay local.
     /// <para>
-    /// Isolation applies whether the loop runs one row at a time or many, on purpose. If a row's
-    /// outputs leaked out sequentially but could not in parallel, raising the concurrency of a
-    /// working loop would change its results — which is the kind of surprise that makes people
-    /// distrust the concurrency setting entirely.
+    /// The isolation is the point. A row's outputs are that row's — if they leaked out of the
+    /// loop, a binding after it would silently mean "whichever row happened to run last", which is
+    /// a value nobody wrote down and nobody can predict from reading the task.
     /// </para>
     /// </summary>
     public ReplayRunState ForkForRow(

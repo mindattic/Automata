@@ -16,9 +16,9 @@ namespace Automata.Runner;
 /// dependencies and hands over — the same split the WPF app uses.
 /// </para>
 /// <para>
-/// Lanes are off-screen WebView2 windows, which need an interactive desktop: WebView2 cannot render
-/// in Windows session 0, so a scheduled task must be registered to run only when the user is logged
-/// on.
+/// The browser is an off-screen WebView2 window, which needs an interactive desktop: WebView2
+/// cannot render in Windows session 0, so a scheduled task must be registered to run only when the
+/// user is logged on.
 /// </para>
 /// </summary>
 public static class Program
@@ -29,23 +29,22 @@ public static class Program
         services.AddAutomataCore();
         using var provider = services.BuildServiceProvider();
 
-        var profileRoot = Environment.GetEnvironmentVariable("AUTOMATA_LANE_PROFILE_ROOT")
+        var profileRoot = Environment.GetEnvironmentVariable("AUTOMATA_BROWSER_PROFILE_ROOT")
             ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "MindAttic", "Automata", "Lanes");
+                "MindAttic", "Automata", "Browsers");
 
         var dispatcher = new RunnerCliDispatcher(
             provider.GetRequiredService<CollectionStore>(),
             provider.GetRequiredService<RunStore>(),
             provider.GetRequiredService<WorkflowEngine>(),
             provider.GetRequiredService<AutomataSettingsStore>(),
-            new OffscreenWebView2LaneFactory(profileRoot),
+            new OffscreenWebView2Factory(profileRoot),
             Console.Out,
             provider.GetRequiredService<ScheduleStore>(),
             provider.GetRequiredService<IClock>(),
             new SchTasksRegistrar(Environment.ProcessPath ?? "automata-runner.exe"),
             provider.GetRequiredService<ParkedRunStore>(),
-            provider.GetRequiredService<LiveLaneStore>(),
             provider.GetRequiredService<DemoSeeder>());
 
         using var cancelling = new CancellationTokenSource();

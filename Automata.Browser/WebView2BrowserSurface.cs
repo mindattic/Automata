@@ -13,7 +13,7 @@ public class WebView2BrowserSurface : IBrowserSurface
     /// <summary>
     /// Applies the browser's zoom factor. Supplied by whoever owns the controller, because the
     /// zoom lives on the CONTROLLER and this type only holds the CoreWebView2 — and because the
-    /// two owners reach it differently: the app has to hop to its UI thread, a lane does not.
+    /// two owners reach it differently: the app has to hop to its UI thread, the runner does not.
     /// Null for a surface with no controller behind it, which then cannot zoom and says so.
     /// </summary>
     private readonly Action<double>? setZoom;

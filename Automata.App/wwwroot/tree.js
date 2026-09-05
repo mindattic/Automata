@@ -53,7 +53,7 @@ var TASK_MENU = [
     { op: 'ren-task', glyph: '✎', label: 'Rename…' },
     { op: 'move-task', glyph: '⇄', label: 'Move to another collection…' },
     { op: 'dup-task', glyph: '⧉', label: 'Duplicate' },
-    { op: 'task-inputs', glyph: '⌸', label: 'Inputs…' },
+    { op: 'task-inputs', glyph: '⌸', label: 'Inputs and outputs…' },
     { op: 'task-feature', glyph: '{ }', label: 'Read as a Gherkin feature' },
     { op: 'task-settings', glyph: '⚙', label: 'Engine settings…' },
     'separator',

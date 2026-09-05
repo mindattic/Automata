@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
-using System.Threading.Channels;
 using System.Text.RegularExpressions;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Replay;
@@ -23,8 +22,12 @@ namespace Automata.Core.Automation.Execution;
 /// </para>
 /// <para>
 /// It emits the same <see cref="StepEvent"/> stream as a plain replay, so it is a drop-in
-/// replacement for the caller. Lane-level events arrive with the lane pool, not before there is
-/// more than one lane to talk about.
+/// replacement for the caller.
+/// </para>
+/// <para>
+/// <b>Everything here runs in order.</b> One run holds one browser, a loop walks its rows one at a
+/// time, and a collection walks its tasks one at a time — so what a step sees is whatever the step
+/// before it left behind, on a page that only one thing is touching.
 /// </para>
 /// </summary>
 public sealed partial class WorkflowEngine
@@ -36,10 +39,10 @@ public sealed partial class WorkflowEngine
 
     /// <summary>
     /// Everything one branch of a walk needs. Passed down rather than held in a field because the
-    /// engine is a singleton: two runs can be in flight at once, and a parallel for-each swaps the
-    /// browser per row, so this must not be shared mutable state.
+    /// engine is a singleton: two runs can be in flight at once, so this must not be shared
+    /// mutable state.
     /// </summary>
-    private sealed record RunScope(ReplayOptions Options, IBrowserSurface Browser, BrowserLanePool? Lanes);
+    private sealed record RunScope(ReplayOptions Options, IBrowserSurface Browser);
 
     /// <summary>
     /// Where in the tree the walk is, and what it is allowed to do there.
@@ -82,8 +85,7 @@ public sealed partial class WorkflowEngine
     }
 
     /// <summary>
-    /// Runs a task. <paramref name="lanes"/> is what makes a for-each able to run rows at once:
-    /// without a pool there is one browser, so every loop runs in order and says so.
+    /// Runs a task, on the one browser the caller hands it.
     /// <para>
     /// <paramref name="resume"/> continues a run that parked on a long wait: its values are
     /// restored and the walk fast-forwards to the step after the wait. The browser is NOT restored
@@ -96,10 +98,9 @@ public sealed partial class WorkflowEngine
         ReplayOptions options,
         IBrowserSurface browser,
         [EnumeratorCancellation] CancellationToken ct = default,
-        BrowserLanePool? lanes = null,
         ParkCheckpoint? resume = null)
     {
-        var scope = new RunScope(options, browser, lanes);
+        var scope = new RunScope(options, browser);
         yield return new StepEvent.RunStarted(task.Id, task.Name);
         var state = new ReplayRunState();
         state.TaskStack.Add(task.Id);
@@ -146,6 +147,51 @@ public sealed partial class WorkflowEngine
         // emitted where it happened; completing it here would tell the caller an outcome that has
         // not occurred.
         if (state.Parked != null) yield break;
+
+        // Declared outputs, resolved from what the steps actually published. Emitted BEFORE the
+        // completion event: an output nobody produced is left out rather than published empty, so
+        // a task downstream falls back to its own default and says which input it is missing,
+        // instead of running on a blank string that looks fine.
+        //
+        // A task that FAILED still publishes whatever it did produce, and that is deliberate. The
+        // collection carries on past a failed task by default, so the choice is between handing the
+        // next task the value that was actually read and handing it a default nobody chose — and
+        // the run already reports the failure in its summary and its exit code.
+        if (task.Outputs.Count > 0)
+        {
+            var published = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var byId = Step.Flatten(task.Steps).ToDictionary(s => s.Id, StringComparer.Ordinal);
+            foreach (var output in task.Outputs)
+            {
+                if (string.IsNullOrWhiteSpace(output.Name)) continue;
+
+                // A step with one output is the ordinary case, and naming it in two places would
+                // be one more thing to keep in step with a re-recording.
+                var field = string.IsNullOrWhiteSpace(output.SourceOutputField)
+                    ? byId.TryGetValue(output.SourceStepId ?? "", out var source)
+                        ? source.Outputs?.FirstOrDefault()?.Name
+                        : null
+                    : output.SourceOutputField;
+
+                if (!string.IsNullOrWhiteSpace(field)
+                    && state.Outputs.TryGetValue(
+                        ReplayRunState.OutputKey(output.SourceStepId, field), out var value))
+                {
+                    published[output.Name] = value;
+                }
+                else
+                {
+                    // Said out loud, every time. A declared output that produced nothing is the
+                    // one failure in a pipeline that otherwise looks like a success: every task
+                    // passes and the last one records a default nobody asked for.
+                    yield return new StepEvent.Log(
+                        $"'{task.Name}' declares an output '{output.Name}' that nothing produced this run — " +
+                        "anything wired to it falls back to its own default.");
+                }
+            }
+            if (published.Count > 0)
+                yield return new StepEvent.TaskPublished(task.Id, task.Name, published);
+        }
 
         var success = !state.Failed;
         var summary =
@@ -443,21 +489,6 @@ public sealed partial class WorkflowEngine
 
                 var rows = datasets.Read(name);
                 var spec2 = spec!;
-                var ceiling = scope.Options.EffectiveFor(step).MaxConcurrency;
-
-                // Two gates have to open: the resolved ceiling (a machine-resource decision, and
-                // the reason one task cannot starve the box) and the loop's own request. Saying
-                // which one is closed beats silently running in order.
-                if (spec2.MaxConcurrency > 1 && scope.Lanes == null)
-                {
-                    yield return new StepEvent.Log(
-                        $"'{step.Label}' asks for {spec2.MaxConcurrency} rows at once, but this run has a single browser — running them in order.");
-                }
-                else if (spec2.MaxConcurrency > 1 && ceiling <= 1)
-                {
-                    yield return new StepEvent.Log(
-                        $"'{step.Label}' asks for {spec2.MaxConcurrency} rows at once, but Max concurrency resolves to 1 here — raise it in settings to let rows run together.");
-                }
 
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
                     $"{rows.Count} row(s) from {name}", null);
@@ -465,17 +496,10 @@ public sealed partial class WorkflowEngine
                 state.Passed++;
 
                 var rowVar = string.IsNullOrWhiteSpace(spec2.RowVariableName) ? "row" : spec2.RowVariableName;
-                var effective = scope.Options.EffectiveFor(step);
-                var wanted = Math.Min(Math.Max(1, spec2.MaxConcurrency), effective.MaxConcurrency);
 
-                if (wanted > 1 && scope.Lanes != null)
-                {
-                    await foreach (var evt in RunRowsInParallelAsync(
-                        step, rows, rowVar, name, wanted, effective, scope, state, walk, ct))
-                        yield return evt;
-                    yield break;
-                }
-
+                // One row at a time, on the one browser this run holds. A row can therefore leave
+                // the page somewhere the next row starts from, which is the whole reason a loop is
+                // worth writing rather than four copies of the same steps.
                 for (var i = 0; i < rows.Count; i++)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -741,76 +765,6 @@ public sealed partial class WorkflowEngine
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Runs a for-each's rows concurrently, each on its own browser lane.
-    /// <para>
-    /// The rows produce events at the same time, so they are funnelled through a channel rather
-    /// than interleaved by hand — an async iterator can only be driven by one consumer, and this
-    /// keeps the caller's stream exactly the shape it already was.
-    /// </para>
-    /// </summary>
-    private async IAsyncEnumerable<StepEvent> RunRowsInParallelAsync(
-        Step step,
-        IReadOnlyList<Dictionary<string, string>> rows,
-        string rowVariable,
-        string datasetName,
-        int wanted,
-        ResolvedSettings effective,
-        RunScope scope,
-        ReplayRunState state,
-        Walk walk,
-        [EnumeratorCancellation] CancellationToken ct)
-    {
-        yield return new StepEvent.Log(
-            $"{step.Label}: running {rows.Count} row(s), up to {wanted} at a time");
-
-        var channel = Channel.CreateUnbounded<StepEvent>();
-        var gate = new SemaphoreSlim(wanted, wanted);
-        var finished = new List<ReplayRunState>();
-        var pool = scope.Lanes!;
-
-        var work = rows.Select((row, index) => Task.Run(async () =>
-        {
-            await gate.WaitAsync(ct);
-            try
-            {
-                var rowState = state.ForkForRow(rowVariable, row, index + 1, datasetName);
-                await using var lease = await pool.AcquireAsync(
-                    effective.BrowserProfile ?? "default", taskName: step.Label, ct: ct);
-                lease.Describe($"row {index + 1} of {rows.Count}");
-
-                await channel.Writer.WriteAsync(
-                    new StepEvent.Log($"{step.Label}: row {index + 1} of {rows.Count} started on lane {lease.LaneId}"), ct);
-
-                await foreach (var evt in RunStepsAsync(
-                    step.Children, scope with { Browser = lease.Surface }, rowState, walk.Unparkable(), ct))
-                    await channel.Writer.WriteAsync(evt, ct);
-
-                lock (finished) finished.Add(rowState);
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }, ct)).ToList();
-
-        var drain = Task.Run(async () =>
-        {
-            try { await Task.WhenAll(work); }
-            finally { channel.Writer.Complete(); }
-        }, CancellationToken.None);
-
-        await foreach (var evt in channel.Reader.ReadAllAsync(ct))
-            yield return evt;
-
-        // Awaited after draining so every event a failing row produced has already been delivered;
-        // surfacing the exception first would swallow the explanation.
-        await drain;
-
-        foreach (var rowState in finished) state.MergeFrom(rowState);
-        gate.Dispose();
     }
 
     /// <summary>

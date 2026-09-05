@@ -6,40 +6,40 @@ using Microsoft.Web.WebView2.Core;
 namespace Automata.Browser;
 
 /// <summary>
-/// Creates browser lanes hosted in off-screen windows, one per lane, each on its own STA thread
-/// with its own message pump and its own user-data folder.
+/// Creates browsers hosted in off-screen windows, each on its own STA thread with its own message
+/// pump and its own user-data folder.
 /// <para>
 /// <b>Why a real window and not <c>HWND_MESSAGE</c>.</b> A message-only window has no client area,
 /// so WebView2 never lays out — and Automata's Click, PressEnter and checkbox steps all dispatch
 /// input at coordinates the resolver computed from a rendered box. With no layout there is nothing
-/// to hit. So each lane gets an ordinary popup window, sized like a real browser, positioned far
+/// to hit. So the browser gets an ordinary popup window, sized like a real one, positioned far
 /// off-screen and kept out of the taskbar and the alt-tab list.
 /// </para>
 /// <para>
 /// <b>Why this still needs a logged-on session.</b> WebView2 cannot render in Windows session 0,
-/// which is where a scheduled task set to "run whether user is logged on or not" executes. Lanes
-/// therefore require an interactive session — see the runner's task registration, which uses an
-/// interactive token deliberately.
+/// which is where a scheduled task set to "run whether user is logged on or not" executes. A
+/// headless run therefore still requires an interactive session — see the runner's task
+/// registration, which uses an interactive token deliberately.
 /// </para>
 /// </summary>
-public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserSurfaceFactory
+public sealed class OffscreenWebView2Factory(string profileRoot) : IBrowserSurfaceFactory
 {
     // Far enough off-screen that no plausible monitor arrangement shows it, while still being a
     // real window with real bounds.
     private const int OffScreenX = -32000;
     private const int OffScreenY = -32000;
-    private const int LaneWidth = 1280;
-    private const int LaneHeight = 900;
+    private const int WindowWidth = 1280;
+    private const int WindowHeight = 900;
 
     private int created;
 
-    public async Task<IBrowserLane> CreateLaneAsync(string profileKey, CancellationToken ct)
+    public async Task<IBrowserSession> CreateAsync(string profileKey, CancellationToken ct)
     {
-        var laneId = $"lane-{Interlocked.Increment(ref created)}";
+        var name = $"browser-{Interlocked.Increment(ref created)}";
         var userDataFolder = Path.Combine(profileRoot, SafeFolder(profileKey));
         Directory.CreateDirectory(userDataFolder);
 
-        var host = new LaneHost(laneId, profileKey, userDataFolder);
+        var host = new SessionHost(name, profileKey, userDataFolder);
         await host.StartAsync(ct);
         return host;
     }
@@ -52,11 +52,11 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
     }
 
     /// <summary>
-    /// One lane: an STA thread owning a window, its message pump, and the CoreWebView2 built on it.
-    /// Everything WebView2 touches happens on that thread; the surface's own calls are already
+    /// One browser: an STA thread owning a window, its message pump, and the CoreWebView2 built on
+    /// it. Everything WebView2 touches happens on that thread; the surface's own calls are already
     /// async and marshalled by WebView2 itself.
     /// </summary>
-    private sealed class LaneHost(string laneId, string profileKey, string userDataFolder) : IBrowserLane
+    private sealed class SessionHost(string name, string profileKey, string userDataFolder) : IBrowserSession
     {
         private readonly TaskCompletionSource<IBrowserSurface> ready =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -65,13 +65,12 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
         private IntPtr hwnd;
         private CoreWebView2Controller? controller;
 
-        public string LaneId => laneId;
         public string ProfileKey => profileKey;
         public IBrowserSurface Surface { get; private set; } = null!;
 
         public async Task StartAsync(CancellationToken ct)
         {
-            thread = new Thread(Pump) { IsBackground = true, Name = "automata-" + laneId };
+            thread = new Thread(Pump) { IsBackground = true, Name = "automata-" + name };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
 
@@ -85,7 +84,7 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
             {
                 hwnd = CreateOffscreenWindow();
                 if (hwnd == IntPtr.Zero)
-                    throw new InvalidOperationException("could not create the lane's host window");
+                    throw new InvalidOperationException("could not create the browser's host window");
 
                 // The environment/controller creation is async, so it needs the pump running to
                 // complete - hence starting it before awaiting anything.
@@ -111,9 +110,9 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
                 controller = await environment.CreateCoreWebView2ControllerAsync(hwnd);
                 // A real rectangle, so the page lays out and coordinate-based input has something
                 // to land on.
-                controller.Bounds = new System.Drawing.Rectangle(0, 0, LaneWidth, LaneHeight);
+                controller.Bounds = new System.Drawing.Rectangle(0, 0, WindowWidth, WindowHeight);
                 controller.IsVisible = true;
-                // The controller is reached straight from here: this lane's WebView2 calls are
+                // The controller is reached straight from here: this browser's WebView2 calls are
                 // already made off the pump thread (the awaits above have no synchronisation
                 // context to return to), so its zoom is no different.
                 ready.TrySetResult(new WebView2BrowserSurface(
@@ -143,9 +142,9 @@ public sealed class OffscreenWebView2LaneFactory(string profileRoot) : IBrowserS
         private static IntPtr CreateOffscreenWindow() =>
             CreateWindowEx(
                 WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                "STATIC", "Automata lane",
+                "STATIC", "Automata browser",
                 WS_POPUP,
-                OffScreenX, OffScreenY, LaneWidth, LaneHeight,
+                OffScreenX, OffScreenY, WindowWidth, WindowHeight,
                 IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
 
         [StructLayout(LayoutKind.Sequential)]

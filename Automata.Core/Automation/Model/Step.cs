@@ -256,8 +256,8 @@ public sealed class Step
     /// <para>
     /// The zoom belongs to the RUN, not to the step: it stays until another step changes it, and
     /// the engine re-applies it after a navigation so a page loaded later is not quietly back at
-    /// 100%. Each browser lane of a parallel loop starts at 100% of its own, since a lane is a
-    /// browser nobody has zoomed yet.
+    /// 100%. A run that opens a second browser — because a task asked for a different profile —
+    /// starts it at 100%, since that is a browser nobody has zoomed yet.
     /// </para>
     /// </summary>
     public int? ZoomPercent { get; set; }

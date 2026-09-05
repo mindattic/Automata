@@ -75,7 +75,7 @@ public class ParkAndResumeTests
         ParkCheckpoint? resume = null)
     {
         var events = new List<StepEvent>();
-        await foreach (var evt in Engine().RunAsync(task, options ?? Options(), browser, default, null, resume))
+        await foreach (var evt in Engine().RunAsync(task, options ?? Options(), browser, default, resume))
             events.Add(evt);
         return events;
     }

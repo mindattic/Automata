@@ -40,11 +40,10 @@ const roots = {
   AUTOMATA_DATASETS_ROOT: join(scratch, 'datasets'),
   AUTOMATA_RUNS_ROOT: join(scratch, 'runs'),
   AUTOMATA_PARKED_ROOT: join(scratch, 'parked'),
-  AUTOMATA_LIVE_ROOT: join(scratch, 'live'),
   AUTOMATA_DEMOS_ROOT: join(scratch, 'demos'),
   AUTOMATA_SCHEDULE_PATH: join(scratch, 'schedule.json'),
   AUTOMATA_SETTINGS_PATH: join(scratch, 'settings.json'),
-  AUTOMATA_LANE_PROFILE_ROOT: join(scratch, 'lanes'),
+  AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
 
@@ -60,8 +59,10 @@ const RUNNABLE = [
 
 /// Covered more strictly elsewhere, or not finishable on purpose.
 const ELSEWHERE = {
-  'shop-prices-sequential': 'verify-shop.mjs, against the prices on the pages',
-  'shop-prices-parallel': 'verify-shop.mjs, against the prices on the pages',
+  'shop-prices': 'verify-shop.mjs, against the prices on the pages',
+  'pipeline-find': 'the collection run below, which is the only place it means anything',
+  'pipeline-look-up': 'the collection run below',
+  'pipeline-record': 'the collection run below',
 };
 const PARKS = 'park';
 
@@ -230,6 +231,71 @@ try {
       }
     }),
     added.map((r) => r.source).join(' | '),
+  );
+
+  // ---- three tasks that only mean something in order --------------------------------------------
+  // Running the WHOLE collection, in one process, is the claim: the tasks walk in order on one
+  // browser, and what each one publishes reaches the ones after it. Running the three pipeline
+  // tasks separately would prove nothing — each would fall back to its default and pass.
+  //
+  // The expected values are read off the generated pages rather than shared with the demo
+  // definitions. An oracle that imported its answer from the thing it checks is not an oracle.
+  const queueHtml = readFileSync(join(roots.AUTOMATA_DEMOS_ROOT, 'pipeline', 'queue.html'), 'utf8');
+  const ticketHtml = readFileSync(join(roots.AUTOMATA_DEMOS_ROOT, 'pipeline', 'ticket.html'), 'utf8');
+  const nextTicket = (queueHtml.match(/id="next-ticket">([^<]+)</) || [])[1];
+  const desk = new RegExp(`'${nextTicket}':\\s*\\{ owner: '([^']+)', priority: '([^']+)' \\}`)
+    .exec(ticketHtml) || [];
+  check(
+    `the queue page names a ticket the desk knows (${nextTicket})`,
+    Boolean(nextTicket && desk[1] && desk[2]),
+    `queue=${nextTicket} desk=${desk[1]}/${desk[2]}`,
+  );
+
+  const wholeCollection = runner('run', '--collection', 'Demos');
+  check(
+    'the whole Demos collection runs in order',
+    // It ends by PARKING, at the example whose entire point is to park — which is itself the
+    // proof that the collection walked in order and reached that task rather than stopping short.
+    wholeCollection.code === 0 && /^Parked /m.test(wholeCollection.out),
+    tail(wholeCollection.out),
+  );
+  // Matched by the two names on one line rather than by the whole sentence: the console mangles
+  // the arrow and the dash to whatever its codepage can render, and a check that depended on those
+  // glyphs would fail for a reason that has nothing to do with the pipeline.
+  const carriedLine = wholeCollection.out
+    .split(String.fromCharCode(10))
+    .find((line) => /'ticketId'/.test(line) && /Pipeline 1/.test(line));
+  check(
+    'the collection says what was carried from one task to the next',
+    /published ticketId for the tasks after it/.test(wholeCollection.out)
+      && Boolean(carriedLine) && /TCK-/.test(carriedLine),
+    tail(wholeCollection.out),
+  );
+
+  const pipeline = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'pipeline-ticket.csv'));
+  check(
+    'the last task wrote one row, from values it was handed rather than values it read',
+    pipeline.length === 1,
+    `${pipeline.length} row(s)`,
+  );
+  check(
+    `the ticket the first task found is the ticket the row names (${nextTicket})`,
+    pipeline[0]?.ticket === nextTicket,
+    `got ${pipeline[0]?.ticket}`,
+  );
+  check(
+    `the owner and priority came from the desk, not from a default (${desk[1]}, ${desk[2]})`,
+    pipeline[0]?.owner === desk[1] && pipeline[0]?.priority === desk[2],
+    `got ${pipeline[0]?.owner} / ${pipeline[0]?.priority}`,
+  );
+
+  // Run alone, the middle task has nothing to carry — and it still has to work. A task that only
+  // ran as part of its collection could never be fixed on its own.
+  const alone = runner('run', '--task', tasksByKey['pipeline-look-up'].id);
+  check(
+    'the wired task still runs on its own, on its declared default',
+    alone.code === 0 && /has not run in this collection/.test(alone.out),
+    tail(alone.out),
   );
 
   // ---- a task run more than one way -------------------------------------------------------------

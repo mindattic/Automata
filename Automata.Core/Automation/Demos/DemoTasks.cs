@@ -10,7 +10,8 @@ public sealed record DemoTask(
     string? StartUrl,
     List<Step> Steps,
     EngineSettingsOverride? Settings = null,
-    List<TaskInput>? Inputs = null)
+    List<TaskInput>? Inputs = null,
+    List<TaskOutput>? Outputs = null)
 {
     /// <summary>
     /// The id the seeded task carries. Fixed, for the same reason step ids are: a
@@ -52,8 +53,7 @@ public static class DemoTasks
 
     /// <summary>Datasets the shop examples write.</summary>
     public const string ProductsDataset = "shop-products.csv";
-    public const string SequentialPricesDataset = "shop-prices-sequential.csv";
-    public const string ParallelPricesDataset = "shop-prices-parallel.csv";
+    public const string PricesDataset = "shop-prices.csv";
 
     /// <summary>Dataset the order example writes one row to per check that held.</summary>
     public const string OrderChecksDataset = "order-checks.csv";
@@ -61,9 +61,21 @@ public static class DemoTasks
     /// <summary>Dataset the roster example writes one row to per person it added.</summary>
     public const string RosterAddedDataset = "roster-added.csv";
 
-    /// <summary>Lanes the parallel variant asks for. Four is enough to expose an ordering or
-    /// locking problem while still fitting comfortably on one machine.</summary>
-    public const int ParallelLanes = 4;
+    /// <summary>Dataset the pipeline example's last task writes its one row to.</summary>
+    public const string PipelineDataset = "pipeline-ticket.csv";
+
+    /// <summary>The names the pipeline tasks publish and take. Written once, because a wiring is
+    /// two halves that have to agree and a typo in either is a wiring that silently does nothing.</summary>
+    public const string TicketIdValue = "ticketId";
+    public const string TicketOwnerValue = "owner";
+    public const string TicketPriorityValue = "priority";
+
+    /// <summary>
+    /// What the middle task looks up when nothing hands it a ticket. It has to be a REAL ticket on
+    /// the page: an input's default is what makes a wired task still runnable on its own, and a
+    /// default that fails would teach the opposite lesson.
+    /// </summary>
+    public const string FallbackTicketId = "TCK-2316";
 
     /// <summary>
     /// The time of day the parking example waits for. Any fixed time works — the point is that it
@@ -84,8 +96,10 @@ public static class DemoTasks
         Roster(demoRoot),
         Search(demoRoot),
         Chain(demoRoot),
-        ShopPrices(demoRoot, parallel: false),
-        ShopPrices(demoRoot, parallel: true),
+        ShopPrices(demoRoot),
+        PipelineFind(demoRoot),
+        PipelineLookUp(demoRoot),
+        PipelineRecord(demoRoot),
         Park(demoRoot),
     ];
 
@@ -521,7 +535,7 @@ public static class DemoTasks
     /// <para>
     /// It proves the two things a zoom step has to be true for: the page really changed size, and
     /// a click still lands where it is aimed afterwards. Every check is made by pressing a button
-    /// that asks the page to measure itself right then — a page in a browser lane is off-screen
+    /// that asks the page to measure itself right then — a page in the headless browser is off-screen
     /// and therefore hidden, so anything driven by a timer, a frame or a resize would report its
     /// load-time answer forever and look like it was working.
     /// </para>
@@ -991,6 +1005,229 @@ public static class DemoTasks
         Label = "input: " + name,
     };
 
+    // ---- three tasks that hand values along ------------------------------------------------------
+
+    /// <summary>
+    /// The first of three tasks that only mean something in the order they are written: find a
+    /// ticket, look it up, write down what was found.
+    /// <para>
+    /// This is what a COLLECTION is for. Each task is worth running on its own, each is short
+    /// enough to fix without re-recording the others, and the collection is what makes them one
+    /// job — the run walks them in order on one browser, and what each task DECLARES as an output
+    /// is offered to the ones after it.
+    /// </para>
+    /// <para>
+    /// The declaration is the whole point. This task publishes <c>ticketId</c> and says which step
+    /// produces it; the next task's input names <c>ticketId</c>, not a step id inside here. So
+    /// re-recording this task's steps cannot silently change what the next one receives — only
+    /// changing the published name can, and that is a rename you can see.
+    /// </para>
+    /// </summary>
+    private static DemoTask PipelineFind(string demoRoot) => new(
+        "pipeline-find",
+        "Pipeline 1 — find the next ticket",
+        "Reads the id of the ticket that is next in the queue and publishes it for the tasks after "
+        + "it. Run the Demos collection and the next two tasks use what this one found; run it on "
+        + "its own and it simply reports the id.",
+        PageUrl(demoRoot, "pipeline/queue.html"),
+        [
+            new Step
+            {
+                Id = "demo-pipeline-read-id",
+                Action = StepAction.ExtractText,
+                Label = "Read the id of the ticket that is next",
+                Target = Css("dd", "#next-ticket"),
+                Outputs = [new OutputField { Name = "text", Description = "The ticket id as shown" }],
+            },
+        ],
+        Outputs:
+        [
+            new TaskOutput
+            {
+                Name = TicketIdValue,
+                Description = "The ticket the tasks after this one should work on",
+                SourceStepId = "demo-pipeline-read-id",
+            },
+        ]);
+
+    /// <summary>
+    /// The middle task: it takes a ticket id from whoever runs it, looks that ticket up on a
+    /// DIFFERENT page, and publishes what the desk says about it.
+    /// <para>
+    /// A different page on purpose. If this task could have read the owner off the queue page it
+    /// would prove nothing — the id has to travel out of the page it was found on for the carrying
+    /// to be real rather than a second reading of the same markup.
+    /// </para>
+    /// </summary>
+    private static DemoTask PipelineLookUp(string demoRoot) => new(
+        "pipeline-look-up",
+        "Pipeline 2 — look that ticket up",
+        "Types the ticket id it was given into the ticket desk and reads back who owns it and how "
+        + "urgent it is. In the collection the id comes from 'Pipeline 1'; on its own it falls "
+        + $"back to {FallbackTicketId}, which is a real ticket — a wired task still has to work "
+        + "when nothing wires it.",
+        PageUrl(demoRoot, "pipeline/ticket.html"),
+        [
+            new Step
+            {
+                Id = "demo-pipeline-type-id",
+                Action = StepAction.TypeText,
+                Label = "Type the ticket id this task was given",
+                Target = Css("input", "#ticket-id"),
+                Value = FallbackTicketId,
+                Bindings = new Dictionary<string, BindingRef>
+                {
+                    ["Value"] = Input(TicketIdValue),
+                },
+            },
+            new Step
+            {
+                Id = "demo-pipeline-look-up",
+                Action = StepAction.Click,
+                Label = "Press Look up",
+                Target = Css("button", "#look-up"),
+            },
+            new Step
+            {
+                Id = "demo-pipeline-assert-found",
+                Action = StepAction.AssertElement,
+                Label = "Confirm the desk found that exact ticket",
+                Target = Css("p", "#found"),
+                Value = $"found: {FallbackTicketId}",
+                // Bound to the same input the typing was: it is what turns "a ticket was found"
+                // into "the ticket we were handed was found", which is the only version of this
+                // check worth having in a pipeline.
+                Bindings = new Dictionary<string, BindingRef>
+                {
+                    ["Value"] = Input(TicketIdValue, prefix: "found: "),
+                },
+            },
+            new Step
+            {
+                Id = "demo-pipeline-read-owner",
+                Action = StepAction.ExtractText,
+                Label = "Read who owns it",
+                Target = Css("dd", "#owner"),
+                Outputs = [new OutputField { Name = "text", Description = "The owner as shown" }],
+            },
+            new Step
+            {
+                Id = "demo-pipeline-read-priority",
+                Action = StepAction.ExtractText,
+                Label = "Read how urgent it is",
+                Target = Css("dd", "#priority"),
+                Outputs = [new OutputField { Name = "text", Description = "The priority as shown" }],
+            },
+        ],
+        Inputs:
+        [
+            new TaskInput
+            {
+                Name = TicketIdValue,
+                Description = "Which ticket to look up",
+                Default = FallbackTicketId,
+                From = new TaskOutputRef
+                {
+                    TaskId = DemoTask.TaskIdFor("pipeline-find"),
+                    TaskName = "Pipeline 1 — find the next ticket",
+                    OutputName = TicketIdValue,
+                },
+            },
+        ],
+        Outputs:
+        [
+            new TaskOutput
+            {
+                Name = TicketOwnerValue,
+                Description = "Who the desk says owns the ticket",
+                SourceStepId = "demo-pipeline-read-owner",
+            },
+            new TaskOutput
+            {
+                Name = TicketPriorityValue,
+                Description = "How urgent the desk says it is",
+                SourceStepId = "demo-pipeline-read-priority",
+            },
+        ]);
+
+    /// <summary>
+    /// The last of the three: it touches no page at all, and writes down what the two before it
+    /// found.
+    /// <para>
+    /// Three values from two different tasks, in one row. That is the shape a pipeline is FOR —
+    /// and it is why the values are declared rather than shared: this task names what it needs, so
+    /// reading it tells you what it depends on without opening either of the others.
+    /// </para>
+    /// </summary>
+    private static DemoTask PipelineRecord(string demoRoot) => new(
+        "pipeline-record",
+        "Pipeline 3 — write down what we found",
+        "Writes one row holding the ticket the first task found and what the second task learned "
+        + "about it. It opens no page: everything it records was carried here by the collection.",
+        null,
+        [
+            new Step
+            {
+                Id = "demo-pipeline-record",
+                Action = StepAction.WriteDataset,
+                Label = "Record the ticket, its owner and its priority",
+                WriteDataset = new DatasetWriteSpec
+                {
+                    DatasetName = PipelineDataset,
+                    Format = "csv",
+                    Append = true,
+                    // One row per run, replacing the last: this is a report of what the collection
+                    // just found, not a history of every time it ran.
+                    ResetOnFirstWrite = true,
+                    Columns = new Dictionary<string, BindingRef>
+                    {
+                        ["ticket"] = Input(TicketIdValue),
+                        ["owner"] = Input(TicketOwnerValue),
+                        ["priority"] = Input(TicketPriorityValue),
+                    },
+                },
+            },
+        ],
+        Inputs:
+        [
+            new TaskInput
+            {
+                Name = TicketIdValue,
+                Description = "The ticket the first task found",
+                Default = FallbackTicketId,
+                From = new TaskOutputRef
+                {
+                    TaskId = DemoTask.TaskIdFor("pipeline-find"),
+                    TaskName = "Pipeline 1 — find the next ticket",
+                    OutputName = TicketIdValue,
+                },
+            },
+            new TaskInput
+            {
+                Name = TicketOwnerValue,
+                Description = "Who the second task found owns it",
+                Default = "(nobody looked it up)",
+                From = new TaskOutputRef
+                {
+                    TaskId = DemoTask.TaskIdFor("pipeline-look-up"),
+                    TaskName = "Pipeline 2 — look that ticket up",
+                    OutputName = TicketOwnerValue,
+                },
+            },
+            new TaskInput
+            {
+                Name = TicketPriorityValue,
+                Description = "How urgent the second task found it is",
+                Default = "(nobody looked it up)",
+                From = new TaskOutputRef
+                {
+                    TaskId = DemoTask.TaskIdFor("pipeline-look-up"),
+                    TaskName = "Pipeline 2 — look that ticket up",
+                    OutputName = TicketPriorityValue,
+                },
+            },
+        ]);
+
     // ---- one task calling another ---------------------------------------------------------------
 
     /// <summary>
@@ -1113,23 +1350,20 @@ public static class DemoTasks
     /// The demo that ties the whole data model together: harvest a list off one page, then visit
     /// every row of it and collect a value from each.
     /// <para>
-    /// The sequential and parallel variants differ ONLY in <see cref="ForEachSpec.MaxConcurrency"/>
-    /// and in which dataset they write, which is the point — running both and comparing the totals
-    /// is how you find out whether raising the concurrency of a working loop changed its results.
+    /// One row at a time, on the one browser the run holds. The loop is worth writing precisely
+    /// because each row leaves the browser somewhere the next row starts from — twenty-four
+    /// product pages visited in order, each price recorded against the SKU that led to it.
     /// </para>
     /// </summary>
-    private static DemoTask ShopPrices(string demoRoot, bool parallel)
+    private static DemoTask ShopPrices(string demoRoot)
     {
-        var prefix = parallel ? "demo-shop-par" : "demo-shop-seq";
+        const string prefix = "demo-shop";
         var extractId = $"{prefix}-price";
 
         return new DemoTask(
-            parallel ? "shop-prices-parallel" : "shop-prices-sequential",
-            parallel ? "Shop prices — several at once" : "Shop prices — one at a time",
-            parallel
-                ? $"The same job as 'one at a time', with {ParallelLanes} browser lanes running at once. "
-                + "The totals from the two must match; if they do not, concurrency changed the answer."
-                : "Harvest every product on a results page, then visit each product page in turn and "
+            "shop-prices",
+            "Shop prices — every product in turn",
+            "Harvest every product on a results page, then visit each product page in turn and "
                 + "collect its price. This is the whole input/output loop in one task.",
             PageUrl(demoRoot, "shop/search.html"),
             [
@@ -1159,9 +1393,7 @@ public static class DemoTasks
                 {
                     Id = $"{prefix}-loop",
                     Action = StepAction.ForEach,
-                    Label = parallel
-                        ? $"For every product — {ParallelLanes} at a time"
-                        : "For every product — one at a time",
+                    Label = "For every product — one at a time",
                     ForEach = new ForEachSpec
                     {
                         Source = new BindingRef
@@ -1171,7 +1403,6 @@ public static class DemoTasks
                             Label = ProductsDataset,
                         },
                         RowVariableName = "row",
-                        MaxConcurrency = parallel ? ParallelLanes : 1,
                     },
                     Children =
                     [
@@ -1209,7 +1440,7 @@ public static class DemoTasks
                             Label = "Record the price against its SKU",
                             WriteDataset = new DatasetWriteSpec
                             {
-                                DatasetName = parallel ? ParallelPricesDataset : SequentialPricesDataset,
+                                DatasetName = PricesDataset,
                                 Format = "csv",
                                 Append = true,
                                 // Every row appends to the same file, so the loop has to say which
@@ -1230,12 +1461,7 @@ public static class DemoTasks
                         },
                     ],
                 },
-            ],
-            // A ForEach may only ask for concurrency; the resolved ceiling grants it. Without this
-            // override the parallel demo runs one row at a time on a default install and
-            // demonstrates nothing — the engine says so plainly, but a demo should not need the
-            // user to go and change a global setting before it does what its name says.
-            parallel ? new EngineSettingsOverride { MaxConcurrency = ParallelLanes } : null);
+            ]);
     }
 
     // ---- shorthand ---------------------------------------------------------------------------------

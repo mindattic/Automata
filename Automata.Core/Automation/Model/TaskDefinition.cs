@@ -23,6 +23,13 @@ public sealed class TaskDefinition
     /// </summary>
     public List<TaskInput> Inputs { get; set; } = [];
 
+    /// <summary>
+    /// Values this task publishes when it finishes, for later tasks in the same collection to
+    /// bind their inputs to. Empty for the ordinary case; a task with outputs is one written to
+    /// hand something on.
+    /// </summary>
+    public List<TaskOutput> Outputs { get; set; } = [];
+
     public List<Step> Steps { get; set; } = [];
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset ModifiedUtc { get; set; }

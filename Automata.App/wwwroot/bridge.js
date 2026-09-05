@@ -10,7 +10,6 @@ import { render, renderRecPreview } from './render.js';
 import { renderDatasets } from './data.js';
 import { renderEditor } from './editor.js';
 import { renderRuns } from './runs.js';
-import { renderLanes } from './lanes.js';
 import { renderSchedule, onSchedulePushed } from './schedule.js';
 import { renderDemosDialog } from './demos.js';
 import { showDraft, showFeatureView } from './flow.js';
@@ -183,10 +182,6 @@ window.ssPanel = {
         state.runs = (payload && payload.runs) || [];
         state.runRoot = (payload && payload.root) || '';
         renderRuns();
-    },
-    onLanes: function (payload) {
-        state.lanes = (payload && payload.processes) || [];
-        renderLanes();
     },
     onSchedule: function (payload) {
         state.schedule = (payload && payload.entries) || [];

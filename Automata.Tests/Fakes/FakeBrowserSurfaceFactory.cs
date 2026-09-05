@@ -3,22 +3,20 @@ using Automata.Core.Operator;
 namespace Automata.Tests.Fakes;
 
 /// <summary>
-/// Hands out a fresh <see cref="FakeBrowserSurface"/> per lane and records what was asked for, so a
-/// test can assert profile isolation and how many browsers a run actually opened.
+/// Hands out a fresh <see cref="FakeBrowserSurface"/> per browser and records what was asked for,
+/// so a test can assert profile isolation and how many browsers a run actually opened.
 /// </summary>
 public sealed class FakeBrowserSurfaceFactory : IBrowserSurfaceFactory
 {
-    private int created;
-
-    /// <summary>Profile keys requested, in order — one entry per lane actually created.</summary>
+    /// <summary>Profile keys requested, in order — one entry per browser actually created.</summary>
     public List<string> Requested { get; } = [];
 
-    /// <summary>Every lane handed out, so a test can inspect what ran on which browser.</summary>
-    public List<FakeLane> Lanes { get; } = [];
+    /// <summary>Every browser handed out, so a test can inspect what ran where.</summary>
+    public List<FakeSession> Sessions { get; } = [];
 
     /// <summary>
     /// Shapes each new surface's eval responses. The default answers the probes every run makes -
-    /// the page-busy check and the resolver - so a lane behaves like a working browser unless a
+    /// the page-busy check and the resolver - so a browser behaves like a working one unless a
     /// test deliberately makes it behave otherwise.
     /// </summary>
     public Func<string, string> Responder { get; set; } = script =>
@@ -34,20 +32,19 @@ public sealed class FakeBrowserSurfaceFactory : IBrowserSurfaceFactory
         return "{}";
     };
 
-    public Task<IBrowserLane> CreateLaneAsync(string profileKey, CancellationToken ct)
+    public Task<IBrowserSession> CreateAsync(string profileKey, CancellationToken ct)
     {
         lock (Requested)
         {
             Requested.Add(profileKey);
-            var lane = new FakeLane($"lane-{++created}", profileKey, new FakeBrowserSurface { DefaultEvalResponse = Responder });
-            Lanes.Add(lane);
-            return Task.FromResult<IBrowserLane>(lane);
+            var session = new FakeSession(profileKey, new FakeBrowserSurface { DefaultEvalResponse = Responder });
+            Sessions.Add(session);
+            return Task.FromResult<IBrowserSession>(session);
         }
     }
 
-    public sealed class FakeLane(string laneId, string profileKey, FakeBrowserSurface surface) : IBrowserLane
+    public sealed class FakeSession(string profileKey, FakeBrowserSurface surface) : IBrowserSession
     {
-        public string LaneId => laneId;
         public string ProfileKey => profileKey;
         public IBrowserSurface Surface => surface;
         public FakeBrowserSurface Fake => surface;

@@ -106,8 +106,6 @@ public static class ServiceCollectionExtensions
             rootPath: Environment.GetEnvironmentVariable("AUTOMATA_RUNS_ROOT")));
         services.AddSingleton(_ => new ParkedRunStore(
             rootPath: Environment.GetEnvironmentVariable("AUTOMATA_PARKED_ROOT")));
-        services.AddSingleton(_ => new LiveLaneStore(
-            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_LIVE_ROOT")));
         services.AddSingleton(sp => new DemoSeeder(
             sp.GetRequiredService<CollectionStore>(),
             demoRoot: Environment.GetEnvironmentVariable("AUTOMATA_DEMOS_ROOT"),

@@ -43,28 +43,22 @@ Three groups of checks run, in this order:
 4. **Tab content** - bindings, control flow, the Data tab, the feature view and Gherkin
    authoring, the Schedule tab (a picker shape compiling to cron, a refusal coming back with its
    reason and the values intact, chain previews, several triggers on one entry, pause keeping its
-   trigger, the tree chip), and the Runs tab, including a parked run and the live lane strip. These come last because they
-   leave state behind: the schedule checks add real entries, which is what puts a `.chip.sched` on
+   trigger, the tree chip), and the Runs tab, including a parked run. These come last because
+   they leave state behind: the schedule checks add real entries, which is what puts a `.chip.sched` on
    a tree row for the check that follows.
 
    The parked-run check seeds BOTH halves the app has to join — an open run manifest under
    `AUTOMATA_RUNS_ROOT` and a matching file under `AUTOMATA_PARKED_ROOT`. An open manifest alone
    is indistinguishable from a run that is still executing, which is exactly the bug the join
    exists to prevent, so seeding only one half would assert nothing. The app itself never parks
-   (it has one un-pooled browser pane, so releasing it would free nothing); parking belongs to
-   `automata-runner`, and the tab's job is only to explain what the runner parked.
-
-   The lane-strip check seeds a live process using **node's own pid and real start time**. The
-   reader checks liveness against the operating system rather than trusting the file, so a fixture
-   with a made-up pid is correctly discarded before it ever renders. It also seeds a file for a
-   pid that is definitely gone and asserts the phantom neither renders nor survives the read —
-   a monitor that shows work which is not happening is worse than one that shows nothing.
+   (its browser pane is the one the user is watching, so releasing it would free nothing); parking
+   belongs to `automata-runner`, and the tab's job is only to explain what the runner parked.
 
 Then a **second app launch** runs the **floor check** against an *empty* store on ports
 9335/9336, because the first-run tutorial only fires when there are no collections. It asserts
 the tutorial still walks Collection -> Task -> Steps and ends at Click Images, that the action
 picker still offers only Record plus the original 14 actions, that no advanced affordance
-(bindings, per-scope settings, tabs, lane strip) is on screen, and that the store gained no new
+(bindings, per-scope settings, tabs) is on screen, and that the store gained no new
 JSON fields. **This is the project's governing invariant** — a phase that breaks it is not
 shippable, however much else it delivers.
 
@@ -99,7 +93,7 @@ Two gotchas worth knowing before you write assertions against computed style:
 
 `AUTOMATA_PANEL_CDP_PORT`, `AUTOMATA_TARGET_CDP_PORT`, `AUTOMATA_PANEL_PROFILE_DIR`,
 `AUTOMATA_TARGET_PROFILE_DIR`, `AUTOMATA_COLLECTIONS_ROOT`, `AUTOMATA_DATASETS_ROOT`,
-`AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`, `AUTOMATA_LIVE_ROOT`,
+`AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`,
 `AUTOMATA_DEMOS_ROOT`, `AUTOMATA_SETTINGS_PATH`, `AUTOMATA_FILE_DIALOG_PATH` — all opt-in, all
 no-ops when unset
 (see `MainWindow.xaml.cs`'s `DebugOptions`/`ProfileDir` helpers and
@@ -134,8 +128,7 @@ dialogs plus the shared focus trap and focus restore), `tree.js` (tree markup, w
 drag-and-drop, and the whole keyboard model), `editor.js`, `render.js`, `tutorial.js`, `tabs.js`,
 `settings.js`, `scoped-settings.js` (the global/collection/task/step settings dialog),
 `binding-field.js` (the value-source picker), `flow-fields.js` (editors for the control-flow
-steps), `data.js` (the Data tab), `runs.js` (the Runs tab), `lanes.js` (the live lane strip and its
-poll), `schedule.js` (the Schedule tab, its trigger editor, and the chip tree rows carry),
+steps), `data.js` (the Data tab), `runs.js` (the Runs tab), `schedule.js` (the Schedule tab, its trigger editor, and the chip tree rows carry),
 `flow.js` (natural-language drafting and the feature view), and `bridge.js` (installs
 `window.ssPanel`). There is no bundler and no build step — WebView2 serves
 `wwwroot` over the virtual host, so module resolution just works.

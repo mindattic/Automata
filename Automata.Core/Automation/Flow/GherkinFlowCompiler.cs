@@ -467,7 +467,6 @@ public static class GherkinFlowCompiler
             switch (key)
             {
                 case "profile": settings.BrowserProfile = value; break;
-                case "concurrency" when int.TryParse(value, out var lanes): settings.MaxConcurrency = lanes; break;
                 case "retry" when int.TryParse(value, out var attempts):
                     settings.Retry = new RetryPolicy { MaxAttempts = attempts };
                     break;

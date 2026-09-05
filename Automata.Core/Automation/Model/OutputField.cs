@@ -44,4 +44,57 @@ public sealed class TaskInput
     /// point of declaring inputs rather than interpolating strings.
     /// </summary>
     public string? Default { get; set; }
+
+    /// <summary>
+    /// Where this input's value comes from when the task runs as part of a collection: an earlier
+    /// task in that collection, and one of the outputs that task declares.
+    /// <para>
+    /// Null for the ordinary case, and it is only ever a hint — a value supplied directly (the
+    /// CLI's <c>--input</c>, a <c>runTask</c> step's binding) still wins, and a wiring whose task
+    /// has not run in this collection falls back to <see cref="Default"/> exactly as if nothing
+    /// had been wired. That keeps a task runnable on its own, which is what makes it worth
+    /// wiring into a collection in the first place.
+    /// </para>
+    /// </summary>
+    public TaskOutputRef? From { get; set; }
+}
+
+/// <summary>Points at one output of one task — picked from a list, never typed.</summary>
+public sealed class TaskOutputRef
+{
+    public string TaskId { get; set; } = "";
+
+    /// <summary>The task's name as it was when the wiring was made. Only ever used to explain a
+    /// wiring whose task has since been deleted; the id is what resolves it.</summary>
+    public string? TaskName { get; set; }
+
+    /// <summary>Names a <see cref="TaskOutput"/> of that task.</summary>
+    public string OutputName { get; set; } = "";
+}
+
+/// <summary>
+/// A value a task PUBLISHES when it finishes — the counterpart to <see cref="TaskInput"/>, and
+/// what makes a collection a pipeline rather than a list of unrelated jobs.
+/// <para>
+/// It names a step inside the task and one of that step's declared outputs, so publishing is a
+/// selection rather than a second copy of the value. A later task in the same collection binds its
+/// own input to this by name, which means task 2 depends on task 1's CONTRACT and not on task 1's
+/// internals: renaming a step, or re-recording it, cannot silently break the task downstream.
+/// </para>
+/// </summary>
+public sealed class TaskOutput
+{
+    /// <summary>Unique within its task; what a later task's input is wired to.</summary>
+    public string Name { get; set; } = "";
+
+    public string? Description { get; set; }
+
+    /// <summary>The <see cref="Step.Id"/> inside this task that produces the value.</summary>
+    public string SourceStepId { get; set; } = "";
+
+    /// <summary>
+    /// Which of that step's declared outputs to publish. Null means the step's first one, which is
+    /// what a step with a single output (the common case) always means.
+    /// </summary>
+    public string? SourceOutputField { get; set; }
 }

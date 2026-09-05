@@ -28,8 +28,6 @@ public class EngineSettingsResolverTests
             // its collection. That is exactly what ReplayEngine and RunCollectionAsync did.
             Assert.That(s.ContinueOnStepError, Is.False);
             Assert.That(s.ContinueOnTaskError, Is.True);
-            Assert.That(s.Isolation, Is.EqualTo(FailureIsolation.IsolateLane));
-            Assert.That(s.MaxConcurrency, Is.EqualTo(1));
             Assert.That(s.BrowserProfile, Is.EqualTo("default"));
             Assert.That(s.ScreenshotOnFailure, Is.False);
             Assert.That(s.LlmProvider, Is.EqualTo("claude"));
@@ -68,29 +66,6 @@ public class EngineSettingsResolverTests
 
         Assert.That(s.SelfHeal, Is.False, "the collection's value should survive an empty task and step");
         Assert.That(s.AllowLlmRepair, Is.True);
-    }
-
-    [Test]
-    public void MaxConcurrency_GlobalIsACeilingADeeperScopeCanOnlyLower()
-    {
-        var global = new AutomataSettings { EngineDefaults = new EngineSettingsOverride { MaxConcurrency = 4 } };
-
-        Assert.That(EngineSettingsResolver.Resolve(global).MaxConcurrency, Is.EqualTo(4));
-        Assert.That(EngineSettingsResolver.Resolve(global, new EngineSettingsOverride { MaxConcurrency = 2 })
-            .MaxConcurrency, Is.EqualTo(2), "a collection may tighten");
-        Assert.That(EngineSettingsResolver.Resolve(global, task: new EngineSettingsOverride { MaxConcurrency = 99 })
-            .MaxConcurrency, Is.EqualTo(4), "a task must not out-declare the global ceiling");
-    }
-
-    [Test]
-    public void MaxConcurrency_TightestScopeWinsRegardlessOfDepth()
-    {
-        var s = EngineSettingsResolver.Resolve(
-            new AutomataSettings { EngineDefaults = new EngineSettingsOverride { MaxConcurrency = 8 } },
-            new EngineSettingsOverride { MaxConcurrency = 2 },
-            new EngineSettingsOverride { MaxConcurrency = 6 });
-
-        Assert.That(s.MaxConcurrency, Is.EqualTo(2));
     }
 
     [Test]

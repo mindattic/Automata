@@ -263,6 +263,7 @@ public sealed class DemoSeeder(
             Steps = factory.Steps,
             Settings = factory.Settings,
             Inputs = factory.Inputs ?? [],
+            Outputs = factory.Outputs ?? [],
             // Fixed, not generated — see DemoTasks. A runTask step names a task by id, so a demo
             // that called another demo could not be written at all if the callee's id were only
             // decided at seed time.
@@ -292,7 +293,7 @@ public sealed class DemoSeeder(
 
     /// <summary>
     /// A content hash over everything a regenerate would put back: name, description, steps, start
-    /// URL and settings.
+    /// URL, settings, and the inputs and outputs the task declares.
     /// <para>
     /// The name is in there because restoring puts the name back too, and a survey that called a
     /// renamed example "up to date" would be promising not to touch something it is about to
@@ -302,17 +303,18 @@ public sealed class DemoSeeder(
     /// </summary>
     private static string HashOf(DemoTask factory) =>
         Hash(factory.Name, factory.Description, factory.StartUrl, factory.Steps, factory.Settings,
-            factory.Inputs ?? []);
+            factory.Inputs ?? [], factory.Outputs ?? []);
 
     private static string HashOf(TaskDefinition task) =>
-        Hash(task.Name, task.Description, task.StartUrl, task.Steps, task.Settings, task.Inputs);
+        Hash(task.Name, task.Description, task.StartUrl, task.Steps, task.Settings, task.Inputs,
+            task.Outputs);
 
     private static string Hash(
         string name, string description, string? startUrl, List<Step> steps,
-        EngineSettingsOverride? settings, List<TaskInput> inputs)
+        EngineSettingsOverride? settings, List<TaskInput> inputs, List<TaskOutput> outputs)
     {
         var payload = JsonSerializer.Serialize(
-            new { name, description, startUrl, steps, settings, inputs }, HashOptions);
+            new { name, description, startUrl, steps, settings, inputs, outputs }, HashOptions);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))[..16];
     }
 

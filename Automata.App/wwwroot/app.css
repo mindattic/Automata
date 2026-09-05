@@ -47,7 +47,7 @@ html, body, #tree, #log, #rec-steps, #modal-list, #modal-form, .modal-box,
 
 /* Long unbroken things — a URL, a selector, a step id — are the usual cause of sideways overflow,
    and they are exactly what this app is full of. */
-#log, .scope-note, .key-status, .demo-warning, .lane-meta, .dataset-columns {
+#log, .scope-note, .key-status, .demo-warning, .dataset-columns {
   overflow-wrap: anywhere;
 }
 
@@ -916,44 +916,6 @@ button.mini.binding-toggle { display: none; }
 .sched-control input[type=datetime-local] { width: 190px; flex: none; }
 .sched-control select { flex: 1; min-width: 120px; }
 .sched-control .unit { font-size: var(--text-xs); color: var(--color-fg-muted); }
-
-/* ---- live lane strip ---- */
-
-/* Present only while something is actually running, so there is no empty widget to explain and
-   nothing extra on screen for a first-run user. */
-#lane-strip {
-  margin-bottom: var(--space-3);
-}
-
-.lane-group + .lane-group { margin-top: var(--space-2); }
-
-.lane-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 26px;
-  padding: 3px 6px;
-  background: var(--color-bg-1);
-  border: 1px solid var(--color-accent);
-  border-bottom: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.lane-row:last-child { border-bottom: 1px solid var(--color-accent); }
-.lane-row .status { width: 18px; flex: none; text-align: center; color: var(--color-warning); }
-.lane-row .name { flex: none; max-width: 40%; min-width: 0; overflow-wrap: anywhere; }
-
-/* What the lane is doing right this second - the part worth reading, so it gets the space. */
-.lane-step {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--text-sm);
-  color: var(--color-fg-link);
-}
-
-.lane-meta { font-size: var(--text-xs); color: var(--color-fg-muted); flex: none; }
 
 /* A parked run is waiting, not stuck — the left edge marks it out from an ordinary summary line
    so the explanation reads as status rather than as the run's result. */

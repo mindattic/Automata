@@ -5,7 +5,6 @@
 // app was closed.
 
 import { $, esc, post, state } from './core.js';
-import { renderLanes } from './lanes.js';
 
 var STATE_GLYPH = { running: '⟳', parked: '⏸', passed: '✓', failed: '✗' };
 
@@ -67,18 +66,13 @@ export function renderRuns() {
         ' data-tooltip="Open the Runs folder">📁</button>' +
         '</span></div>';
 
-    // The live strip lives above the history, inside a host this function re-creates. renderRuns
-    // replaces the whole panel, so the strip has to be re-hosted here and re-filled from state
-    // rather than left to the next poll - otherwise a refresh would blank it for two seconds.
-    var host = '<div id="lane-host"></div>';
-
     if (!runs.length) {
-        view.innerHTML = head + host +
+        view.innerHTML = head +
             '<p class="empty-state">No runs yet. Every run — from here or from ' +
             '<code>automata-runner</code> — is recorded in ' + esc(state.runRoot || 'the Runs folder') +
             ', so finished runs show up here even if this window was closed at the time.</p>';
     } else {
-        view.innerHTML = head + host +
+        view.innerHTML = head +
             '<div id="run-list" role="list" aria-label="Recent runs">' +
             runs.map(function (r) {
                 var outcome = outcomeOf(r);
@@ -98,8 +92,6 @@ export function renderRuns() {
             }).join('') +
             '</div>';
     }
-
-    renderLanes();
 
     var refresh = $('btn-refresh-runs');
     if (refresh) refresh.addEventListener('click', function () { post('getRuns'); });

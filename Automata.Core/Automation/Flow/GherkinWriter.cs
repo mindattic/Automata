@@ -271,7 +271,6 @@ public static class GherkinWriter
         if (settings == null) return;
         var tags = new List<string>();
         if (!string.IsNullOrWhiteSpace(settings.BrowserProfile)) tags.Add("@profile:" + settings.BrowserProfile);
-        if (settings.MaxConcurrency is { } lanes) tags.Add("@concurrency:" + lanes);
         if (settings.Retry is { MaxAttempts: var attempts } && attempts > 1) tags.Add("@retry:" + attempts);
         if (settings.DefaultStepTimeoutMs is { } ms) tags.Add("@timeout:" + ms);
         if (settings.ContinueOnStepError == true) tags.Add("@continue-on-error");

@@ -141,7 +141,7 @@ public sealed partial class FlowAuthoringService
               - Prefer pressing Enter over clicking a search button; search suggestion overlays make
                 the button unreliable.
 
-            Tags you may use: @profile:<name>, @concurrency:<n>, @retry:<n>, @timeout:<ms>,
+            Tags you may use: @profile:<name>, @retry:<n>, @timeout:<ms>,
             @continue-on-error, @self-heal:off. Scheduling tags are not supported yet.
 
             """);

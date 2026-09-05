@@ -1435,6 +1435,92 @@ start deciding whether you are a robot, and a rate-limited run comes back lookin
 profile that is wrong - which happened once during this phase, on Bing, between two runs that
 passed. There is a pause between scenarios now.
 
+### Phase 31 - one browser, one task at a time, and a value that survives the gap (2026-09-04)
+
+The plan for this phase was a fan-out: one task run over a list of parameter sets, in parallel, on
+a pool of browsers. It was cut before a line of it was written, and the parallel machinery that
+already existed was cut with it. **Everything runs sequentially now**, and what replaced the
+fan-out is the thing sequence makes possible: a collection whose tasks hand values to each other.
+
+**What went.** `BrowserLanePool` and `LeasedLane`; `WorkflowEngine.RunRowsInParallelAsync` and the
+`ForEachSpec.MaxConcurrency` that asked for it; the `MaxConcurrency` engine setting and its
+tighten-only resolution; `FailureIsolation`, which only ever described what a failure in one lane
+did to the lanes beside it; `LaneMonitor`, `LiveLaneStore` and the live lane strip in the Runs tab;
+the parallel twin of the shop example. `IBrowserSurfaceFactory` hands out one `IBrowserSession`
+now, and a run holds exactly one of them (`RunnerCliDispatcher.RunBrowser`), swapped only when a
+task asks for a different named browser profile - which means different cookies, and therefore
+genuinely a different browser.
+
+That is a large deletion to describe as progress, so the argument for it: **a pipeline is worth
+more than a pool.** Every one of those types existed to let independent work happen at once, and
+independent work is the one shape this product did not need first. What it needed was for task 2 to
+be able to use what task 1 found - and that is only meaningful when there is one browser, in one
+order, with one thing touching the page.
+
+**What arrived.** A task can now declare `Outputs` beside its `Inputs`: a name, and which step
+inside it produces the value. When it finishes, the engine resolves them and emits
+`StepEvent.TaskPublished`. The caller running a collection keeps those (`TaskPipeline.Carried`) and
+offers them to the tasks that follow; a later task's `TaskInput.From` names an earlier task and one
+of its outputs, and `TaskPipeline.Resolve` fills it in. Both callers go through that one function -
+the headless runner and the desktop app - because a pipeline that behaved differently in the window
+from how it behaves at 3am would be worse than no pipeline at all.
+
+Three rules, and each of them is the interesting half of some failure that would otherwise be
+silent:
+
+- **A supplied value beats a wiring.** `--input term=heron` re-runs one task of a pipeline against a
+  particular value without editing anything, and that only works if the wiring cannot overrule it.
+- **A wiring is a hint, never a requirement.** A task whose upstream has not run falls back to its
+  own declared default and says so in the log. That is what keeps a wired task runnable on its own,
+  which is the only thing that makes wiring it into a collection safe: a task that could only run as
+  part of its collection is a task nobody can fix in isolation.
+- **An output nothing produced is not published as an empty string.** It is left out, with a line in
+  the log saying so, so the task downstream falls back to a default and names what it is missing.
+  A blank that looks like a value is the worst outcome available here - every task passes, the last
+  one records something nobody asked for, and the run reports success.
+- **A task that FAILED still publishes whatever it did produce.** A collection carries on past a
+  failed task by default, so the choice is between handing the next task the value that was actually
+  read and handing it a default nobody chose. The failure is already in the summary and the exit
+  code; suppressing the value would only make the row that gets written harder to explain.
+
+**The declaration is what makes it safe to re-record.** Task 2 names an output of task 1, not a step
+inside it. Re-recording task 1 cannot silently change what task 2 receives; only renaming the
+published value can, and that is a rename you can see. It is the same argument declared inputs
+already made against `{{template}}` placeholders, applied one level up.
+
+**In the window, both ends of a wiring are picked.** The task wrench's "Inputs and outputs…" dialog
+grew a Publishes section - a name plus a dropdown of every step in the task that captures a value -
+and each input grew a "comes from" dropdown listing every output published by another task in the
+same collection. Nothing there takes a typed id, because a mistyped id is a wiring that silently
+does nothing and looks exactly like one that works. A wiring whose task or output has since gone is
+shown as "(no longer published)" rather than quietly dropped, for the same reason.
+
+**Three new examples, which only mean anything together.** "Pipeline 1 - find the next ticket" reads
+a ticket id off a queue page and publishes it; "Pipeline 2 - look that ticket up" types that id into
+a DIFFERENT page and publishes the owner and priority the desk reports; "Pipeline 3 - write down
+what we found" opens no page at all and writes one row from three values it was handed. The second
+page is deliberate: if the middle task could have read the owner off the queue page, the example
+would prove nothing about carrying a value between tasks.
+
+`tools/verify-demos.mjs` now runs the **whole Demos collection in one process** and checks the row
+that comes out against values read straight off the generated pages. Running the three pipeline
+tasks separately would have proved nothing - each would have fallen back to its default and passed.
+The collection run ends by parking, at the example whose entire point is to park, which is itself
+the evidence that it walked the tasks in order and got that far.
+
+Green at the end of it: **474 NUnit tests**, `verify-ui` **82/82** (the lane-strip group gone, a
+pipeline group in its place), `verify-js` 10/10, `verify-demos` all pass, `verify-shop` all pass,
+`verify-live --live` all pass. Bing failed once mid-phase and passed on a retry against the same
+binary - the rate-limit flake phase 29 already documented, not a regression.
+
+Two things worth knowing if this is ever revisited:
+
+- **A `for-each` row still fails the whole loop.** Rows are not independent attempts; they are one
+  job walking a list, sharing one task's failure policy. The first row that cannot do its work stops
+  the walk. That is a deliberate trade and the test says so by name.
+- **The console mangles `←` and `→`.** A check that matched the runner's carried-value line by its
+  arrow failed on a codepage, not on a bug. Match the names, not the punctuation.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1450,8 +1536,10 @@ yet** below.
   webmail inbox → first 20 subject lines.
 - **Fingerprint heuristic tuning** against real sites (auto-generated id/class reject patterns).
 - **Orchestration (old Phase 4)**: several instances running the SAME task at once with different
-  parameter bindings. The parameters themselves landed in phase 16; what is left is a runner that
-  fans one task out over a list of them, which is a scheduling question rather than a model one.
+  parameter bindings. **Cut in phase 31, along with every other form of concurrency.** Everything
+  runs one thing at a time now, deliberately, and the pipeline that replaced it needs that to be
+  true. If this comes back it starts from a working sequential product rather than from a pool that
+  was never used.
 - **Cross-origin iframes, and closed shadow roots.** Open shadow roots and same-origin iframes
   landed in phase 18; these two did not, and the reason is the same for both: **the page cannot see
   in.** A closed root exposes nothing to script by design, and a cross-origin document throws on
@@ -1471,8 +1559,7 @@ yet** below.
   one action that still stops at the boundary.
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
-  running - a parallel for-each forks a state per row, and no other step is in flight. So it is
-  really an assertion with a timeout, not a wait. Making it a wait means either re-reading the page
-  each poll (a condition over a live element, not over a captured output) or letting a signal or a
-  sibling lane write into run state. The `slow` example uses it in the only shape that currently
-  works, as a guard on a value already read.
+  running, and no other step is in flight. So it is
+  really an assertion with a timeout, not a wait. Making it a wait means re-reading the page each
+  poll - a condition over a live element rather than over a captured output. The `slow` example uses
+  it in the only shape that currently works, as a guard on a value already read.

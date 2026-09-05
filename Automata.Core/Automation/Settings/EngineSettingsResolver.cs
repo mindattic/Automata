@@ -6,12 +6,10 @@ namespace Automata.Core.Automation.Settings;
 /// <summary>
 /// Flattens the global → collection → task → step override chain into one <see cref="ResolvedSettings"/>.
 /// <para>
-/// Two rules, and they differ on purpose:
+/// One rule:
 /// </para>
 /// <list type="bullet">
-/// <item>Most settings are <b>deepest-wins</b> — the innermost scope that states a value decides it.</item>
-/// <item><see cref="EngineSettingsOverride.MaxConcurrency"/> is <b>tighten-only</b> — the global
-/// value is a ceiling and each deeper scope may lower it but never raise it.</item>
+/// <item>Every setting is <b>deepest-wins</b> — the innermost scope that states a value decides it.</item>
 /// </list>
 /// <para>
 /// <see cref="Floor"/> is the contract that matters most: with nothing overridden anywhere, it
@@ -26,8 +24,8 @@ public static class EngineSettingsResolver
 
     /// <summary>
     /// Exactly today's behavior: a 10s step budget, self-heal on, LLM repair off, one attempt,
-    /// a failed step aborts its task but a failed task does NOT abort its collection, one lane,
-    /// the shared browser profile, and no screenshots.
+    /// a failed step aborts its task but a failed task does NOT abort its collection, the shared
+    /// browser profile, and no screenshots.
     /// </summary>
     public static ResolvedSettings Floor() => new(
         DefaultStepTimeoutMs: FloorStepTimeoutMs,
@@ -38,8 +36,6 @@ public static class EngineSettingsResolver
         // first failed step, while RunCollectionAsync keeps going to the next task.
         ContinueOnStepError: false,
         ContinueOnTaskError: true,
-        Isolation: FailureIsolation.IsolateLane,
-        MaxConcurrency: 1,
         BrowserProfile: FloorBrowserProfile,
         ScreenshotOnFailure: false,
         LlmProvider: "claude");
@@ -72,14 +68,6 @@ public static class EngineSettingsResolver
             return value;
         }
 
-        // Tighten-only: start at the global ceiling, then let deeper scopes lower it.
-        var maxConcurrency = globalScope?.MaxConcurrency is int ceiling && ceiling > 0
-            ? ceiling
-            : floor.MaxConcurrency;
-        foreach (var scope in new[] { collection, task, step })
-            if (scope?.MaxConcurrency is int v && v > 0)
-                maxConcurrency = Math.Min(maxConcurrency, v);
-
         var provider = DeepestRef(s => string.IsNullOrWhiteSpace(s.LlmProvider) ? null : s.LlmProvider,
             string.IsNullOrWhiteSpace(global?.Provider) ? floor.LlmProvider : global!.Provider);
 
@@ -92,8 +80,6 @@ public static class EngineSettingsResolver
             Retry = DeepestRef(s => s.Retry, floor.Retry),
             ContinueOnStepError = Deepest(s => s.ContinueOnStepError, floor.ContinueOnStepError),
             ContinueOnTaskError = Deepest(s => s.ContinueOnTaskError, floor.ContinueOnTaskError),
-            Isolation = Deepest(s => s.Isolation, floor.Isolation),
-            MaxConcurrency = maxConcurrency,
             BrowserProfile = DeepestRef(
                 s => string.IsNullOrWhiteSpace(s.BrowserProfile) ? null : s.BrowserProfile,
                 floor.BrowserProfile),

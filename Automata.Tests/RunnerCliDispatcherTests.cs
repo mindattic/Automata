@@ -34,7 +34,6 @@ public class RunnerCliDispatcherTests
         clock = new FakeClock(new DateTimeOffset(2026, 5, 4, 8, 0, 0, TimeSpan.Zero));
         registrar = new FakeRegistrar();
         parked = new ParkedRunStore(Path.Combine(root, "parked"));
-        live = new LiveLaneStore(Path.Combine(root, "live"));
     }
 
     [TearDown]
@@ -45,7 +44,6 @@ public class RunnerCliDispatcherTests
 
     private ScheduleStore schedule = null!;
     private ParkedRunStore parked = null!;
-    private LiveLaneStore live = null!;
     private FakeClock clock = null!;
     private FakeRegistrar registrar = null!;
 
@@ -59,8 +57,7 @@ public class RunnerCliDispatcherTests
         schedule,
         clock,
         registrar,
-        parked,
-        live);
+        parked);
 
     /// <summary>Records what would have been registered, so the CLI is testable without touching
     /// the machine's real Task Scheduler.</summary>
@@ -713,7 +710,7 @@ public class RunnerCliDispatcherTests
             Assert.That(run.Summary, Does.Contain("1/1 task(s) passed"));
         });
         // The step after the wait actually ran.
-        Assert.That(factory.Lanes.SelectMany(l => l.Fake.Calls).Any(c => c.Args == "https://after.example"),
+        Assert.That(factory.Sessions.SelectMany(b => b.Fake.Calls).Any(c => c.Args == "https://after.example"),
             Is.True, "resuming must carry on from the step after the wait");
     }
 
@@ -759,7 +756,7 @@ public class RunnerCliDispatcherTests
         var run = runs.ListRuns().Single();
         Assert.That(run.Summary, Does.Contain("2/2 task(s) passed"),
             "the summary has to count the whole collection, not only what ran after the wait");
-        Assert.That(factory.Lanes.SelectMany(l => l.Fake.Calls).Any(c => c.Args == "https://second.example"),
+        Assert.That(factory.Sessions.SelectMany(b => b.Fake.Calls).Any(c => c.Args == "https://second.example"),
             Is.True, "the queued task should have run after the resumed one");
     }
 
@@ -781,71 +778,6 @@ public class RunnerCliDispatcherTests
             Assert.That(runs.ListRuns().Single().Success, Is.False);
             Assert.That(Written, Does.Contain("no longer exists"));
         });
-    }
-
-    // ---- the live lane strip -------------------------------------------------------------------
-
-    /// <summary>
-    /// The runner is headless, so the lanes it opens are invisible unless it publishes them. This
-    /// checks from INSIDE a running step — the browser's own eval is the only hook that fires while
-    /// a lane is genuinely busy — that the lane is on record at that moment, and gone afterwards.
-    /// </summary>
-    [Test]
-    public async Task ARunPublishesItsLanesWhileTheyAreBusyAndClearsThemAfterwards()
-    {
-        SeedTask("Nightly", "Batch", Nav());
-        IReadOnlyList<(LiveLanes Process, LaneStatus Lane)> whileBusy = [];
-        var inner = factory.Responder;
-        factory.Responder = script =>
-        {
-            if (whileBusy.Count == 0) whileBusy = live.BusyLanes();
-            return inner(script);
-        };
-
-        await Dispatcher().DispatchAsync(["run", "--task", "Batch"]);
-
-        Assert.That(whileBusy, Is.Not.Empty, "a busy lane has to be visible to another process");
-        Assert.Multiple(() =>
-        {
-            Assert.That(whileBusy[0].Process.ProcessName, Is.EqualTo("automata-runner"));
-            Assert.That(whileBusy[0].Process.TargetName, Is.EqualTo("Batch"));
-            Assert.That(whileBusy[0].Lane.TaskName, Is.EqualTo("Batch"));
-            Assert.That(whileBusy[0].Lane.CurrentStepLabel, Is.EqualTo("Go"),
-                "the step in flight is the point of a live strip, not just the task");
-        });
-        Assert.That(live.List(), Is.Empty,
-            "and the record goes when the run does, so a watcher sees the work stop at once");
-    }
-
-    [Test]
-    public async Task StatusReportsWhatIsRunningRightNowBeforeAnythingHistorical()
-    {
-        SeedTask("Nightly", "Batch", Nav());
-        await Dispatcher().DispatchAsync(["run", "--task", "Batch"]);
-        output.GetStringBuilder().Clear();
-
-        // Seeded AFTER that run, on purpose: a finished run clears its OWN monitor file on the way
-        // out, which shares this process id — so seeding first would have it swept away and the
-        // test would prove the opposite of what it means to.
-        live.Publish(new LiveLanes
-        {
-            ProcessId = Environment.ProcessId,
-            ProcessStartedUtc = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime(),
-            ProcessName = "automata-runner",
-            TargetName = "Nightly",
-            MaxConcurrency = 3,
-            UpdatedUtc = clock.UtcNow,
-            Lanes = [new LaneStatus("lane-1", "default", true, "r1", "Wolf Tshirts", "Click Images", clock.UtcNow)],
-        });
-
-        await Dispatcher().DispatchAsync(["status"]);
-
-        Assert.That(Written, Does.Contain("Running now"));
-        Assert.That(Written, Does.Contain("Click Images"), "the step in flight, not just the task");
-        Assert.That(Written, Does.Contain("up to 3 lane(s)"));
-        Assert.That(Written.IndexOf("Running now", StringComparison.Ordinal),
-            Is.LessThan(Written.IndexOf("Recent runs", StringComparison.Ordinal)),
-            "what is happening now comes before what has already happened");
     }
 
     [Test]

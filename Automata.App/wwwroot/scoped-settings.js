@@ -13,9 +13,9 @@
 import { $, esc, post, state, saveTask, findCollection, findTask, findStep } from './core.js';
 import { openFormModal } from './modal.js';
 
-// Only settings the engine honours TODAY are offered. MaxConcurrency, Isolation, BrowserProfile
-// and ScreenshotOnFailure exist in the model but are inert until the phases that make them real,
-// and a control that silently does nothing is worse than no control at all.
+// Only settings the engine honours TODAY are offered. BrowserProfile and ScreenshotOnFailure
+// exist in the model but are inert until the phases that make them real, and a control that
+// silently does nothing is worse than no control at all.
 var FIELDS = [
     { key: 'defaultStepTimeoutMs', label: 'Step timeout', type: 'number', unit: 'ms', min: 100 },
     { key: 'selfHeal', label: 'Self-heal selectors', type: 'bool' },

@@ -34,11 +34,10 @@ public sealed class RunnerCliDispatcher
     private readonly RunStore runs;
     private readonly WorkflowEngine engine;
     private readonly AutomataSettingsStore settings;
-    private readonly IBrowserSurfaceFactory laneFactory;
+    private readonly IBrowserSurfaceFactory browsers;
     private readonly TextWriter output;
     private readonly ScheduleStore schedule;
     private readonly ParkedRunStore parked;
-    private readonly LiveLaneStore live;
     private readonly IClock clock;
     private readonly IScheduledTaskRegistrar? registrar;
     private readonly DemoSeeder? demos;
@@ -48,26 +47,24 @@ public sealed class RunnerCliDispatcher
         RunStore runs,
         WorkflowEngine engine,
         AutomataSettingsStore settings,
-        IBrowserSurfaceFactory laneFactory,
+        IBrowserSurfaceFactory browsers,
         TextWriter output,
         ScheduleStore? schedule = null,
         IClock? clock = null,
         IScheduledTaskRegistrar? registrar = null,
         ParkedRunStore? parked = null,
-        LiveLaneStore? live = null,
         DemoSeeder? demos = null)
     {
         this.collections = collections;
         this.runs = runs;
         this.engine = engine;
         this.settings = settings;
-        this.laneFactory = laneFactory;
+        this.browsers = browsers;
         this.output = output;
         this.schedule = schedule ?? new ScheduleStore();
         this.clock = clock ?? new SystemClock();
         this.registrar = registrar;
         this.parked = parked ?? new ParkedRunStore();
-        this.live = live ?? new LiveLaneStore();
         this.demos = demos;
     }
 
@@ -196,19 +193,15 @@ public sealed class RunnerCliDispatcher
     {
         var global = settings.Load();
 
-        // The lanes this run opens are the interesting ones, and nobody can see them: this process
-        // is headless and usually running unattended. The monitor publishes them where the desktop
-        // app can read them, and takes its file away again when the run ends.
-        using var monitor = new LaneMonitor(live, "automata-runner")
-        {
-            TargetName = targetName,
-            RunId = run.RunId,
-        };
+        // ONE browser for the whole run, opened on first use and handed to every task in turn.
+        // That is what makes a collection a pipeline rather than a list: task 2 starts on the page
+        // task 1 left behind, still logged in, with whatever it typed still typed.
+        await using var browser = new RunBrowser(browsers, output);
 
-        // One pool for the whole run, sized by the resolved ceiling. That is the single place the
-        // machine-level concurrency setting is applied; a for-each may only ask for less.
-        var ceiling = EngineSettingsResolver.Resolve(global).MaxConcurrency;
-        await using var pool = new BrowserLanePool(laneFactory, ceiling, onChanged: monitor.OnChanged);
+        // What each task published, for the tasks after it. A resumed run starts this empty: the
+        // tasks that already ran did so in an earlier process, and inventing values they might
+        // have published would be worse than the wiring falling back to its defaults and saying so.
+        var carried = new TaskPipeline.Carried();
 
         var passed = alreadyPassed;
         var stopped = false;
@@ -220,6 +213,9 @@ public sealed class RunnerCliDispatcher
 
             var collection = collections.GetCollection(task.CollectionId);
             var resolved = EngineSettingsResolver.Resolve(global, collection?.Settings, task.Settings);
+            // Supplied values first, then anything an earlier task in this collection published
+            // and this one is wired to. A task that declares no inputs ignores both.
+            var (taskInputs, notes) = TaskPipeline.Resolve(task, carried, inputs);
             var options = new ReplayOptions
             {
                 ResolveForStep = step => EngineSettingsResolver.Resolve(
@@ -228,15 +224,13 @@ public sealed class RunnerCliDispatcher
                 // run that measured a wait against a different clock from the tick that resumes it
                 // would park until a moment the tick never agrees has arrived.
                 Clock = () => clock.UtcNow,
-                // Every task in the list gets the same supplied values. A task that declares none
-                // ignores them, and one that declares an input nobody supplied falls back to its
-                // default — or fails at the step that needed it, by name.
-                Inputs = inputs ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                Inputs = taskInputs,
             };
 
             output.WriteLine($"  {task.Name}…");
-            await using var lease = await pool.AcquireAsync(
-                resolved.BrowserProfile ?? "default", run.RunId, task.Name, ct);
+            foreach (var note in notes) output.WriteLine($"    {note}");
+
+            var surface = await browser.ForAsync(resolved.BrowserProfile ?? "default", task.Name, ct);
 
             var success = false;
             ParkCheckpoint? checkpoint = null;
@@ -249,19 +243,21 @@ public sealed class RunnerCliDispatcher
             var healed = new HashSet<string>(StringComparer.Ordinal);
 
             await foreach (var evt in engine.RunAsync(
-                task, options, lease.Surface, ct, pool, index == 0 ? resumeFirst : null))
+                task, options, surface, ct, index == 0 ? resumeFirst : null))
             {
                 runs.AppendEvent(run.RunId, task.Id, new { kind = evt.GetType().Name, detail = evt.ToString() });
                 switch (evt)
                 {
-                    case StepEvent.StepStarted started:
-                        lease.Describe(started.Label);
-                        break;
                     case StepEvent.StepCompleted done:
                         if (done.Status == StepStatus.Healed && ownSteps.Contains(done.StepId))
                             healed.Add(done.StepId);
                         if (done.ExtractedText != null)
                             outputs[done.StepId] = new Dictionary<string, string> { ["text"] = done.ExtractedText };
+                        break;
+                    case StepEvent.TaskPublished handed:
+                        carried.Record(handed.TaskId, handed.Values);
+                        output.WriteLine(
+                            $"    published {string.Join(", ", handed.Values.Keys)} for the tasks after it");
                         break;
                     case StepEvent.Log line:
                         output.WriteLine($"    {line.Message}");
@@ -294,7 +290,8 @@ public sealed class RunnerCliDispatcher
             if (checkpoint != null)
             {
                 // The run stays OPEN — its manifest is not completed, because it has not
-                // finished. The lane is released by leaving this scope, which is the whole point.
+                // finished. The browser is closed on the way out of this method, which is the
+                // whole point of parking rather than waiting.
                 parked.Save(new ParkedRun
                 {
                     RunId = run.RunId,
@@ -330,6 +327,43 @@ public sealed class RunnerCliDispatcher
         runs.CompleteRun(run.RunId, passed == totalTasks, summary);
         output.WriteLine(summary);
         return passed == totalTasks ? RunnerExitCode.Success : RunnerExitCode.RunFailed;
+    }
+
+    /// <summary>
+    /// The one browser a run works in.
+    /// <para>
+    /// It is opened on first use and kept for every task that wants the same profile, which is
+    /// what makes a collection a pipeline: task 2 starts on the page task 1 left behind, still
+    /// logged in. A task asking for a DIFFERENT named profile gets a different browser, because
+    /// separate cookies is the entire meaning of naming one.
+    /// </para>
+    /// </summary>
+    private sealed class RunBrowser(IBrowserSurfaceFactory factory, TextWriter output) : IAsyncDisposable
+    {
+        private IBrowserSession? current;
+
+        public async Task<IBrowserSurface> ForAsync(string profileKey, string taskName, CancellationToken ct)
+        {
+            if (current != null && !string.Equals(current.ProfileKey, profileKey, StringComparison.Ordinal))
+            {
+                output.WriteLine($"    '{taskName}' asks for browser profile '{profileKey}' — opening it.");
+                // Cleared BEFORE disposing, so a failure to close the old browser cannot leave a
+                // disposed one behind for the next task to try to use.
+                var previous = current;
+                current = null;
+                await previous.DisposeAsync();
+            }
+            current ??= await factory.CreateAsync(profileKey, ct);
+            return current.Surface;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (current == null) return;
+            var closing = current;
+            current = null;
+            await closing.DisposeAsync();
+        }
     }
 
     /// <summary>
@@ -802,32 +836,10 @@ public sealed class RunnerCliDispatcher
 
     private int Status()
     {
-        // What is happening RIGHT NOW, before anything historical. These lanes belong to other
-        // processes — very often a scheduled run this one knows nothing about — which is exactly
-        // why they are worth reporting.
-        var busy = live.BusyLanes();
-        if (busy.Count > 0)
-        {
-            output.WriteLine("Running now:");
-            foreach (var perProcess in busy.GroupBy(x => x.Process.ProcessId))
-            {
-                var owner = perProcess.First().Process;
-                output.WriteLine(
-                    $"  {owner.ProcessName} (pid {owner.ProcessId}) — {owner.TargetName ?? "?"}, " +
-                    $"up to {owner.MaxConcurrency} lane(s) at a time");
-                foreach (var (_, lane) in perProcess)
-                {
-                    var age = lane.StartedUtc == null ? "" : $"  ({Describe(clock.UtcNow - lane.StartedUtc.Value)})";
-                    output.WriteLine(
-                        $"    [{lane.LaneId} · {lane.ProfileKey}]  {lane.TaskName ?? "?"}" +
-                        (lane.CurrentStepLabel == null ? "" : $" — {lane.CurrentStepLabel}") + age);
-                }
-            }
-            output.WriteLine("");
-        }
-
-        // Parked runs next: they are the ones still owed something, and the only ones whose
-        // absence from this list would leave someone wondering where their run went.
+        // Parked runs first: they are the ones still owed something, and the only ones whose
+        // absence from this list would leave someone wondering where their run went. A run in
+        // flight reports itself on its own console as it goes, so there is nothing for this to add
+        // about work that is happening right now.
         var waiting = parked.List();
         if (waiting.Count > 0)
         {
@@ -905,7 +917,7 @@ public sealed class RunnerCliDispatcher
           run --task <id|name>          run one task
           run --collection <id|name>    run every task in a collection, in order
           tick                          resume parked runs and run whatever is due (what Task Scheduler invokes)
-          status                        lanes running now, parked runs, then the ten most recent
+          status                        parked runs, then the ten most recent
 
           schedule list                 what is scheduled, and when each is next due
           schedule add --collection <id|name> --cron "0 9 * * *" [--timezone <id>]
@@ -933,11 +945,11 @@ public sealed class RunnerCliDispatcher
 
         Exit codes: 0 success, 1 a run failed, 2 fault, 3 bad arguments.
 
-        Browser lanes need an interactive session: WebView2 cannot render in session 0, so a
+        The browser needs an interactive session: WebView2 cannot render in session 0, so a
         scheduled task must be registered to run only when the user is logged on.
 
         A wait longer than its step's park-after threshold (15 minutes by default) checkpoints the
-        run and releases its browser rather than holding one idle; the next tick after the wait
+        run and closes its browser rather than holding one idle; the next tick after the wait
         ends picks it up. Parking resets the page to the task's start URL, so a task that must keep
         what it did before the wait should set that threshold to 0 and hold the browser instead.
         """);

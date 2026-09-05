@@ -221,7 +221,7 @@ export function flowFieldsHtml(step, task) {
                     return { value: z, label: z + '%' + (z === 100 ? ' (normal)' : '') };
                 }), pct, '% — kept as it is') + '</select>' +
                 '<p class="scope-note">Stays until another step changes it, and is re-applied ' +
-                'after a navigation. Each lane of a parallel loop starts at 100%.</p></div>';
+                'after a navigation.</p></div>';
         }
 
         default:

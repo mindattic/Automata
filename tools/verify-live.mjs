@@ -60,11 +60,10 @@ const roots = {
   AUTOMATA_DATASETS_ROOT: join(scratch, 'datasets'),
   AUTOMATA_RUNS_ROOT: join(scratch, 'runs'),
   AUTOMATA_PARKED_ROOT: join(scratch, 'parked'),
-  AUTOMATA_LIVE_ROOT: join(scratch, 'live'),
   AUTOMATA_DEMOS_ROOT: join(scratch, 'demos'),
   AUTOMATA_SCHEDULE_PATH: join(scratch, 'schedule.json'),
   AUTOMATA_SETTINGS_PATH: join(scratch, 'settings.json'),
-  AUTOMATA_LANE_PROFILE_ROOT: join(scratch, 'lanes'),
+  AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
 

@@ -6,7 +6,7 @@ namespace Automata.Core.Automation.Model;
 /// <para>
 /// Pure, and deliberately the ONE definition of both answers. Three places need them and must
 /// agree: the replay engine, which performs a wait; the workflow engine, which decides before the
-/// wait starts whether to checkpoint and let the lane go; and the runner, which decides when a
+/// wait starts whether to checkpoint and let the browser go; and the runner, which decides when a
 /// parked run has come due. If they disagreed by even a little, a parked run would resume early
 /// and then wait a second time — the sort of bug that looks like the scheduler being flaky.
 /// </para>

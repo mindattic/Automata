@@ -316,9 +316,28 @@ function writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl) {
 
   const dir = path.join(collectionsRoot, 'Verify Flow');
   mkdirSync(dir, { recursive: true });
+  // A second task, after the first, whose one step CAPTURES a value. Publishing needs something
+  // to publish, and wiring needs two tasks in one collection — this is the smallest fixture that
+  // is both.
+  const readerId = newId();
+
   writeFileSync(path.join(dir, 'collection.json'), JSON.stringify({
     schemaVersion: 2, id: collectionId, name: 'Verify Flow', description: '',
-    createdUtc: now, modifiedUtc: now, taskOrder: [taskId],
+    createdUtc: now, modifiedUtc: now, taskOrder: [taskId, readerId],
+  }, null, 2));
+
+  writeFileSync(path.join(dir, 'Reader.json'), JSON.stringify({
+    schemaVersion: 2, id: readerId, collectionId, name: 'Reader', description: '',
+    startUrl: fixtureUrl,
+    steps: [
+      {
+        id: 'reader-read', action: 'extractText', label: 'Read the heading',
+        target: { tag: 'h1', cssSelector: 'h1', classList: [] },
+        outputs: [{ name: 'text', type: 'string' }],
+        children: [],
+      },
+    ],
+    createdUtc: now, modifiedUtc: now,
   }, null, 2));
 
   writeFileSync(path.join(dir, 'Loop.json'), JSON.stringify({
@@ -340,13 +359,13 @@ function writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl) {
     createdUtc: now, modifiedUtc: now,
   }, null, 2));
 
-  return { flowCollectionId: collectionId, flowTaskId: taskId };
+  return { flowCollectionId: collectionId, flowTaskId: taskId, readerTaskId: readerId };
 }
 
 // ---- the floor check ----------------------------------------------------------------------
 //
 // The governing invariant for this project: a new user must still be able to record a Google
-// search, click Images, and press Run without ever meeting a trigger, a binding, a lane, a
+// search, click Images, and press Run without ever meeting a trigger, a binding, a
 // dataset or a settings scope. The first-run tutorial IS that floor, so every phase has to
 // leave it working and leave the new machinery out of sight.
 //
@@ -372,7 +391,6 @@ async function floorCheck(exePath, group) {
       AUTOMATA_RUNS_ROOT: path.join(scratch, 'runs'),
       AUTOMATA_SCHEDULE_PATH: path.join(scratch, 'schedule', 'schedule.json'),
       AUTOMATA_PARKED_ROOT: path.join(scratch, 'parked'),
-      AUTOMATA_LIVE_ROOT: path.join(scratch, 'live'),
       AUTOMATA_DEMOS_ROOT: path.join(scratch, 'demos'),
       AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
     },
@@ -479,7 +497,7 @@ async function floorCheck(exePath, group) {
       // that is built when its wrench is clicked, so for those the invariant is presence: nothing
       // named an engine setting or a Gherkin feature is anywhere in a first-run DOM.
       const absent = await page.locator(
-        '.chip.bound, .chip.sched, #lane-strip, .settings-field, .row-menu',
+        '.chip.bound, .chip.sched, .settings-field, .row-menu',
       ).count();
       assertEqual(absent, 0, 'advanced affordances exist in the first-run DOM');
       const visible = await page.locator(
@@ -545,8 +563,6 @@ async function main() {
   // Same reason as the schedule: a run that parks writes into this folder, and the app under test
   // must not be able to reach into the developer's real one.
   const parkedRoot = path.join(scratch, 'parked');
-  // Where each Automata process publishes the browser lanes it has busy right now.
-  const liveRoot = path.join(scratch, 'live');
   // The generated example pages. Isolated for the same reason as everything else here — the app
   // WRITES these on first load, so without the hook a test run would rewrite the developer's own
   // Documents\Automata\Demos folder every time it ran.
@@ -556,7 +572,8 @@ async function main() {
   const fixtureHtmlPath = path.join(__dirname, 'verify-ui-fixture.html');
   const fixtureUrl = 'file:///' + fixtureHtmlPath.replace(/\\/g, '/');
   const { collectionId, taskId, failTaskId } = writeFixture(collectionsRoot, fixtureUrl);
-  const { flowCollectionId, flowTaskId } = writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl);
+  const { flowCollectionId, flowTaskId, readerTaskId } =
+    writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl);
   const { roundTripCollectionId, roundTripTaskId } = writeRoundTripFixture(collectionsRoot, fixtureUrl);
   // Both ends of the round trip name the same file, which is what makes it one.
   const roundTripZip = path.join(scratch, 'round-trip.automata.zip');
@@ -577,7 +594,6 @@ async function main() {
       AUTOMATA_RUNS_ROOT: path.join(scratch, 'runs'),
       AUTOMATA_SCHEDULE_PATH: schedulePath,
       AUTOMATA_PARKED_ROOT: parkedRoot,
-      AUTOMATA_LIVE_ROOT: liveRoot,
       AUTOMATA_DEMOS_ROOT: demosRoot,
       AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
       // Export and Import open WPF file dialogs, which CDP cannot touch — so the one part of the
@@ -1777,6 +1793,76 @@ async function main() {
         { timeoutMs: 5000, label: 'the binding to reach disk' });
     });
 
+    await group('pipeline: a task publishes a value, and another task wires its input to it', async () => {
+      // Both halves are PICKED. A wiring is two names that have to agree, and a typed id that
+      // agrees with nothing is a pipeline that runs, passes, and quietly uses a default.
+      const readerFile = path.join(collectionsRoot, 'Verify Flow', 'Reader.json');
+      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+
+      const reader = panelPage.locator(`.node.task[data-task="${readerTaskId}"]`);
+      await clickRowOp(reader, 'task-inputs');
+      await panelPage.locator('#to-add').waitFor({ state: 'visible', timeout: 10000 });
+
+      // The button is live because the task has a step that captures something. A task with
+      // nothing to publish gets a disabled button and a line saying why, rather than a row it
+      // cannot fill in.
+      assertTrue(!(await panelPage.locator('#to-add').isDisabled()),
+        'a task with a capturing step should be able to publish');
+      await panelPage.locator('#to-add').click();
+
+      const sourcePicker = panelPage.locator('[data-source="0"]');
+      await sourcePicker.waitFor({ state: 'visible', timeout: 5000 });
+      const sources = await sourcePicker.locator('option').allTextContents();
+      assertTrue(sources.some((o) => /Read the heading/.test(o)),
+        `the step that captures the value should be offered by name, got ${JSON.stringify(sources)}`);
+
+      await panelPage.locator('.column-row[data-output-index="0"] [data-out-field="name"]').fill('heading');
+      await panelPage.locator('.column-row[data-output-index="0"] [data-out-field="name"]')
+        .dispatchEvent('change');
+
+      await waitFor(() => {
+        const task = JSON.parse(readFileSync(readerFile, 'utf8'));
+        return task.outputs?.[0]?.name === 'heading' && task.outputs[0].sourceStepId === 'reader-read';
+      }, { timeoutMs: 5000, label: 'the declared output to reach disk, naming the step behind it' });
+
+      await panelPage.locator('#modal-ok').click();
+      await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the outputs dialog to close' });
+
+      // Now the other end. The Loop task already declares 'term' (the check above), so this is
+      // only the wiring — which is exactly the shape a user meets: the input existed first.
+      const loop = panelPage.locator(`.node.task[data-task="${flowTaskId}"]`);
+      await clickRowOp(loop, 'task-inputs');
+      await panelPage.locator('[data-from="0"]').waitFor({ state: 'visible', timeout: 10000 });
+
+      const offered = await panelPage.locator('[data-from="0"] option').allTextContents();
+      assertTrue(offered.some((o) => /Reader/.test(o) && /heading/.test(o)),
+        `the other task's published value should be offered, got ${JSON.stringify(offered)}`);
+
+      await panelPage.locator('[data-from="0"]')
+        .selectOption({ label: 'Reader \u2192 heading' });
+
+      await waitFor(() => {
+        const task = JSON.parse(readFileSync(loopFile, 'utf8'));
+        const from = task.inputs?.[0]?.from;
+        return from?.taskId === readerTaskId && from.outputName === 'heading';
+      }, { timeoutMs: 5000, label: 'the wiring to reach disk, pointing at the task by id' });
+
+      // And it can be taken off again, without editing anything by hand.
+      await panelPage.locator('[data-from="0"]').selectOption('');
+      await waitFor(() => JSON.parse(readFileSync(loopFile, 'utf8')).inputs?.[0]?.from === undefined,
+        { timeoutMs: 5000, label: 'the wiring to be removed' });
+
+      await panelPage.locator('[data-from="0"]')
+        .selectOption({ label: 'Reader \u2192 heading' });
+      await waitFor(() => JSON.parse(readFileSync(loopFile, 'utf8')).inputs?.[0]?.from?.outputName === 'heading',
+        { timeoutMs: 5000, label: 'the wiring to be put back' });
+
+      await panelPage.locator('#modal-ok').click();
+      await waitFor(() => hasClass(panelPage.locator('#modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'the inputs dialog to close' });
+    });
+
     await group('loops: a step inside one can bind to the row\'s columns', async () => {
       // The gap this closes: the shop examples bind to row.url, but that binding was only ever
       // expressible in code — the picker offered captured outputs, task inputs and environment
@@ -2566,90 +2652,6 @@ async function main() {
         `the note should say the browser was released — that is the whole point, got: ${note}`);
       assertTrue(/Resumes/.test(note), `the note should say when it resumes, got: ${note}`);
 
-      await panelPage.locator('#tab-build').click();
-      await waitFor(async () => (await panelPage.locator('#tab-build').getAttribute('aria-selected')) === 'true',
-        { timeoutMs: 5000, label: 'Build to be reselected' });
-    });
-
-    await group('runs tab: the live lane strip shows another process’s browsers, and only real ones', async () => {
-      // The lanes worth watching are never this window's - it has one browser pane and no pool.
-      // They belong to automata-runner, so this seeds what that process would have published.
-      //
-      // The pid is THIS node process's, with its real start time: the reader deliberately checks
-      // liveness against the operating system rather than trusting the file, and a fixture that
-      // used a made-up pid would be discarded as a phantom before it ever rendered.
-      const alivePid = process.pid;
-      const aliveStarted = new Date(Date.now() - process.uptime() * 1000);
-      mkdirSync(liveRoot, { recursive: true });
-      writeFileSync(path.join(liveRoot, `${alivePid}.json`), JSON.stringify({
-        schemaVersion: 1,
-        processId: alivePid,
-        processStartedUtc: aliveStarted.toISOString(),
-        processName: 'automata-runner',
-        targetName: 'Nightly batch',
-        runId: 'ab12cd34ef56ab78cd90ef12ab34cd56',
-        maxConcurrency: 3,
-        updatedUtc: new Date().toISOString(),
-        lanes: [
-          {
-            laneId: 'lane-1', profileKey: 'default', busy: true, runId: 'r1',
-            taskName: 'Wolf Tshirts', currentStepLabel: 'Click Images',
-            startedUtc: new Date(Date.now() - 42_000).toISOString(),
-          },
-          {
-            laneId: 'lane-2', profileKey: 'default', busy: false, runId: null,
-            taskName: null, currentStepLabel: null, startedUtc: null,
-          },
-        ],
-      }, null, 2));
-
-      // And a file for a process that is definitely gone. It must not render, and must not
-      // survive the read - a monitor that shows work which is not happening is worse than one
-      // that shows nothing.
-      const deadPid = 999999;
-      writeFileSync(path.join(liveRoot, `${deadPid}.json`), JSON.stringify({
-        schemaVersion: 1,
-        processId: deadPid,
-        processStartedUtc: new Date(Date.now() - 7200_000).toISOString(),
-        processName: 'automata-runner',
-        targetName: 'A run that was killed',
-        maxConcurrency: 1,
-        updatedUtc: new Date().toISOString(),
-        lanes: [{
-          laneId: 'ghost-lane', profileKey: 'default', busy: true, runId: 'r0',
-          taskName: 'Ghost task', currentStepLabel: 'Never finished', startedUtc: new Date().toISOString(),
-        }],
-      }, null, 2));
-
-      // Selecting Runs is what starts the poll; nothing polls while its panel is off screen.
-      await panelPage.locator('#tab-runs').click();
-      await panelPage.locator('#lane-strip').waitFor({ state: 'visible', timeout: 15000 });
-
-      // innerText is the RENDERED text, and .section-label is text-transform: uppercase — so the
-      // heading assertions have to be case-insensitive.
-      const strip = await panelPage.locator('#lane-strip').innerText();
-      assertTrue(/Running now/i.test(strip), `expected the strip to say what it is, got: ${strip}`);
-      assertTrue(/automata-runner/i.test(strip), `expected the owning process named, got: ${strip}`);
-      assertTrue(/Wolf Tshirts/.test(strip), `expected the running task named, got: ${strip}`);
-      assertTrue(/Click Images/.test(strip),
-        `the step in flight is the point of a LIVE strip, got: ${strip}`);
-      assertTrue(/1 of 3 lanes busy/.test(strip),
-        `expected the busy count against the ceiling, got: ${strip}`);
-      assertTrue(/1 warm/.test(strip),
-        `a returned-but-open lane explains why the browser count exceeds the work, got: ${strip}`);
-      assertEqual(await panelPage.locator('.lane-row').count(), 1,
-        'only busy lanes are rows; a warm lane is a count, not work in flight');
-      assertTrue(!/Ghost task/.test(strip), `a dead process must not appear as running, got: ${strip}`);
-
-      assertTrue(!existsSync(path.join(liveRoot, `${deadPid}.json`)),
-        'the dead process’s file should have been tidied away as it was read');
-
-      const named = await panelPage.evaluate(() =>
-        Array.prototype.slice.call(document.querySelectorAll('#lane-strip .status'))
-          .every((el) => (el.getAttribute('aria-label') || '').trim().length > 0));
-      assertTrue(named, 'each lane glyph needs an accessible name');
-
-      // Leaving the tab stops the poll, and the strip goes with the panel.
       await panelPage.locator('#tab-build').click();
       await waitFor(async () => (await panelPage.locator('#tab-build').getAttribute('aria-selected')) === 'true',
         { timeoutMs: 5000, label: 'Build to be reselected' });

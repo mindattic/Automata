@@ -102,6 +102,22 @@ Notes:
 - **Deletes always confirm**: every delete (collection, task, step) opens a purpose-built
   confirm modal — Escape or clicking away cancels; destruction takes an explicit click.
 
+## Passing values between tasks
+
+A task's wrench menu has **Inputs and outputs…**. *Takes* declares what the task needs from
+whoever runs it — a name and a default, blank meaning required. *Publishes* declares what it hands
+on: a name, and a pick of any step in the task that captures a value.
+
+Wire them together in the same dialog: each input has a **comes from** dropdown listing every
+output published by another task in the same collection. Run that collection and its tasks walk in
+order on one browser, each one's published values reaching the tasks after it. Both ends are
+picked, never typed.
+
+A wiring is a hint, not a requirement. Run a wired task on its own and it uses its declared default
+and says so, and a value supplied directly — `--input name=value`, or a `runTask` step's binding —
+always wins over a wiring. The **Demos** collection ships three examples (`Pipeline 1–3`) that only
+mean anything in order.
+
 ## Replaying
 
 Select a task and click **▶ Run**. Step rows light up live (running / passed / failed / healed /

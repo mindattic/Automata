@@ -50,8 +50,8 @@ public sealed class HarvestField
 /// <b>It writes a dataset rather than an in-memory list, deliberately.</b> A file survives parking
 /// with no serialization of engine internals, it can be opened in Explorer and checked before the
 /// loop that consumes it ever runs, and it reaches ForEach through exactly the same door a
-/// hand-dropped CSV does — so looping, conditions, parallel lanes and the Data tab all keep
-/// working with no new machinery.
+/// hand-dropped CSV does — so looping, conditions and the Data tab all keep working with no new
+/// machinery.
 /// </para>
 /// </summary>
 public sealed class HarvestSpec

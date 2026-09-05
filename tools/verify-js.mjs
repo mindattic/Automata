@@ -192,7 +192,6 @@ async function main() {
       AUTOMATA_RUNS_ROOT: path.join(scratch, 'runs'),
       AUTOMATA_SCHEDULE_PATH: path.join(scratch, 'schedule.json'),
       AUTOMATA_PARKED_ROOT: path.join(scratch, 'parked'),
-      AUTOMATA_LIVE_ROOT: path.join(scratch, 'live'),
       AUTOMATA_DEMOS_ROOT: path.join(scratch, 'demos'),
       AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
     },

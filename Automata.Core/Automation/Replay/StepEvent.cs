@@ -44,6 +44,17 @@ public abstract record StepEvent
     /// </summary>
     public sealed record RunParked(ParkCheckpoint Checkpoint) : StepEvent;
 
+    /// <summary>
+    /// What a task declared it publishes, resolved, emitted just before <see cref="RunCompleted"/>.
+    /// <para>
+    /// This is how one task hands a value to the next: the caller running a collection keeps these
+    /// and offers them to the tasks that follow. A task with no declared outputs never emits it,
+    /// and a run that parked never reaches it — an unfinished task has published nothing.
+    /// </para>
+    /// </summary>
+    public sealed record TaskPublished(
+        string TaskId, string TaskName, IReadOnlyDictionary<string, string> Values) : StepEvent;
+
     public sealed record RunCompleted(bool Success, string Summary) : StepEvent;
 
     public sealed record Log(string Message) : StepEvent;

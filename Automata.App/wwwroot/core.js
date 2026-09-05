@@ -41,9 +41,6 @@ export const state = {
     runs: [],
     runRoot: '',
 
-    // Browser lanes busy right now, per process, polled while the Runs tab is on screen. These
-    // belong to OTHER processes - this window has one pane and no pool.
-    lanes: [],
 
     // The schedule. Every derived value on an entry - when it is next due, why, and what its
     // success sets off - is computed by the host with the same evaluator the runner's tick obeys,

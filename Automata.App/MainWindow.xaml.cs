@@ -45,7 +45,6 @@ public partial class MainWindow : Window
             App.Services.GetRequiredService<Automata.Core.Automation.Storage.RunStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.ScheduleStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Execution.ParkedRunStore>(),
-            App.Services.GetRequiredService<Automata.Core.Automation.Execution.LiveLaneStore>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Demos.DemoSeeder>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.IClock>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Flow.FlowAuthoringService>(),
@@ -486,7 +485,7 @@ public partial class MainWindow : Window
         TargetBrowser.CoreWebView2.Navigate("about:blank");
 
         // The zoom lives on the WebView2 control, which is a WPF element — so unlike a headless
-        // lane, setting it has to hop back to the UI thread from whatever thread the replay
+        // pane, setting it has to hop back to the UI thread from whatever thread the replay
         // engine is running a step on.
         targetBrowser = new WebView2BrowserSurface(
             TargetBrowser.CoreWebView2,

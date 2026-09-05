@@ -42,8 +42,8 @@ public sealed class WaitSpec
     public int? TimeoutMs { get; set; }
 
     /// <summary>
-    /// A wait longer than this checkpoints the run and releases its browser lane instead of
-    /// holding one idle; a later scheduler tick resumes it. Default 15 minutes.
+    /// A wait longer than this checkpoints the run and closes its browser instead of holding one
+    /// idle; a later scheduler tick resumes it. Default 15 minutes.
     /// </summary>
     public int ParkAfterMs { get; set; } = 900_000;
 }
@@ -107,10 +107,6 @@ public sealed class ForEachSpec
     /// </para>
     /// </summary>
     public const string RowNumberKey = "#";
-
-    /// <summary>Rows to process at once. Above 1 requires a browser lane per row, so it is
-    /// bounded by the resolved MaxConcurrency ceiling.</summary>
-    public int MaxConcurrency { get; set; } = 1;
 }
 
 /// <summary>
@@ -174,9 +170,9 @@ public sealed class DatasetWriteSpec
     /// </para>
     /// <para>
     /// "First write of the run" is a property of the RUN, not of the row or the step, which is why
-    /// the claim lives on the run state and is settled inside the dataset's own write lock: two
-    /// rows finishing at once on different lanes must not both believe they are first, and the one
-    /// that is must not replace a file the other has already appended to.
+    /// the claim lives on the run state and is settled inside the dataset's own write lock: the
+    /// first row to write replaces the file, and every row after it appends to what that row
+    /// started — including when the same run writes the file from more than one loop.
     /// </para>
     /// </summary>
     public bool ResetOnFirstWrite { get; set; }

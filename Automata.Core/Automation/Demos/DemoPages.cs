@@ -13,8 +13,8 @@ public sealed record DemoPage(string RelativePath, string Content);
 /// <summary>
 /// The HTML the demo generator writes to disk.
 /// <para>
-/// Local pages rather than live sites, on purpose. A demo whose job is to prove that harvesting,
-/// looping and parallel lanes work cannot also be a bet on someone else's markup, consent banner
+/// Local pages rather than live sites, on purpose. A demo whose job is to prove that harvesting
+/// and looping work cannot also be a bet on someone else's markup, consent banner
 /// and rate limiter — when a demo like that fails, the user learns nothing about Automata. These
 /// pages are deterministic, work offline, and each one exercises a named capability, so a failing
 /// demo points at the feature that broke.
@@ -34,7 +34,7 @@ public static class DemoPages
 
     /// <summary>
     /// How far from the left edge the zoom example's button sits. Comfortably off the side of any
-    /// pane anybody runs this in at normal size — a browser lane is 1280px wide, so 2400 leaves no
+    /// pane anybody runs this in at normal size — the headless browser is 1280px wide, so 2400 leaves no
     /// doubt — and comfortably inside the viewport once the page is at
     /// <see cref="ZoomedTo"/>%, which is the whole demonstration.
     /// </summary>
@@ -106,7 +106,7 @@ public static class DemoPages
         var pages = new List<DemoPage>
         {
             Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(),
-            Shadow(), Roster(), ShopSearch(), Drift(),
+            Shadow(), Roster(), ShopSearch(), Drift(), TicketQueue(), TicketLookup(),
         };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
@@ -174,6 +174,77 @@ public static class DemoPages
                 document.body.appendChild(marker);
                 document.title = 'clicked:' + btn.id;
               });
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>The ticket the queue page says is next, and the one the pipeline example carries
+    /// from its first task to its second.</summary>
+    public const string NextTicketId = "TCK-2317";
+
+    /// <summary>
+    /// The support queue: a list, with the one to deal with next called out by id.
+    /// <para>
+    /// Two pages rather than one, deliberately. A pipeline whose second half could have read what
+    /// it needed off the first half's page would demonstrate nothing — the value has to LEAVE the
+    /// page it was found on to prove it was carried between tasks rather than merely re-read.
+    /// </para>
+    /// </summary>
+    private static DemoPage TicketQueue() => new("pipeline/queue.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — support queue</title>{{Css}}</head>
+        <body>
+          <h1>Support queue</h1>
+          <p class="lede">Six tickets are open. The oldest one still unassigned is next.</p>
+          <dl class="facts">
+            <dt>Open tickets</dt><dd id="open-count">6</dd>
+            <dt>Next up</dt><dd id="next-ticket">{{NextTicketId}}</dd>
+          </dl>
+          <ul class="results">
+            <li class="product"><span class="title">TCK-2314</span><span class="brand">assigned</span></li>
+            <li class="product"><span class="title">TCK-2316</span><span class="brand">assigned</span></li>
+            <li class="product"><span class="title">{{NextTicketId}}</span><span class="brand">unassigned</span></li>
+          </ul>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// The ticket desk: type an id, press Look up, and the page reports who owns it and how urgent
+    /// it is. Unknown ids say so rather than showing a blank card, because a pipeline handed the
+    /// wrong value must fail loudly at the step that used it.
+    /// </summary>
+    private static DemoPage TicketLookup() => new("pipeline/ticket.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — ticket desk</title>{{Css}}</head>
+        <body>
+          <h1>Ticket desk</h1>
+          <p class="lede">Look a ticket up by its id.</p>
+          <label class="field" for="ticket-id"><span>Ticket</span>
+            <input id="ticket-id" type="text" value=""></label>
+          <button id="look-up">Look up</button>
+          <p id="found">nothing looked up yet</p>
+          <dl class="facts">
+            <dt>Owner</dt><dd id="owner">—</dd>
+            <dt>Priority</dt><dd id="priority">—</dd>
+          </dl>
+          <script>
+            var TICKETS = {
+              'TCK-2314': { owner: 'Devon Okafor', priority: 'low' },
+              'TCK-2316': { owner: 'Mai Sorensen', priority: 'normal' },
+              '{{NextTicketId}}': { owner: 'Priya Raman', priority: 'high' }
+            };
+            document.getElementById('look-up').addEventListener('click', function () {
+              var id = document.getElementById('ticket-id').value.trim();
+              var ticket = TICKETS[id];
+              document.getElementById('found').textContent =
+                ticket ? 'found: ' + id : 'no such ticket: ' + id;
+              document.getElementById('owner').textContent = ticket ? ticket.owner : '—';
+              document.getElementById('priority').textContent = ticket ? ticket.priority : '—';
             });
           </script>
         </body>
@@ -393,7 +464,7 @@ public static class DemoPages
     /// it is currently within reach.
     /// <para>
     /// The report is produced by a CLICK HANDLER, not by a timer, an animation frame or a resize
-    /// listener — and that is not an accident. A browser lane renders into an off-screen window,
+    /// listener — and that is not an accident. The headless browser renders into an off-screen window,
     /// so its page counts as hidden: frames stop, repeating timers throttle almost to nothing, and
     /// a readout on any of those sits on its load-time text forever while appearing to work.
     /// A handler the automation itself triggers always runs, and measures the page as it is at
@@ -542,7 +613,7 @@ public static class DemoPages
     /// A roster form with an Add and a Skip, and a tally of which happened.
     /// <para>
     /// The tally is written by the click handlers — on demand, triggered by the automation itself.
-    /// A page in a browser lane is off-screen and therefore hidden, so anything on a timer, an
+    /// A page in the headless browser is off-screen and therefore hidden, so anything on a timer, an
     /// animation frame or a resize reports its load-time answer forever while appearing to work.
     /// </para>
     /// </summary>

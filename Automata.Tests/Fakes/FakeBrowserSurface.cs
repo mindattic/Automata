@@ -27,9 +27,19 @@ public sealed class FakeBrowserSurface : IBrowserSurface
         return Task.CompletedTask;
     }
 
+    /// <summary>The read-back a TypeText step makes after typing, recognised by its script.</summary>
+    private const string TypedValueProbe = "el ? el.value : null";
+
     public Task<string> EvalAsync(string script, CancellationToken ct)
     {
         Calls.Add(("Eval", script));
+        if (EvalResponses.Count == 0 && script.Contains(TypedValueProbe))
+        {
+            // A real field holds what was typed into it. Answering from Calls rather than making
+            // every test spell this out keeps a TypeText step's failure meaning what it says.
+            return Task.FromResult(
+                System.Text.Json.JsonSerializer.Serialize(new { value = LastTyped }));
+        }
         var responder = EvalResponses.Count > 0 ? EvalResponses.Dequeue() : DefaultEvalResponse;
         return Task.FromResult(responder(script));
     }
@@ -46,9 +56,17 @@ public sealed class FakeBrowserSurface : IBrowserSurface
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// What was typed most recently. A real field holds what was typed into it, and the engine
+    /// reads it back to check the typing landed — so a fake that forgets makes every TypeText step
+    /// fail for a reason that has nothing to do with the test.
+    /// </summary>
+    public string? LastTyped { get; private set; }
+
     public Task TypeTextAsync(string text, CancellationToken ct)
     {
         Calls.Add(("TypeText", text));
+        LastTyped = text;
         return Task.CompletedTask;
     }
 

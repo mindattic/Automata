@@ -590,34 +590,6 @@ public class WorkflowEngineTests
         Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message, Does.Contain("other.csv"));
     }
 
-    [Test]
-    public async Task ForEach_AskingForConcurrencySaysItIsRunningInOrder()
-    {
-        datasets.Write("skus.csv", [new Dictionary<string, string> { ["sku"] = "a" }], append: false);
-
-        var browser = Browser();
-        var task = new TaskDefinition
-        {
-            Name = "T",
-            Steps =
-            [
-                new Step
-                {
-                    Id = "loop", Action = StepAction.ForEach, Label = "Each",
-                    ForEach = new ForEachSpec
-                    {
-                        Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "skus.csv" },
-                        MaxConcurrency = 4,
-                    },
-                },
-            ],
-        };
-
-        var events = await Run(task, browser);
-
-        Assert.That(events.OfType<StepEvent.Log>().Any(l => l.Message.Contains("single browser")), Is.True,
-            "asking for concurrency this run cannot provide should be said out loud, not ignored");
-    }
 
     // ---- writeDataset --------------------------------------------------------------------------
 
@@ -1541,16 +1513,12 @@ public class WorkflowEngineTests
         });
     }
 
-    // ---- parallel rows ---------------------------------------------------------------------------
+    // ---- rows, one at a time ---------------------------------------------------------------
 
-    /// <summary>
-    /// Parallel rows need BOTH gates open: the resolved Max concurrency ceiling (settings) and the
-    /// loop's own request (the step). This raises the ceiling the way a scoped setting would.
-    /// </summary>
-    private static ReplayOptions OptionsWithCeiling(int lanes)
+    private static ReplayOptions RowOptions()
     {
         var settings = Automata.Core.Automation.Settings.EngineSettingsResolver.Floor()
-            with { MaxConcurrency = lanes, DefaultStepTimeoutMs = 300 };
+            with { DefaultStepTimeoutMs = 300 };
         return new ReplayOptions
         {
             DefaultStepTimeoutMs = 300,
@@ -1560,22 +1528,20 @@ public class WorkflowEngineTests
         };
     }
 
-    private async Task<List<StepEvent>> RunWithLanes(
-        TaskDefinition task, FakeBrowserSurface browser, BrowserLanePool pool, int ceiling = 4)
+    private async Task<List<StepEvent>> RunRows(TaskDefinition task, FakeBrowserSurface browser)
     {
         var events = new List<StepEvent>();
-        await foreach (var evt in Engine().RunAsync(task, OptionsWithCeiling(ceiling), browser, lanes: pool))
+        await foreach (var evt in Engine().RunAsync(task, RowOptions(), browser))
             events.Add(evt);
         return events;
     }
 
-    private static Step ParallelLoop(int lanes, params Step[] children) => new()
+    private static Step RowLoop(params Step[] children) => new()
     {
         Id = "loop", Action = StepAction.ForEach, Label = "Each sku",
         ForEach = new ForEachSpec
         {
             Source = new BindingRef { Kind = BindingKind.DatasetRow, DatasetName = "skus.csv" },
-            MaxConcurrency = lanes,
         },
         Children = [.. children],
     };
@@ -1583,19 +1549,23 @@ public class WorkflowEngineTests
     private void WriteSkus(params string[] skus) =>
         datasets.Write("skus.csv", skus.Select(s => new Dictionary<string, string> { ["sku"] = s }), append: false);
 
+    /// <summary>
+    /// Every row runs, on the one browser, in the order the dataset gives them. The order is the
+    /// assertion that matters: a row can leave the page somewhere the next row starts from, which
+    /// is only true while nothing else is touching that browser.
+    /// </summary>
     [Test]
-    public async Task ParallelForEach_RunsEveryRowAcrossSeveralLanes()
+    public async Task Rows_RunInOrderOnTheOneBrowser()
     {
         WriteSkus("a", "b", "c", "d");
-        var factory = new FakeBrowserSurfaceFactory();
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 3);
+        var browser = Browser();
 
         var task = new TaskDefinition
         {
             Name = "T",
             Steps =
             [
-                ParallelLoop(3, new Step
+                RowLoop(new Step
                 {
                     Id = "open", Action = StepAction.Navigate,
                     Bindings = new Dictionary<string, BindingRef>
@@ -1610,86 +1580,55 @@ public class WorkflowEngineTests
             ],
         };
 
-        var events = await RunWithLanes(task, Browser(), pool);
-
-        var visited = factory.Lanes
-            .SelectMany(l => l.Fake.Calls.Where(c => c.Method == "Navigate").Select(c => c.Args))
-            .OrderBy(u => u, StringComparer.Ordinal)
-            .ToList();
+        var events = await RunRows(task, browser);
 
         Assert.Multiple(() =>
         {
-            Assert.That(visited, Is.EqualTo(new[]
+            Assert.That(NavigatedUrls(browser), Is.EqualTo(new[]
             {
                 "https://shop.example/a", "https://shop.example/b",
                 "https://shop.example/c", "https://shop.example/d",
-            }), "every row must run exactly once, whichever lane took it");
-            Assert.That(factory.Requested, Has.Count.LessThanOrEqualTo(3), "never more browsers than the ceiling");
+            }), "every row runs exactly once, in the dataset's order");
             Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
         });
     }
 
     /// <summary>
-    /// Every row keeps the position it started with, whichever lane took it. The index is read
-    /// before the fork rather than counted as rows finish, so a slow row does not renumber itself.
+    /// Every row keeps the position it started with. The index is read before the fork rather than
+    /// counted as rows finish, so a row that fails does not renumber the ones after it.
     /// </summary>
     [Test]
-    public async Task ParallelForEach_EachRowKeepsItsOwnPosition()
+    public async Task Rows_EachKeepsItsOwnPosition()
     {
         WriteSkus("a", "b", "c", "d");
-        var factory = new FakeBrowserSurfaceFactory();
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 3);
+        var browser = Browser();
 
         var task = new TaskDefinition
         {
             Name = "T",
-            Steps =
-            [
-                ParallelLoop(3,
-                    NavBoundTo("open", Column(ForEachSpec.RowNumberKey), "https://x.example/")),
-            ],
+            Steps = [RowLoop(NavBoundTo("open", Column(ForEachSpec.RowNumberKey), "https://x.example/"))],
         };
 
-        await RunWithLanes(task, Browser(), pool);
+        await RunRows(task, browser);
 
-        var visited = factory.Lanes
-            .SelectMany(l => l.Fake.Calls.Where(c => c.Method == "Navigate").Select(c => c.Args))
-            .OrderBy(u => u, StringComparer.Ordinal)
-            .ToList();
-
-        Assert.That(visited, Is.EqualTo(new[]
+        Assert.That(NavigatedUrls(browser), Is.EqualTo(new[]
         {
             "https://x.example/1", "https://x.example/2",
             "https://x.example/3", "https://x.example/4",
         }));
     }
 
-    [Test]
-    public async Task ParallelForEach_RespectsTheTighterOfTheStepAndThePool()
-    {
-        WriteSkus("a", "b", "c", "d", "e", "f");
-        var factory = new FakeBrowserSurfaceFactory();
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 2);
-
-        var task = new TaskDefinition { Name = "T", Steps = [ParallelLoop(6, Nav("inside"))] };
-
-        await RunWithLanes(task, Browser(), pool);
-
-        Assert.That(factory.Requested, Has.Count.LessThanOrEqualTo(2),
-            "a step asking for six lanes cannot exceed a pool of two");
-    }
-
     /// <summary>
-    /// Rows run in their own scope whether there is one lane or many, so raising concurrency on a
-    /// working loop cannot change what it produces.
+    /// A row's captured values belong to that row. After the loop nothing it published is in
+    /// scope — which row's value would it even be?
     /// </summary>
     [Test]
-    public async Task ParallelForEach_RowsDoNotSeeEachOthersCapturedValues()
+    public async Task Rows_DoNotSeeEachOthersCapturedValues()
     {
         WriteSkus("a", "b");
-        var factory = new FakeBrowserSurfaceFactory
+        var browser = new FakeBrowserSurface
         {
-            Responder = script =>
+            DefaultEvalResponse = script =>
             {
                 if (script.Contains("isProcessing")) return """{ "isProcessing": false }""";
                 if (script.Contains("__automataResolve(")) return ResolveFoundCss;
@@ -1697,20 +1636,17 @@ public class WorkflowEngineTests
                 return "{}";
             },
         };
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 2);
 
         var task = new TaskDefinition
         {
             Name = "T",
             Steps =
             [
-                ParallelLoop(2, new Step
+                RowLoop(new Step
                 {
                     Id = "read", Action = StepAction.ExtractText, Target = Target(),
                     Outputs = [new OutputField { Name = "captured" }],
                 }),
-                // After the loop, nothing published inside it is in scope - which row's value
-                // would it even be?
                 new Step
                 {
                     Id = "after", Action = StepAction.Navigate,
@@ -1722,72 +1658,51 @@ public class WorkflowEngineTests
             ],
         };
 
-        var events = await RunWithLanes(task, Browser(), pool);
+        var events = await RunRows(task, browser);
 
         Assert.That(events.OfType<StepEvent.StepCompleted>().Last().Message,
             Does.Contain("has not been produced yet"));
     }
 
+    /// <summary>
+    /// A row that fails stops the loop, because a failed step stops its task and rows share that
+    /// task. This is the sequential trade being made deliberately: rows are not independent
+    /// attempts, they are one job walking a list — so the first row that cannot do its work stops
+    /// the walk rather than leaving a half-done list nobody looks at.
+    /// </summary>
     [Test]
-    public async Task ParallelForEach_ReportsWhichLaneTookEachRow()
+    public async Task Rows_AFailingRowStopsTheLoopAndFailsTheRun()
     {
         WriteSkus("a", "b");
-        var factory = new FakeBrowserSurfaceFactory();
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 2);
-        var task = new TaskDefinition { Name = "T", Steps = [ParallelLoop(2, Nav("inside"))] };
-
-        var events = await RunWithLanes(task, Browser(), pool);
-
-        var logs = events.OfType<StepEvent.Log>().Select(l => l.Message).ToList();
-        Assert.That(logs.Count(l => l.Contains("started on lane")), Is.EqualTo(2),
-            $"each row should say which lane took it: {string.Join(" | ", logs)}");
-    }
-
-    [Test]
-    public async Task ParallelForEach_AFailingRowFailsTheRunWithoutLosingItsEvents()
-    {
-        WriteSkus("a", "b");
-        var factory = new FakeBrowserSurfaceFactory
+        var browser = new FakeBrowserSurface
         {
             // Nothing resolves, so every row's step fails.
-            Responder = script => script.Contains("__automataResolve(")
+            DefaultEvalResponse = script => script.Contains("__automataResolve(")
                 ? """{ "found": false, "ambiguous": false, "candidateCount": 0 }"""
                 : """{ "isProcessing": false }""",
         };
-        await using var pool = new BrowserLanePool(factory, maxConcurrency: 2);
 
         var task = new TaskDefinition
         {
             Name = "T",
             Steps =
             [
-                ParallelLoop(2, new Step
+                RowLoop(new Step
                 {
                     Id = "click", Action = StepAction.Click, Label = "Click", Target = Target(), TimeoutMs = 5,
                 }),
             ],
         };
 
-        var events = await RunWithLanes(task, Browser(), pool);
+        var events = await RunRows(task, browser);
 
         Assert.Multiple(() =>
         {
             Assert.That(events.OfType<StepEvent.StepCompleted>().Count(e => e.Status == StepStatus.Failed),
-                Is.EqualTo(2), "both rows' failures should reach the caller");
+                Is.EqualTo(1), "the failure reaches the caller");
+            Assert.That(events.OfType<StepEvent.Log>().Count(l => l.Message.Contains("row 2 of 2")), Is.Zero,
+                "and the walk stops there rather than carrying on into the next row");
             Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.False);
         });
-    }
-
-    [Test]
-    public async Task WithoutAPool_ARowLoopStaysSequentialOnTheOneBrowser()
-    {
-        WriteSkus("a", "b");
-        var browser = Browser();
-        var task = new TaskDefinition { Name = "T", Steps = [ParallelLoop(4, Nav("inside"))] };
-
-        var events = await Run(task, browser);
-
-        Assert.That(NavigatedUrls(browser), Has.Count.EqualTo(2), "both rows still run, just in order");
-        Assert.That(events.OfType<StepEvent.Log>().Any(l => l.Message.Contains("single browser")), Is.True);
     }
 }

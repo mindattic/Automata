@@ -201,8 +201,8 @@ public class ReplayEngine
         if (step.Action == StepAction.Group)
             return (StepStatus.Passed, "container", null);
 
-        // Orchestrated actions are modelled but not executable here: they need dataset access,
-        // cross-task lookups and a lane pool, none of which a single-task replay has. Rejecting
+        // Orchestrated actions are modelled but not executable here: they need dataset access
+        // and cross-task lookups, neither of which a single-task replay has. Rejecting
         // them explicitly beats a misleading "unsupported action" from the switch default.
         if (step.Action is StepAction.ForEach or StepAction.If or StepAction.Else
             or StepAction.RunTask or StepAction.WriteDataset or StepAction.Aggregate)
@@ -402,7 +402,7 @@ public class ReplayEngine
     /// Performs a clock-based wait, holding the browser for its whole length.
     /// <para>
     /// A wait long enough to be worth parking never reaches here when parking is available — the
-    /// workflow engine intercepts it, checkpoints the run and releases the lane. So arriving here
+    /// workflow engine intercepts it, checkpoints the run and closes the browser. So arriving here
     /// with a long wait means parking was unavailable (a dry run, a wait inside a for-each), and
     /// the message says the pane stays occupied rather than letting it look like a hang.
     /// </para>

@@ -30,8 +30,8 @@ public sealed class CollectionStore
     /// Serialises writes of one task. A save is a read-modify-write across sibling files - find
     /// this task's file, check whether a rename would land on another one, move it, write it - and
     /// two of those interleaving would leave a half-written file behind. Nothing needed it until a
-    /// run could save on its own: a parallel loop whose rows call a task that heals will ask two
-    /// threads to write the same file at the same moment.
+    /// run could save on its own: the app and the headless runner can both be saving a healed
+    /// task, and a scheduled run does not wait for the window to be closed.
     /// </summary>
     private readonly Lock saveGate = new();
 

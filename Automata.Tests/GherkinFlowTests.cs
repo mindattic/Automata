@@ -269,7 +269,7 @@ public class GherkinFlowTests
     public void TagsBecomeScopedEngineSettings()
     {
         var result = Compile("""
-            @profile:work @concurrency:3
+            @profile:work
             Feature: F
 
               @retry:2 @continue-on-error
@@ -281,7 +281,6 @@ public class GherkinFlowTests
         Assert.Multiple(() =>
         {
             Assert.That(result.Collection!.Settings!.BrowserProfile, Is.EqualTo("work"));
-            Assert.That(result.Collection.Settings.MaxConcurrency, Is.EqualTo(3));
             Assert.That(result.Tasks[0].Settings!.Retry!.MaxAttempts, Is.EqualTo(2));
             Assert.That(result.Tasks[0].Settings!.ContinueOnStepError, Is.True);
         });
