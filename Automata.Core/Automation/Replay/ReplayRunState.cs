@@ -138,6 +138,24 @@ internal sealed class ReplayRunState
     }
 
     /// <summary>
+    /// Writes values OVER the run's inputs without clearing what is already there, which is how a
+    /// resumed run gets back what it was started with: the seed has already put every declared
+    /// default in place, and these are the values that actually applied before the wait. Overlaying
+    /// rather than replacing means an input declared while the run was parked still has its
+    /// default.
+    /// </summary>
+    public void OverlayRunInputs(IReadOnlyDictionary<string, string>? values)
+    {
+        if (values == null) return;
+        foreach (var (name, value) in values) inputScopes[0][name] = value;
+    }
+
+    /// <summary>The run's own inputs, for a checkpoint to carry across a park. Parking only ever
+    /// happens at the task's own level, so this is the only scope in play.</summary>
+    public IReadOnlyDictionary<string, string> RunInputs() =>
+        new Dictionary<string, string>(inputScopes[0], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// The zoom a <see cref="StepAction.SetZoom"/> step asked for, as a percentage. Held on the run
     /// rather than on the page because a navigation wipes the page's own zoom, and a task that
     /// zoomed out to see a wide layout means it for the pages that follow too — being silently

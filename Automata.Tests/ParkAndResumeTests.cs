@@ -44,13 +44,15 @@ public class ParkAndResumeTests
     private WorkflowEngine Engine() =>
         new(new ReplayEngine(new FingerprintResolver { PollIntervalMs = 10 }), collections, datasets);
 
-    private static ReplayOptions Options(bool allowParking = true) => new()
+    private static ReplayOptions Options(
+        bool allowParking = true, IReadOnlyDictionary<string, string>? inputs = null) => new()
     {
         DefaultStepTimeoutMs = 300,
         SettlePollMs = 1,
         Control = new ReplayControl(),
         AllowParking = allowParking,
         Clock = () => Midnight,
+        Inputs = inputs ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
     };
 
     private static FakeBrowserSurface Browser() => new()
@@ -311,6 +313,75 @@ public class ParkAndResumeTests
             Columns = new Dictionary<string, BindingRef>
             {
                 ["half"] = new() { Kind = BindingKind.Literal, Literal = half },
+            },
+        },
+    };
+
+    /// <summary>
+    /// A run started with <c>--input term=heron</c> and parked halfway through has to come back
+    /// with that value. Nothing supplies it a second time — the tick that resumes it is a fresh
+    /// process with no command line — so an input that did not travel in the checkpoint quietly
+    /// reverts to its declared default, and the second half of the run does the wrong thing while
+    /// reporting success.
+    /// </summary>
+    [Test]
+    public async Task AResumedRun_StillHasTheValuesItWasStartedWith()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "Search",
+            Inputs = [new TaskInput { Name = "term", Default = "wolf" }],
+            Steps = [LongWait(), WriteTerm()],
+        };
+
+        var started = await Run(task, Browser(), Options(inputs: Supplied("term", "heron")));
+        var checkpoint = started.OfType<StepEvent.RunParked>().Single().Checkpoint;
+
+        // A later tick: no --input, because there is no command line to carry one.
+        var finished = await Run(task, Browser(), Options(), checkpoint);
+
+        Assert.That(finished.OfType<StepEvent.RunCompleted>().Single().Success, Is.True);
+        Assert.That(datasets.Read("out.csv").Single()["term"], Is.EqualTo("heron"),
+            "the supplied value has to survive the wait, or the run silently finishes on its default");
+    }
+
+    /// <summary>
+    /// The same, for an input with no default at all — where the loss is loud rather than quiet,
+    /// and the run fails on a value that WAS supplied.
+    /// </summary>
+    [Test]
+    public async Task AResumedRun_StillHasARequiredValueItWasStartedWith()
+    {
+        var task = new TaskDefinition
+        {
+            Name = "Search",
+            Inputs = [new TaskInput { Name = "term" }],
+            Steps = [LongWait(), WriteTerm()],
+        };
+
+        var started = await Run(task, Browser(), Options(inputs: Supplied("term", "heron")));
+        var checkpoint = started.OfType<StepEvent.RunParked>().Single().Checkpoint;
+
+        var finished = await Run(task, Browser(), Options(), checkpoint);
+
+        Assert.That(finished.OfType<StepEvent.RunCompleted>().Single().Success, Is.True,
+            "a required input that was supplied before the wait must not go missing after it");
+    }
+
+    private static Dictionary<string, string> Supplied(string name, string value) =>
+        new(StringComparer.OrdinalIgnoreCase) { [name] = value };
+
+    /// <summary>Writes the task's <c>term</c> input to a dataset, so what the run actually used is
+    /// on disk rather than only in a log line.</summary>
+    private static Step WriteTerm() => new()
+    {
+        Id = "write", Action = StepAction.WriteDataset, Label = "Write down the term",
+        WriteDataset = new DatasetWriteSpec
+        {
+            DatasetName = "out.csv",
+            Columns = new Dictionary<string, BindingRef>
+            {
+                ["term"] = new() { Kind = BindingKind.TaskInput, ParameterName = "term" },
             },
         },
     };

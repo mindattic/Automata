@@ -642,6 +642,76 @@ public class GherkinFlowTests
         Assert.That(Shape(second.Tasks), Is.EqualTo(Shape(first.Tasks)), written.Text);
     }
 
+    /// <summary>
+    /// A guard's left operand is a plain text box in the editor until somebody binds it, so a
+    /// literal on the left is what a half-finished <c>if</c> looks like. The writer used to strip
+    /// that literal's quotes to fit the guard grammar, which only accepts a bare REFERENCE there —
+    /// so <c>"wolf" is exactly "fox"</c> came back as a step-output binding called <c>wolf</c>, and
+    /// a literal with a space in it produced a line nothing recognised at all. Saying a step has no
+    /// Gherkin form is the honest answer; writing one that reads back as a different step is not.
+    /// </summary>
+    [Test]
+    public void AGuardOnALiteralHasNoGherkinForm_RatherThanOneThatMeansSomethingElse()
+    {
+        var collection = new Collection { Name = "F" };
+        var task = new TaskDefinition
+        {
+            Name = "Check",
+            CollectionId = collection.Id,
+            Steps =
+            [
+                new Step
+                {
+                    Action = StepAction.If,
+                    Label = "When wolf is exactly fox",
+                    Condition = new ConditionSpec
+                    {
+                        Left = new BindingRef { Kind = BindingKind.Literal, Literal = "wolf" },
+                        Op = ConditionOp.Equals,
+                        Right = new BindingRef { Kind = BindingKind.Literal, Literal = "fox" },
+                    },
+                },
+            ],
+        };
+
+        var written = GherkinWriter.Write(collection, [task]);
+
+        Assert.That(written.IsLossy, Is.True, written.Text);
+        Assert.That(Compile(written.Text).HasErrors, Is.False,
+            "whatever it writes has to compile: a lossy rendering is for reading, not for breaking. "
+            + written.Text);
+        // A comment line naming the step is fine and inert; a STEP line is what recompiles.
+        Assert.That(written.Text, Does.Not.Match(@"(?m)^\s*(Given|And|When|But)\s+wolf\b"),
+            "a literal written where the grammar reads a reference silently becomes a binding");
+    }
+
+    /// <summary>
+    /// A task's start URL is written as <c>Given I open …</c> — the only line Gherkin has for it —
+    /// and the compiler reads that back as an ordinary Navigate STEP. The two behave the same at
+    /// run time and differ afterwards: a resumed run re-navigates to a start URL, and
+    /// <c>I run task X from its start page</c> needs one to open. So the round trip loses
+    /// something, and <see cref="GherkinWriteResult.IsLossy"/> is where that has to be said.
+    /// </summary>
+    [Test]
+    public void ATaskWithAStartUrl_SaysThatItDoesNotSurviveARoundTrip()
+    {
+        var collection = new Collection { Name = "F" };
+        var task = new TaskDefinition
+        {
+            Name = "Open the shop",
+            CollectionId = collection.Id,
+            StartUrl = "https://shop.example",
+        };
+
+        var written = GherkinWriter.Write(collection, [task]);
+
+        Assert.That(written.Text, Does.Contain("I open \"https://shop.example\""));
+        Assert.That(written.IsLossy, Is.True);
+        Assert.That(written.Reasons, Has.Some.Contains("start URL"));
+        Assert.That(Compile(written.Text).Tasks.Single().StartUrl, Is.Null.Or.Empty,
+            "which is the loss the reason is about");
+    }
+
     // ---- otherwise -------------------------------------------------------------------------------
     //
     // Gherkin has no block syntax, so this codebase's rule is "a guard takes the rest of the

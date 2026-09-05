@@ -135,8 +135,12 @@ public static class GherkinFlowCompiler
             drafts.Add((draft, step.Location));
         }
 
-        // A "start" is implicit: an opening navigate becomes the task's StartUrl only when the
-        // author wrote it first, which is what Background usually produces.
+        // An opening "I open" stays an ordinary Navigate STEP; it does NOT become the task's
+        // StartUrl. Gherkin has no way to say "where this task starts" as distinct from "the first
+        // thing it does", and guessing from position would make a Background's navigate mean
+        // something different from the same line written inside the scenario. GherkinWriter says
+        // so from the other side: a task that HAS a start URL is reported as lossy, because the
+        // line it writes for one comes back as a step.
         var examples = scenario.Examples.FirstOrDefault();
         var built = BuildTree(drafts, outputs, examples != null, diagnostics);
 

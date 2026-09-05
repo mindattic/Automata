@@ -365,7 +365,8 @@ public sealed partial class WorkflowEngine
             new Dictionary<string, string>(state.Variables, StringComparer.Ordinal),
             state.Passed,
             state.Healed,
-            state.ClaimedDatasets());
+            state.ClaimedDatasets(),
+            state.RunInputs());
 
     private static void Restore(ReplayRunState state, ParkCheckpoint checkpoint)
     {
@@ -373,6 +374,9 @@ public sealed partial class WorkflowEngine
             state.Outputs[ReplayRunState.OutputKey(output.StepId, output.Field)] = output.Value;
         foreach (var (name, value) in checkpoint.Variables) state.Variables[name] = value;
         state.RestoreClaims(checkpoint.FreshenedDatasets);
+        // Over the seeded defaults, not instead of them: what the run was actually started with
+        // wins, and an input added to the task while it waited still has its own default.
+        state.OverlayRunInputs(checkpoint.Inputs);
         state.Passed = checkpoint.Passed;
         state.Healed = checkpoint.Healed;
     }

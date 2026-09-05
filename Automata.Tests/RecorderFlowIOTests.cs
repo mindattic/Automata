@@ -115,8 +115,16 @@ public class RecorderFlowIOTests
             "the usable alternative should still be taken");
     }
 
+    /// <summary>
+    /// A chain is one selector per shadow boundary, outermost first, so its LAST part names the
+    /// element and everything before it names a host on the way there. Keeping the first part
+    /// recorded a step that clicks the WRAPPER and never the control — the same mistake the
+    /// recorder avoids by reading <c>composedPath()[0]</c>, arrived at from the other direction.
+    /// The resolver has searched every open shadow root since phase 18, so the innermost part is
+    /// the one it can actually find.
+    /// </summary>
     [Test]
-    public void AMultiPartSelectorChainKeepsItsFirstPartAndSaysSo()
+    public void AMultiPartSelectorChainKeepsItsInnermostPartAndSaysSo()
     {
         var result = RecorderFlowIO.Import("""
             { "title": "T", "steps": [
@@ -124,8 +132,23 @@ public class RecorderFlowIOTests
             ] }
             """);
 
-        Assert.That(result.Task.Steps.Single().Target!.CssSelector, Is.EqualTo("#host"));
-        Assert.That(result.Warnings.Any(w => w.Contains("shadow DOM")), Is.True);
+        Assert.That(result.Task.Steps.Single().Target!.CssSelector, Is.EqualTo("#inner"));
+        Assert.That(result.Warnings.Any(w => w.Contains("shadow boundary")), Is.True,
+            "reaching through a boundary is still worth saying, because the chain itself is gone");
+    }
+
+    /// <summary>
+    /// Chrome puts a setViewport at the head of EVERY recording, and <see cref="RecorderFlowIO"/>'s
+    /// own Export writes one back — so warning about it fired on every real import and on Automata's
+    /// own round trip. A warning with nothing at stake behind it is how people learn to stop reading
+    /// warnings.
+    /// </summary>
+    [Test]
+    public void AWholeChromeRecordingImportsWithNothingToReport()
+    {
+        var result = RecorderFlowIO.Import(ChromeExport);
+
+        Assert.That(result.Warnings, Is.Empty, string.Join("; ", result.Warnings));
     }
 
     [Test]

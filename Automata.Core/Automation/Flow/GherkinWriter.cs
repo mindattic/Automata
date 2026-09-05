@@ -56,7 +56,17 @@ public static class GherkinWriter
         sb.Append("  ").Append(loop == null ? "Scenario: " : "Scenario Outline: ").Append(task.Name).Append('\n');
 
         if (!string.IsNullOrWhiteSpace(task.StartUrl))
+        {
             sb.Append("    Given I open ").Append(FlowValues.Quote(task.StartUrl)).Append('\n');
+            // The compiler reads that line back as an ordinary Navigate STEP, not as the task's
+            // start URL — Gherkin has no way to say "where this task starts" as distinct from
+            // "the first thing it does". The two behave the same at run time and differ
+            // afterwards: a resumed run re-navigates to a start URL, and `I run task X from its
+            // start page` needs one to open. Said out loud rather than left to be discovered.
+            reasons.Add(
+                $"'{task.Name}' has a start URL, which recompiles as its first step rather than " +
+                "as the task's start page");
+        }
 
         WriteSteps(sb, body, task, reasons, first: true);
 
@@ -178,6 +188,18 @@ public static class GherkinWriter
         return $"I wait until {target} says {FlowValues.Quote(right.Literal)}";
     }
 
+    /// <summary>
+    /// A guard, written the way the compiler reads one back.
+    /// <para>
+    /// The LEFT operand must be a bare reference, because that is the only thing the guard grammar
+    /// accepts there — a quoted string on the left of <c>contains</c> is how an ASSERTION about an
+    /// element is written, and only the quoting tells the two apart. So a guard whose left side is
+    /// a LITERAL has no Gherkin form at all, and saying so is the honest answer: it used to be
+    /// written with its quotes stripped, which turned <c>"wolf" is exactly "fox"</c> into a
+    /// step-output reference called <c>wolf</c>, and a literal with a space in it into a line the
+    /// compiler could not read at all.
+    /// </para>
+    /// </summary>
     private static string? GuardPhrase(Step step)
     {
         var condition = step.Condition;
@@ -185,12 +207,13 @@ public static class GherkinWriter
         var entry = StepDefinitionCatalog.Comparisons.FirstOrDefault(c => c.Op == condition.Op);
         if (entry.Phrase == null) return null;
 
+        if (condition.Left.Kind == BindingKind.Literal) return null;
         var left = BareOperand(condition.Left);
         if (left == null) return null;
-        if (entry.Unary) return $"{Bare(left)} {entry.Phrase}";
+        if (entry.Unary) return $"{left} {entry.Phrase}";
 
         var right = BareOperand(condition.Right);
-        return right == null ? null : $"{Bare(left)} {entry.Phrase} {right}";
+        return right == null ? null : $"{left} {entry.Phrase} {right}";
     }
 
     /// <summary>
@@ -241,8 +264,6 @@ public static class GherkinWriter
         step.Label.StartsWith("Run task '", StringComparison.Ordinal)
             ? step.Label["Run task '".Length..].TrimEnd('\'')
             : step.RunTaskId ?? "";
-
-    private static string Bare(string written) => written.Trim('"');
 
     private static string Value(Step step, string field)
     {

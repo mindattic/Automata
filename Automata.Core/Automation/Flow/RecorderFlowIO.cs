@@ -113,6 +113,13 @@ public static class RecorderFlowIO
             case "keyup":
                 return null;
 
+            // Chrome writes one of these at the head of EVERY recording, and Export writes one
+            // back. Automata drives a browser of a size it already decided, so there is nothing to
+            // carry — and a warning that fires on every single import is how people learn to stop
+            // reading warnings.
+            case "setviewport":
+                return null;
+
             case "waitforelement":
                 return Targeted(StepAction.WaitForElement, step, warnings, "Wait for");
 
@@ -151,12 +158,21 @@ public static class RecorderFlowIO
                 ? chain.Select(c => c?.GetValue<string>()).Where(c => c != null).Select(c => c!).ToList()
                 : alternative?.GetValue<string>() is { } single ? [single] : [];
 
+            // A chain is one selector per shadow boundary, outermost first, so the LAST part names
+            // the element and every part before it names a host on the way to it. The resolver
+            // searches every open shadow root, so the last part is the one that finds the control;
+            // taking the first part instead recorded a step that clicks the WRAPPER — silently, and
+            // exactly the mistake `composedPath()[0]` exists to stop the recorder making.
             if (parts.Count > 1)
             {
-                warnings.Add("a selector pierces shadow DOM, which Automata does not support yet — using its first part only");
+                var hops = parts.Count - 1;
+                warnings.Add(
+                    $"a selector reaches through {hops} shadow boundar{(hops == 1 ? "y" : "ies")} — " +
+                    "kept as its innermost part, which is what Automata's own shadow-aware search " +
+                    "looks for");
             }
 
-            var selector = parts.FirstOrDefault();
+            var selector = parts.LastOrDefault();
             if (string.IsNullOrWhiteSpace(selector)) continue;
 
             if (selector.StartsWith("aria/", StringComparison.Ordinal))

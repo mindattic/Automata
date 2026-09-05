@@ -1844,6 +1844,68 @@ back. A test that has never failed has not been shown to test anything.
 Green at the end of it: **511 NUnit tests**, `verify-ui` 84/84, `verify-js` 13/13, `verify-demos`
 all pass, `verify-shop` all pass, `verify-live --live` all pass.
 
+### The two formats a task can leave in, and a value that did not come back (2026-09-05)
+
+Not a phase. Six defects, found by reading the paths a task takes when it stops being a step tree —
+Gherkin out, Chrome's Recorder format in — plus one in the half of a parked run that happens hours
+later.
+
+**A parked run came back on its defaults.** `ParkCheckpoint` carried the outputs, the row
+variables, the tallies and the datasets it had started fresh — everything except the values the run
+was STARTED with. The tick that resumes a run is a fresh process with no command line, so
+`--input term=heron` was seeded, used for the first half, and gone for the second: the resumed run
+re-seeded from the task's declaration and finished on `wolf`, reporting success. Where the input
+had no default at all the loss was at least loud, failing on a value that had been supplied. The
+checkpoint carries them now, overlaid ON the seeded defaults rather than instead of them, so an
+input added to the task while it waited still has its own.
+
+**A guard on a literal wrote a line that meant something else.** A condition's left operand is a
+plain text box until somebody binds it, so a literal there is what a half-finished `if` looks like.
+`GherkinWriter` stripped its quotes to fit the guard grammar — which reads a BARE token as a
+reference — so `"wolf" is exactly "fox"` came back as a step-output binding called `wolf`, and a
+literal with a space in it produced a line nothing recognised at all. A guard whose left side is a
+literal has no Gherkin form, and saying so is the honest answer. `Bare()`, whose whole job was that
+strip, is gone.
+
+**A task's start URL vanished on the round trip, silently.** It is written as `Given I open …` —
+the only line Gherkin has for it — and read back as an ordinary Navigate step. The two behave the
+same at run time and differ afterwards: a resumed run re-navigates to a start URL, and `I run task X
+from its start page` needs one to open. It is a lossy rendering now, with the reason on it. The
+compiler's comment claimed the opposite ("an opening navigate becomes the task's StartUrl") and had
+been wrong for some time; it says what the code does now, and why guessing from position would be
+worse.
+
+**A Chrome recording of a shadow-DOM control imported the wrapper.** Recorder writes a chain — one
+selector per shadow boundary, outermost first — so the LAST part names the element and everything
+before it names a host on the way to it. `FingerprintFrom` took the first. That is exactly the
+mistake `composedPath()[0]` exists to stop the recorder making, arrived at from the other direction,
+and it had been safe to make when the resolver stopped at a shadow boundary. It has not stopped
+there since phase 18. The innermost part is kept, and the warning says what happened rather than
+claiming shadow DOM is unsupported.
+
+**And every Chrome recording imported with a warning nobody could act on.** `setViewport` heads
+every Recorder export, and `RecorderFlowIO.Export` writes one back — so Automata's own round trip
+warned about a line it had just written. A warning that fires every time is how people learn to stop
+reading warnings.
+
+**A harvest pick left every frame armed.** Arming one arms every document on the page, at any
+depth, because a person points at a thing on screen and has no reason to know which document drew
+it. Only the document that got the click disarms itself, so the rest stayed one-shot armed: the
+next ordinary click inside a frame was swallowed — a pick consumes its click on purpose — and posted
+as a pick nothing was waiting for. One pick, one answer, everybody stands down.
+
+**Also: `ParkedRun.cs` was a binary file to git.** A doc comment illustrating the NUL that joins a
+step id to an output name contained a real one, so every diff of that file read `Bin 5605 -> 6244
+bytes` and no change to it had ever been reviewable. It is ` ` now. `BeyondBoundaryTests` rejects a
+control character in an injected SCRIPT — phase 32's NUL-in-`frames.js` bug — but nothing was
+looking at ordinary source.
+
+Six tests, every one run against the unfixed code first.
+
+Green at the end of it: **555 NUnit tests**, `verify-ui` 84/84, `verify-js` 13/13, `verify-demos`
+all pass, `verify-shop` all pass. `verify-live --live` was not run (it needs the network and real
+sites).
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

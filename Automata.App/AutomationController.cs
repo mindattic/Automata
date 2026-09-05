@@ -581,6 +581,15 @@ public sealed class AutomationController
         // recording guard below, not after it.
         if (msg["kind"]?.GetValue<string>() == "pick")
         {
+            // Arming a pick arms EVERY document on the page — the top one and every frame at any
+            // depth — because the user points at a thing on screen and has no reason to know which
+            // document drew it. Only the document that got the click disarms itself, so without
+            // this the rest stay one-shot armed: the next ordinary click inside a frame is
+            // swallowed (a pick consumes its click on purpose) and posted as a pick nothing is
+            // waiting for, so it vanishes with no explanation. One pick, one answer, everybody
+            // stands down.
+            if (targetCore() is { } pane)
+                await TryEvalAsync(pane, "window.__automataRecorder && window.__automataRecorder.cancelPick()");
             await execPanelScript($"window.ssPanel.onHarvestPick({msg.ToJsonString()})");
             return;
         }
