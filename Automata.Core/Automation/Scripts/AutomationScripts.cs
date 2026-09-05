@@ -41,12 +41,19 @@ public static class AutomationScripts
     /// the whole mechanism frames.js depends on.
     /// </para>
     /// <para>
-    /// Ordering is the file order: the registry first, then stability, which fingerprint.js reads,
-    /// then the resolver, then the bridge that calls into it.
+    /// harvest.js is here for the second reason rather than the first. It CAN be injected late, and
+    /// is, into the top document — but a harvest that has to read a list inside a cross-origin frame
+    /// is answered by the copy running in that frame, called by name over the bridge. A name is only
+    /// callable if something already put it there.
+    /// </para>
+    /// <para>
+    /// Ordering is the file order: the registry first, then stability, which both fingerprint.js and
+    /// harvest.js read, then the resolver, then the bridge that calls into it, then the harvester —
+    /// which uses the resolver's root walk.
     /// </para>
     /// </summary>
     public static string DocumentStartJs { get; } = string.Join(
-        Environment.NewLine, ClosedRootsJs, StabilityJs, FingerprintJs, ResolverJs, FramesJs);
+        Environment.NewLine, ClosedRootsJs, StabilityJs, FingerprintJs, ResolverJs, FramesJs, HarvestJs);
 
     private static string Load(string fileName)
     {

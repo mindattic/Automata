@@ -173,26 +173,99 @@ public class BeyondBoundaryTests
         });
     }
 
-    // ---- the one action that still stops at a boundary --------------------------------------------
-
     /// <summary>
-    /// Uploading is the only action that does not go through the resolver — it matches its input
-    /// with a selector against the top document, because that is what CDP's file-setting call needs.
-    /// So it is the only action a boundary still stops, and the requirement is that it SAYS so.
-    /// The alternative it replaced was ten seconds of retrying a selector that could never match,
-    /// ending in "no element matching '[data-automata-upload]'" — which reads as the marker being
-    /// broken rather than as the input being somewhere unreachable.
+    /// A harvest that has to read a list inside a cross-origin frame is answered by the copy of the
+    /// harvester already running in there, called BY NAME over the bridge — so unlike a forwarded
+    /// action it needs no eval, and a frame with a strict Content-Security-Policy still answers.
+    /// A name is only callable if something put it there, which is why harvest.js is in the
+    /// document-start bundle rather than only injected on demand.
     /// </summary>
     [Test]
-    public async Task AttachingAFileToAnInputBehindABoundaryFailsSayingWhatIsWrong()
+    public void TheDocumentStartBundleCarriesTheHarvesterSoAFrameCanBeAskedForItsRows()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("__automataHarvest"));
+            Assert.That(AutomationScripts.FramesJs, Does.Contain("askCall"),
+                "without a call-by-name op there is no way to run it in there");
+        });
+    }
+
+    /// <summary>
+    /// The same waiting shape a third time, for a harvest. Worth its own test because a harvest has
+    /// no poll loop to borrow — a resolve polls because elements render late, and a harvest reads a
+    /// page that is already there — so this one had to be given a short loop of its own, and a
+    /// caller that treated "waiting" as "no rows" would report the page as changed.
+    /// </summary>
+    [Test]
+    public async Task AHarvestWaitingOnAFrameIsCollectedRatherThanReadAsAnEmptyPage()
+    {
+        var browser = new FakeBrowserSurface();
+        browser.EvalResponses.Enqueue(_ => """{ "ok": false, "waitingOnFrames": true, "count": 0, "rows": [] }""");
+        browser.EvalResponses.Enqueue(_ => """
+            {
+              "ok": true, "count": 2, "emptyFields": [],
+              "rows": [{ "ref": "O-1", "text": "First" }, { "ref": "O-2", "text": "Second" }]
+            }
+            """);
+
+        var result = await HarvestRunner.RunAsync(browser, new HarvestSpec
+        {
+            ItemSelector = "ul.opaque-list > li.opaque-row",
+            DatasetName = "opaque.csv",
+            Fields = [new HarvestField { Name = "ref" }, new HarvestField { Name = "text" }],
+        }, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Ok, Is.True, result.Error);
+            Assert.That(result.Rows, Has.Count.EqualTo(2));
+        });
+    }
+
+    // ---- the one action that reaches by a different route ------------------------------------------
+
+    /// <summary>
+    /// Uploading does not go through the resolver's act path — CDP's file-setting call needs a
+    /// handle on the element, not a script that acts on it. It gets one by evaluating
+    /// <c>window.__automataLastResolved</c>, which is the resolver's answer whatever root it came
+    /// from, rather than a selector against the top document. That single substitution is what
+    /// opens an upload into a shadow root of either kind, and into a same-origin frame.
+    /// </summary>
+    [Test]
+    public async Task AttachingAFileAsksForTheElementTheResolverFoundRatherThanASelector()
     {
         var browser = new FakeBrowserSurface
         {
-            // Marking the element succeeds — the resolver reached it. Looking for the mark from the
-            // top document does not, which is the whole diagnosis.
-            DefaultEvalResponse = script => script.Contains("document.querySelector")
-                ? """{ "ok": false }"""
-                : """{ "ok": true, "value": null }""",
+            DefaultEvalResponse = _ => """{ "ok": true }""",
+        };
+
+        var result = await BrowserActions.UploadToResolvedAsync(
+            browser, "C:/nowhere/notes.txt", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Ok, Is.True);
+            Assert.That(browser.Calls.Single(c => c.Method == "InjectFile").Args,
+                Does.Contain("window.__automataLastResolved"),
+                "a selector against the top document is exactly what stops at a shadow boundary");
+        });
+    }
+
+    /// <summary>
+    /// And the case that genuinely cannot work, checked for rather than discovered. A handle does
+    /// not cross an origin boundary — the expression is evaluated in the top document's context and
+    /// the element is not in it — so the alternative to saying so is attaching the file to whatever
+    /// was left on <c>window.__automataLastResolved</c> up here, which would be a silent wrong
+    /// answer rather than a loud missing one.
+    /// </summary>
+    [Test]
+    public async Task AttachingAFileInsideACrossOriginFrameFailsSayingWhyItCannot()
+    {
+        var browser = new FakeBrowserSurface
+        {
+            // The resolve landed in a frame, which is what resolvedFrame being set means.
+            DefaultEvalResponse = _ => """{ "ok": false }""",
         };
 
         var result = await BrowserActions.UploadToResolvedAsync(
@@ -201,9 +274,9 @@ public class BeyondBoundaryTests
         Assert.Multiple(() =>
         {
             Assert.That(result.Ok, Is.False);
-            Assert.That(result.Error, Does.Contain("shadow root"));
+            Assert.That(result.Error, Does.Contain("cross-origin frame"));
             Assert.That(browser.Calls.Any(c => c.Method == "InjectFile"), Is.False,
-                "nothing should have been attached — the input the injector would have found is not this one");
+                "nothing should have been attached — the element the expression would find is not this one");
         });
     }
 }

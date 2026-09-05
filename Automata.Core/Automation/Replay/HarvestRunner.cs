@@ -43,17 +43,35 @@ public static class HarvestRunner
             },
             AutomataJson.Options);
 
+        // The resolver's own root walk comes along, because a harvest looks in the same places a
+        // resolve does now — every shadow root, every same-origin frame — and the walk is defined
+        // there. frames.js follows it for the frames neither can read into.
         var script = $$"""
         (function() {
+        {{AutomationScripts.ClosedRootsJs}}
         {{AutomationScripts.StabilityJs}}
+        {{AutomationScripts.FingerprintJs}}
+        {{AutomationScripts.ResolverJs}}
+        {{AutomationScripts.FramesJs}}
         {{AutomationScripts.HarvestJs}}
-        return window.__automataHarvest({{specJson}});
+        return window.__automataHarvestDeep({{specJson}});
         })()
         """;
 
-        Envelope? env;
-        try { env = JsonSerializer.Deserialize<Envelope>(await browser.EvalAsync(script, ct), AutomataJson.Options); }
-        catch (JsonException) { return Fail("the page returned something that was not a harvest"); }
+        Envelope? env = null;
+        // A harvest that has to ask a frame cannot answer in the call that asks, so the first
+        // attempt reports itself waiting and this collects the answer. Unlike a resolve there is no
+        // poll loop to borrow — a harvest reads a page that is already there — so it is a short one
+        // of its own.
+        var deadline = Environment.TickCount64 + FrameAnswerMs;
+        while (true)
+        {
+            try { env = JsonSerializer.Deserialize<Envelope>(await browser.EvalAsync(script, ct), AutomataJson.Options); }
+            catch (JsonException) { return Fail("the page returned something that was not a harvest"); }
+            if (env is not { WaitingOnFrames: true }) break;
+            if (Environment.TickCount64 + FramePollMs > deadline) break;
+            await Task.Delay(FramePollMs, ct);
+        }
 
         if (env == null) return Fail("the page returned nothing");
         if (!env.Ok)
@@ -144,6 +162,10 @@ public static class HarvestRunner
 
     private static HarvestResult Fail(string error) => new(false, [], 0, [], error);
 
+    /// <summary>How long a harvest waits for a cross-origin frame to answer.</summary>
+    private const int FrameAnswerMs = 3000;
+    private const int FramePollMs = 100;
+
     private sealed class Envelope
     {
         public bool Ok { get; set; }
@@ -151,5 +173,8 @@ public static class HarvestRunner
         public List<Dictionary<string, string>>? Rows { get; set; }
         public List<string>? EmptyFields { get; set; }
         public string? Error { get; set; }
+
+        /// <summary>Not "no rows" — "no answer yet", from a frame that is still being asked.</summary>
+        public bool WaitingOnFrames { get; set; }
     }
 }

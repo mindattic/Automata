@@ -190,6 +190,24 @@ try {
     'status does not list it',
   );
 
+  // ---- reading and writing where a selector cannot go ------------------------------------------
+  // Two files rather than one, because the two lists are reached by two different mechanisms: the
+  // frame in shadow.html is same-origin and is WALKED into, the frame in closed.html has its own
+  // origin and is ASKED. A single check over both would pass while one of them was broken.
+  const framed = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'framed-rows.csv'));
+  check(
+    'a list inside a same-origin frame was harvested (3 rows)',
+    framed.length === 3 && framed.map((r) => r.ref).join(',') === 'F-1,F-2,F-3',
+    JSON.stringify(framed),
+  );
+
+  const opaque = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'opaque-rows.csv'));
+  check(
+    'a list across an origin boundary was harvested by the copy running inside it (2 rows)',
+    opaque.length === 2 && opaque.map((r) => r.ref).join(',') === 'O-1,O-2',
+    JSON.stringify(opaque),
+  );
+
   // ---- the wait that watched -----------------------------------------------------------------
   // The slow example's page changes its status three times, and the run READS it while it still
   // says "working". So the two columns it writes can only differ if the wait went back to the page

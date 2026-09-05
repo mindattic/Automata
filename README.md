@@ -230,13 +230,18 @@ the roots it opens, and CROSS-ORIGIN iframes by talking to the copy of the resol
 inside them over `postMessage`. The last one carries coordinates back out through each enclosing
 frame, because a cross-origin document cannot know where it sits on the page and its parent can.
 
+Recording, harvesting and uploading reach the same places. The recorder runs in every frame and
+sends its events out through the bridge, so a click inside a cross-origin iframe is recorded, in
+order, alongside the clicks around it; a harvest generalises and reads rows through the same root
+walk, asking a cross-origin frame's own copy by name when it has to.
+
 Known limitations: a closed shadow root that existed BEFORE the toolkit was installed is not
 reachable, and never becomes reachable — there is one instant when a closed root is visible to
 anything, and it is the instant it is created. A frame that runs no script at all (`sandbox` with no
 `allow-scripts`) cannot answer. Forwarding an ACTION into a cross-origin frame needs `new Function`
-there, so a frame whose CSP forbids `unsafe-eval` can be searched but not acted in, and says so;
-nothing about the ordinary same-document path goes near `eval`. Attaching a FILE still stops at
-every boundary, including a same-origin frame, because it matches its input against the top document
-rather than through the resolver — it now reports that rather than timing out. Recording still
-happens in the top document, so a click inside an iframe is not recorded (one inside an open shadow
-root is).
+there, so a frame whose CSP forbids `unsafe-eval` can be searched, read and harvested but not acted
+in, and says so; nothing about the ordinary same-document path goes near `eval`. Two things are
+genuinely out rather than merely unbuilt: **recording** inside a closed shadow root, because the
+event is retargeted with an empty `composedPath` and there is nothing to read; and attaching a
+**file** inside a cross-origin frame, because that needs a handle on the element and a handle does
+not cross an origin boundary.

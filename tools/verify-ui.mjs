@@ -1111,21 +1111,38 @@ async function main() {
       await targetPage.locator('.clicked[data-id="gamma"]').waitFor({ state: 'visible', timeout: 5000 });
     });
 
+    // The recorder listens on `document`, and an iframe never delivers its events to the document
+    // that embeds it — so until the recorder was put INSIDE every frame, a click in here produced
+    // nothing at all and looked exactly like a click that missed. This one is cross-origin, which
+    // also means the event cannot reach the host through that frame's own `chrome.webview`: it
+    // travels out through the frame bridge, parent by parent, and only the top document hands it
+    // over.
+    await group('a physical click INSIDE a cross-origin frame is captured too', async () => {
+      const framed = targetPage.frameLocator('#framed');
+      await framed.locator('#delta').click();
+      await framed.locator('.clicked[data-id="delta"]').waitFor({ state: 'visible', timeout: 5000 });
+    });
+
     await group('Stop -> new step spliced at the gap', async () => {
       await panelPage.locator('#btn-stop').click();
       // The panel can re-render more than once in quick succession while the saveTask round-trip
       // is in flight (an intermediate onState can briefly show the pre-splice tree) — poll for
       // the settled state (3 rows, the new one at index 1) rather than a single snapshot.
       let lastSeen = null;
-      const label = await waitFor(
+      const labels = await waitFor(
         async () => {
-          const labels = await panelPage.locator('#tree .node.step .name').allTextContents();
-          lastSeen = labels;
-          return labels.length === 3 && /gamma/i.test(labels[1]) ? labels[1] : null;
+          const found = await panelPage.locator('#tree .node.step .name').allTextContents();
+          lastSeen = found;
+          return found.length === 4 && /gamma/i.test(found[1]) ? found : null;
         },
-        { timeoutMs: 15000, label: `the new step to settle at index 1 (last seen: ${JSON.stringify(lastSeen)})` },
+        { timeoutMs: 15000, label: `two new steps to settle at index 1 and 2 (last seen: ${JSON.stringify(lastSeen)})` },
       ).catch((err) => { throw new Error(`${err.message}; last seen labels: ${JSON.stringify(lastSeen)}`); });
-      assertTrue(/gamma/i.test(label), `expected the new step's label to mention "gamma", got "${label}"`);
+      assertTrue(/gamma/i.test(labels[1]), `expected the first new step to mention "gamma", got "${labels[1]}"`);
+      // In ORDER, which is the part a per-frame recorder could plausibly get wrong: two documents
+      // capturing independently could arrive in either sequence, and a recording that reorders the
+      // user's clicks is worse than one that misses some.
+      assertTrue(/delta/i.test(labels[2]),
+        `expected the click inside the frame to be recorded after gamma, got "${labels[2]}"`);
     });
 
     await group('run stays paused after insertion', async () => {
@@ -1174,7 +1191,8 @@ async function main() {
       // auto-select could have put it in this state, proving the collection run announced it.
       await waitForClass(panelPage.locator(`.node.task[data-task="${failTaskId}"]`), 'selected', 5000);
       const stepCount = await panelPage.locator('#tree .node.step').count();
-      assertEqual(stepCount, 4, "expected Fail Task's step to be auto-expanded alongside Insert Fixture's 3 steps");
+      assertEqual(stepCount, 5,
+        "expected Fail Task's step to be auto-expanded alongside Insert Fixture's 4 steps");
     });
 
     await group('Cancel stops a collection run instead of continuing to the next task', async () => {

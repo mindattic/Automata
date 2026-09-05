@@ -62,6 +62,12 @@ public static class DemoTasks
     /// page rather than re-checking what had already been read.</summary>
     public const string SlowReadingsDataset = "slow-readings.csv";
 
+    /// <summary>The rows harvested from inside a same-origin frame, and from across an origin
+    /// boundary. Two files, because they are reached by two different mechanisms and a check that
+    /// could not tell which one broke would be worth less.</summary>
+    public const string FramedRowsDataset = "framed-rows.csv";
+    public const string OpaqueRowsDataset = "opaque-rows.csv";
+
     /// <summary>Dataset the roster example writes one row to per person it added.</summary>
     public const string RosterAddedDataset = "roster-added.csv";
 
@@ -797,6 +803,38 @@ public static class DemoTasks
                 Target = Css("p", "#frame-said"),
                 Value = "the frame was clicked",
             },
+            new Step
+            {
+                Id = "demo-shadow-attach",
+                Action = StepAction.UploadFile,
+                // The one action that did not go through the resolver, and therefore the one that
+                // stopped at the first component library it met. It asks for the element the
+                // resolver found rather than for a selector, so it now reaches wherever a resolve
+                // reaches.
+                Label = $"Attach {DemoPages.AttachmentFile} to the file input inside the shadow root",
+                Target = Css("input", "#in-shadow-file"),
+                Value = FilePath(demoRoot, DemoPages.AttachmentFile),
+            },
+            new Step
+            {
+                Id = "demo-shadow-harvest",
+                Action = StepAction.ExtractAll,
+                Label = "Harvest the list that lives inside the frame",
+                Harvest = new HarvestSpec
+                {
+                    ItemSelector = "ul.framed-list > li.framed-row",
+                    ExpectedCount = 3,
+                    DatasetName = FramedRowsDataset,
+                    Format = "csv",
+                    Append = false,
+                    Fields =
+                    [
+                        new HarvestField { Name = "ref", Source = HarvestSource.Attribute, AttributeName = "data-ref" },
+                        new HarvestField { Name = "text", Source = HarvestSource.Text },
+                    ],
+                },
+                Outputs = [new OutputField { Name = "count", Description = "How many rows the frame held" }],
+            },
         ]);
 
     /// <summary>
@@ -852,6 +890,38 @@ public static class DemoTasks
                 Label = "Read what it wrote, inside that same frame",
                 Target = Css("p", "#opaque-said"),
                 Value = "the cross-origin frame was clicked",
+            },
+            new Step
+            {
+                Id = "demo-closed-attach",
+                Action = StepAction.UploadFile,
+                Label = $"Attach {DemoPages.AttachmentFile} to the file input inside the CLOSED root",
+                Target = Css("input", "#in-closed-file"),
+                Value = FilePath(demoRoot, DemoPages.AttachmentFile),
+            },
+            new Step
+            {
+                Id = "demo-closed-harvest",
+                Action = StepAction.ExtractAll,
+                // Nothing here can read that list. The copy of the harvester running inside the
+                // frame can, and is asked to by name — which needs no eval, so a frame with a
+                // strict Content-Security-Policy answers this even though it would refuse a
+                // forwarded action.
+                Label = "Harvest the list that lives across the origin boundary",
+                Harvest = new HarvestSpec
+                {
+                    ItemSelector = "ul.opaque-list > li.opaque-row",
+                    ExpectedCount = 2,
+                    DatasetName = OpaqueRowsDataset,
+                    Format = "csv",
+                    Append = false,
+                    Fields =
+                    [
+                        new HarvestField { Name = "ref", Source = HarvestSource.Attribute, AttributeName = "data-ref" },
+                        new HarvestField { Name = "text", Source = HarvestSource.Text },
+                    ],
+                },
+                Outputs = [new OutputField { Name = "count", Description = "How many rows were across the boundary" }],
             },
         ]);
 

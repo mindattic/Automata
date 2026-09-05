@@ -124,8 +124,8 @@ public class WebView2BrowserSurface : IBrowserSurface
         return await task;
     }
 
-    public Task InjectFileAsync(string filePath, string selector, CancellationToken ct)
-        => DomFileInjector.InjectAsync(core, filePath, selector);
+    public Task InjectFileAsync(string filePath, string elementJs, CancellationToken ct)
+        => DomFileInjector.InjectAsync(core, filePath, elementJs);
 
     /// <summary>
     /// Zooms the page with the browser's OWN zoom — the controller's zoom factor, the same setting

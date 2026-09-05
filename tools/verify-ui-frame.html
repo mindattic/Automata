@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Automata verify-ui frame</title></head>
+<body>
+  <!-- Loaded by src from a file:// page, so this document has its own opaque origin: the page
+       embedding it cannot read a word of it, and the recorder running out there cannot see a click
+       in here. The recorder running IN here can, and posts it out through the frame bridge. -->
+  <p>A page of its own origin, inside the fixture.</p>
+  <button id="delta">Delta in a frame</button>
+  <script>
+    document.getElementById('delta').addEventListener('click', function () {
+      var marker = document.createElement('div');
+      marker.className = 'clicked';
+      marker.setAttribute('data-id', 'delta');
+      marker.textContent = 'clicked: delta';
+      document.body.appendChild(marker);
+    });
+  </script>
+</body>
+</html>

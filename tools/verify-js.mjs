@@ -340,6 +340,42 @@ async function main() {
         `the centre was not translated out of the frame: ${second.centerY} is above the frame at ${sealed.frameTop}`);
     });
 
+    // A harvest looked at the top document only, which meant the two things it does — generalising
+    // one clicked row into a selector, and reading the rows back — both stopped at the first
+    // component library. Both now use the resolver's root walk, so both reach the same places a
+    // resolve does. Checked in a CLOSED root, which is the strongest case: nothing can walk into
+    // one, so a pass here is a pass for open roots and same-origin frames too.
+    await groupAsync('elements: a harvest generalises and reads rows inside a closed shadow root', async () => {
+      const answer = await page.evaluate(() => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const root = host.attachShadow({ mode: 'closed' });
+        root.innerHTML =
+          '<ul class="hidden-list">' +
+          '<li class="hidden-row" data-ref="H-1"><span class="title">One</span></li>' +
+          '<li class="hidden-row" data-ref="H-2"><span class="title">Two</span></li>' +
+          '<li class="hidden-row" data-ref="H-3"><span class="title">Three</span></li>' +
+          '</ul>';
+        const picked = JSON.parse(window.__automataPickSet(root.querySelector('.title')));
+        const harvested = JSON.parse(window.__automataHarvest({
+          itemSelector: picked.selector,
+          fields: [
+            { name: 'ref', source: 'attribute', attributeName: 'data-ref' },
+            { name: 'title', selector: '.title', source: 'text' },
+          ],
+        }));
+        return { exposed: host.shadowRoot !== null, picked, harvested };
+      });
+
+      assertTrue(!answer.exposed, 'that root was not closed, so this proves nothing');
+      assertTrue(answer.picked.ok, `the pick failed inside the root: ${JSON.stringify(answer.picked)}`);
+      assertEqual(answer.picked.count, 3, `one row should generalise to all three, got ${answer.picked.count}`);
+      assertTrue(answer.harvested.ok, `the harvest failed: ${JSON.stringify(answer.harvested)}`);
+      assertEqual(answer.harvested.rows.map((r) => r.ref).join(','), 'H-1,H-2,H-3',
+        'the rows came back in the wrong order, or not at all');
+      assertEqual(answer.harvested.rows[0].title, 'One', 'a field inside a row was not read');
+    });
+
     await groupAsync('elements: a harvest generalises rows past their per-row hash classes', async () => {
       const picked = await page.evaluate(() =>
         JSON.parse(window.__automataPickSet(document.querySelector('li.product'))));

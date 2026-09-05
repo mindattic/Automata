@@ -5,6 +5,14 @@
   <button id="alpha">Alpha</button>
   <button id="gamma">Gamma</button>
   <button id="beta">Beta</button>
+
+  <!-- src, not srcdoc: a file:// document has an opaque origin, so this is a genuine cross-origin
+       embed and the recorder out here can see nothing inside it. Recording a click in there is the
+       hardest version of the claim, so it is the one worth checking. -->
+  <iframe id="framed" title="A page of its own origin"
+          style="width: 320px; height: 120px; margin-top: 12px"
+          src="verify-ui-frame.html"></iframe>
+
   <script>
     document.querySelectorAll('button').forEach(function (btn) {
       btn.addEventListener('click', function () {

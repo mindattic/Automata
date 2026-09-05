@@ -21,10 +21,14 @@ public interface IBrowserSurface
     /// alert/confirm dialog) must never hang the caller forever.</summary>
     Task<string> EvalAsync(string script, CancellationToken ct);
 
-    /// <summary>Attach a local file to a page's file input, matched by <paramref name="selector"/>
-    /// (default: the first <c>input[type=file]</c> on the page), without ever opening a native
-    /// OS file-picker dialog.</summary>
-    Task InjectFileAsync(string filePath, string selector, CancellationToken ct);
+    /// <summary>
+    /// Attach a local file to a page's file input, without ever opening a native OS file-picker
+    /// dialog. <paramref name="elementJs"/> is a JavaScript expression yielding the input —
+    /// <c>window.__automataLastResolved</c> for the element the resolver just found, which is how
+    /// this reaches inside a shadow root, or a plain <c>document.querySelector(…)</c> for a caller
+    /// that has only a selector.
+    /// </summary>
+    Task InjectFileAsync(string filePath, string elementJs, CancellationToken ct);
 
     /// <summary>Dispatch a REAL, trusted mouse click at a viewport point — distinct from calling
     /// <c>.click()</c> on an element in JS. Required for custom ARIA widgets (e.g. a React

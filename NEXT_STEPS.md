@@ -1659,6 +1659,66 @@ Green at the end of it: **492 NUnit tests**, `verify-ui` **83/83** (one new grou
 editor), `verify-js` 12/12, `verify-demos` all pass including the new two-readings check,
 `verify-shop` all pass.
 
+### Phase 34 - recording, harvesting and uploading catch up with replay (2026-09-04)
+
+Phase 32 taught the RESOLVER to reach past every boundary. Three things did not come with it, and
+each stopped somewhere different: the recorder never heard a click inside a frame, a harvest queried
+the top document only, and an upload matched its input with a selector. This is those three,
+finished - and two of them turned out to be one line each, because phase 32 had already built the
+part that was hard.
+
+**Uploading: ask for the element, not for a selector.** `DOM.setFileInputFiles` needs a RemoteObject,
+so something has to be evaluated to produce one - and that something was
+`document.querySelector(...)`, which stops at a shadow boundary. It is now
+`window.__automataLastResolved`, the resolver's own answer whatever root it came from. That single
+substitution opens an upload into an open shadow root, a CLOSED one, and a same-origin frame. One
+case is left and is checked for rather than discovered: an element in a cross-origin frame lives in
+that frame's `window`, the expression is evaluated in the top document's, and a handle does not cross
+an origin boundary. The step says exactly that instead of attaching the file to whatever was left on
+`__automataLastResolved` up here.
+
+**Harvesting: the same root walk the resolver uses.** `matchAll` now asks
+`__automataReachableRoots()` and takes the FIRST root with any matches - document first, so the page
+as written wins and a component's insides only answer when the page itself has nothing. Rows are
+never mixed across roots, because "all the things like this one" means one list. That one change
+fixes both halves at once: the authoring pick (generalising a clicked row) and the replay read.
+For a cross-origin frame there is a deep pass, and it uses a new op the bridge did not have: **call
+a toolkit function BY NAME**. The name is looked up on the frame's `window`, never evaluated - so
+unlike a forwarded action this needs no `new Function` and a frame whose CSP forbids `unsafe-eval`
+answers it. That is also why `harvest.js` joined the document-start bundle: a name is only callable
+if something already put it there.
+
+**Recording: be in the frame, and talk both ways.** The recorder was already injected into every
+frame - it just had nothing to say and nobody to hear it. Two directions were missing:
+
+- **Outward.** A frame's `chrome.webview` posts to that frame's own `WebMessageReceived`, which
+  nothing listens to. An event now travels out through the bridge, parent by parent, and only the
+  top document hands it to the host.
+- **Inward.** Each document has its own copy of the recorder and its own `enabled` flag, so arming
+  the top one armed one document. The Record button's command now travels in, to every frame at any
+  depth - which is also what arms a harvest pick everywhere, since a person points at a thing on
+  screen and has no reason to know which document drew it.
+
+`verify-ui` records a click inside a CROSS-ORIGIN frame and checks it lands as a step **in order**
+after the click before it. Order is the part a per-frame recorder could plausibly get wrong: two
+documents capturing independently could arrive either way round, and a recording that reorders
+someone's clicks is worse than one that misses some.
+
+**What is still out of reach, and why it is not a plumbing problem.** Recording inside a CLOSED
+shadow root. An event leaving one is retargeted to the host with an EMPTY `composedPath`, so there
+is nothing to read - not "nothing we have arranged to read", nothing at all. Replaying into a closed
+root works; watching someone click inside one does not, and no amount of injection changes that.
+
+The examples grew rather than multiplied: shadow.html gained a file input inside its open root and a
+list inside its same-origin frame; closed.html gained a file input inside its CLOSED root and a list
+across the origin boundary. Two harvest datasets rather than one, deliberately - the same-origin
+frame is WALKED into and the cross-origin one is ASKED, and a single check over both would pass
+while one of them was broken.
+
+Green at the end of it: **495 NUnit tests**, `verify-ui` **84/84**, `verify-js` **13/13** (a new
+group harvesting inside a closed root - the strongest case, since nothing can walk into one),
+`verify-demos` all pass including both harvest datasets, `verify-shop` all pass.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1678,20 +1738,10 @@ yet** below.
   runs one thing at a time now, deliberately, and the pipeline that replaced it needs that to be
   true. If this comes back it starts from a working sequential product rather than from a pool that
   was never used.
-- **Recording inside an iframe.** The recorder listens on the top document, and an iframe never
-  delivers its events there; it would have to be injected into every frame. Phase 32 put the
-  RESOLVER in every frame and gave the frames a way to talk to each other, so the hard half is done
-  - what is missing is a recorder that rides the same bridge, posting its events up rather than into
-  the frame's own dead-end `chrome.webview`. Recording inside an open SHADOW root does work, since
-  phase 18 - the recorder reads `composedPath()[0]` instead of `event.target`. A CLOSED root
-  retargets with nothing to look at, so recording in one is out of reach even though replaying in
-  one is not.
-- **Harvesting inside a shadow root or a frame.** `harvest.js` still queries the top document only.
-  The resolver's root walk is the shape the answer takes; the picker also has to be able to point at
-  something in there, which is the harder half.
-- **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
-  selector against the top document, so the one action that does not go through the resolver is the
-  one action that still stops at the boundary. Phase 32 made it SAY so rather than time out, which
-  is not the same as fixing it: the fix is either a resolver-shaped path to
-  `DOM.setFileInputFiles` (it takes an objectId, so a RemoteObject for the resolved element would
-  do it) or accepting that this action alone needs CDP per frame.
+- **Recording inside a CLOSED shadow root**, and **attaching a file inside a CROSS-ORIGIN frame**.
+  The last two, and both are refusals rather than gaps. An event leaving a closed root is retargeted
+  to the host with an empty `composedPath`, so there is nothing to record - injection cannot help,
+  because the information is not there to be had. And a file attach needs a handle on the element,
+  which is a RemoteObject; only CDP carries one, and only into the context it was made in. Doing
+  that one properly means a per-frame execution context - `Target.setAutoAttach` and a session per
+  frame - for a single action. Everything else works in both places.

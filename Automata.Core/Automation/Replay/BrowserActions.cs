@@ -203,50 +203,43 @@ public static class BrowserActions
     }
 
     /// <summary>
-    /// Attach a local file to the last-resolved file input via CDP. The input is tagged with a
-    /// temporary attribute so the injector's querySelector hits exactly the resolved element —
-    /// the step's own selector may have matched only through a fallback strategy.
+    /// Attach a local file to the last-resolved file input via CDP.
     /// <para>
-    /// Upload is the one action that does NOT go through the resolver: it matches its input by a
-    /// selector run against the top document, because that is what <c>DOM.setFileInputFiles</c>
-    /// needs. So it is also the one action that still stops at a boundary — a shadow root of either
-    /// kind, or any frame. The marker is looked for before the injector runs, so that case says
-    /// what it is instead of spending ten seconds retrying a selector that was never going to
-    /// match.
+    /// Every other action reaches the element through <c>window.__automataLastResolved</c>, and this
+    /// one now does too — it hands that expression to the injector rather than a selector run
+    /// against the top document. So an upload works wherever a resolve works: inside an open shadow
+    /// root, inside a CLOSED one, inside a same-origin frame.
+    /// </para>
+    /// <para>
+    /// One case is left, and it is checked for rather than discovered: an element in a CROSS-ORIGIN
+    /// frame lives in that frame's own <c>window</c>, and the expression is evaluated in the top
+    /// document's. The frame bridge cannot help, because what has to cross is a RemoteObject and
+    /// only CDP can carry one. So the step fails saying exactly that, instead of attaching the file
+    /// to whatever <c>window.__automataLastResolved</c> happens to be left over from up here.
     /// </para>
     /// </summary>
     public static async Task<ValueReadback> UploadToResolvedAsync(
         IBrowserSurface browser, string filePath, CancellationToken ct)
     {
-        const string marker = "data-automata-upload";
-        await EvalOnResolvedAsync(browser,
-            $"el.setAttribute('{marker}', '1'); return JSON.stringify({{ ok: true, value: null }});", ct);
-
-        var reachable = ParseReadback(await browser.EvalAsync(
-            $"(function(){{ return JSON.stringify({{ ok: !!document.querySelector('[{marker}]') }}); }})()", ct));
-        if (!reachable.Ok)
+        var routed = await browser.EvalAsync(
+            """
+            (function() {
+                var f = window.__automataFrames;
+                return JSON.stringify({ ok: !(f && f.resolvedFrame) });
+            })()
+            """, ct);
+        if (!ParseReadback(routed).Ok)
         {
-            await ClearMarkerAsync(browser, marker, ct);
             return new ValueReadback(false, null,
-                "the file input is behind a boundary the uploader cannot cross — a shadow root or a " +
-                "frame. Every other action reaches in there; attaching a file does not, because it " +
-                "matches its input against the top document rather than through the resolver.");
+                "the file input is inside a cross-origin frame, and attaching a file is the one " +
+                "action that cannot be forwarded into one — it needs a handle on the element " +
+                "itself, and a handle does not cross an origin boundary. Everything else in that " +
+                "frame works.");
         }
 
-        try
-        {
-            await browser.InjectFileAsync(filePath, $"[{marker}]", ct);
-        }
-        finally
-        {
-            await ClearMarkerAsync(browser, marker, ct);
-        }
+        await browser.InjectFileAsync(filePath, "window.__automataLastResolved", ct);
         return new ValueReadback(true, null, null);
     }
-
-    private static Task ClearMarkerAsync(IBrowserSurface browser, string marker, CancellationToken ct)
-        => browser.EvalAsync(
-            $"(function(){{ var el = document.querySelector('[{marker}]'); if (el) el.removeAttribute('{marker}'); return 'ok'; }})()", ct);
 
     /// <summary>
     /// Poll the page-busy detector until it clears or <paramref name="capMs"/> elapses.

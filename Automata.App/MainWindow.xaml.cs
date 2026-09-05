@@ -483,13 +483,12 @@ public partial class MainWindow : Window
         // a registry that arrives after the page's own script has already missed every root it made.
         await surface.EnsureInstalledAsync();
 
-        // The recorder rides along on every document, dormant until the Record button arms it.
-        // harvest.js is an Automata.Core embedded resource; recorder.js ships in wwwroot. harvest.js
-        // rides along because picking a harvest is a gesture in the TARGET pane — the user clicks one
-        // row and the page itself works out what "all the rows like this one" means, which is only
-        // answerable where the DOM is. Registered SECOND, so the fingerprint it calls is already
-        // defined: WebView2 runs document-created scripts in registration order.
-        var recorderJs = Automata.Core.Automation.AutomationScripts.HarvestJs + "\n" +
+        // The recorder rides along on every document, dormant until the Record button arms it — and
+        // on every FRAME of every document, which is the only reason a click inside an iframe can be
+        // recorded at all. Registered SECOND, so the fingerprint and the harvest picker it calls are
+        // already defined: WebView2 runs document-created scripts in registration order, and both of
+        // those come from the surface's bundle above.
+        var recorderJs =
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wwwroot", "target", "recorder.js"));
         await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(recorderJs);
         TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;

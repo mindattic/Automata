@@ -78,6 +78,35 @@
         return out;
     }
 
+    /// EVERY child frame of this document, reachable or not.
+    ///
+    /// The resolve path only ever wants the ones it cannot read into; the recorder wants all of
+    /// them, because a same-origin frame runs its own copy of the recorder with its own idea of
+    /// whether recording is on, and telling only the frames we cannot see would be exactly
+    /// backwards.
+    function childFrames() {
+        var out = [];
+        var roots = window.__automataReachableRoots ? window.__automataReachableRoots() : [document];
+        for (var r = 0; r < roots.length; r++) {
+            var frames;
+            try { frames = roots[r].querySelectorAll('iframe, frame'); } catch (e) { continue; }
+            for (var i = 0; i < frames.length; i++) {
+                var win = null;
+                try { win = frames[i].contentWindow; } catch (e) { win = null; }
+                if (win) out.push({ el: frames[i], win: win });
+            }
+        }
+        return out;
+    }
+
+    /// True when `win` is one of this document's own child frames. The check that stops a page from
+    /// answering, or announcing, on another frame's behalf.
+    function isChild(win) {
+        var kids = childFrames();
+        for (var i = 0; i < kids.length; i++) if (kids[i].win === win) return true;
+        return false;
+    }
+
     function send(win, payload) {
         var id = KEY + '#' + (++seq);
         payload.__automata = KEY;
@@ -150,6 +179,48 @@
         });
     }
 
+    /// Ask every unreachable child to run one of the injected toolkit's own functions, by NAME.
+    ///
+    /// The name is looked up on the frame's `window`, never evaluated — so unlike a forwarded
+    /// action body this needs no `new Function` and works under any Content-Security-Policy. It is
+    /// how a harvest reaches into a frame: `__automataHarvest` is already in there, it just has to
+    /// be told to run.
+    ///
+    /// Resolves to the first child whose answer `accept` likes, or null.
+    function askCall(fn, args, accept) {
+        var kids = unreachable();
+        if (!kids.length) return Promise.resolve(null);
+        var calls = kids.map(function (kid) {
+            return send(kid.win, { op: 'call', fn: fn, args: args }).then(
+                function (r) { return (typeof r === 'string' && accept(r)) ? r : null; },
+                function () { return null; });
+        });
+        return Promise.all(calls).then(function (answers) {
+            for (var i = 0; i < answers.length; i++) if (answers[i] !== null) return answers[i];
+            return null;
+        });
+    }
+
+    /// Announce something to every ancestor, ending at the top document. No answer is expected and
+    /// none is sent — this is the direction the resolve protocol never goes, and the recorder is
+    /// the reason it exists: an event captured inside a frame has to reach the host, and a frame's
+    /// own `chrome.webview` reaches a handler nobody listens to.
+    function postUp(payload) {
+        if (window.parent === window) return false;
+        try { window.parent.postMessage({ __automata: KEY, up: payload }, '*'); return true; }
+        catch (e) { return false; }
+    }
+
+    /// Announce something to every frame BELOW, however deep. The other direction, and the reason
+    /// it is needed: each frame's recorder has its own idea of whether recording is on, so arming
+    /// one document arms one document.
+    function postDown(payload) {
+        var kids = childFrames();
+        for (var i = 0; i < kids.length; i++) {
+            try { kids[i].win.postMessage({ __automata: KEY, down: payload }, '*'); } catch (e) { /* gone */ }
+        }
+    }
+
     /// Forward one action to the frame the last resolve went through. Resolves to the JSON STRING
     /// the action produced — the same text an action run in this document would have returned.
     function askAct(spec) {
@@ -193,6 +264,27 @@
             return;
         }
 
+        // An announcement travelling OUTWARD, from one of our own frames. Passed straight on, and
+        // handed to whoever is listening once it reaches the top.
+        if (msg.up) {
+            if (!isChild(e.source)) return;
+            if (window.parent === window) {
+                if (window.__automataOnFrameEvent) window.__automataOnFrameEvent(msg.up);
+            } else {
+                postUp(msg.up);
+            }
+            return;
+        }
+
+        // An announcement travelling INWARD. Applied here, then passed on down — so one command at
+        // the top reaches every frame in the page, at any depth.
+        if (msg.down) {
+            if (e.source !== window.parent) return;
+            if (window.__automataOnFrameCommand) window.__automataOnFrameCommand(msg.down);
+            postDown(msg.down);
+            return;
+        }
+
         // A request. Only our own parent may ask — a request arriving from anywhere else is a page
         // trying to drive us, not the host.
         if (!msg.op || e.source !== window.parent) return;
@@ -209,6 +301,21 @@
             askResolve(msg.fp, msg.opts || {}).then(
                 function (deep) { reply(deep || local); },
                 function () { reply(local); });
+            return;
+        }
+
+        if (msg.op === 'call') {
+            var fn = window[msg.fn];
+            if (typeof fn !== 'function') { reply(null); return; }
+            var here;
+            try { here = fn.apply(null, msg.args || []); } catch (err) { here = null; }
+            // Accepted here means "this frame answered". Whether the answer is any GOOD is the
+            // asker's business — it holds the accept test, and this frame has no way to know what
+            // was being looked for.
+            if (typeof here === 'string' && here.indexOf('"ok":true') >= 0) { reply(here); return; }
+            askCall(msg.fn, msg.args || [], function () { return true; }).then(
+                function (deeper) { reply(deeper !== null ? deeper : here); },
+                function () { reply(here); });
             return;
         }
 
@@ -244,9 +351,20 @@
         return state.result;
     };
 
+    /// Hand something to the host from wherever this document is. In the top document that is the
+    /// WebView2 bridge directly; in a frame it is a message to the parent, which repeats until it
+    /// reaches the top. The recorder calls this instead of `chrome.webview` so that one line does
+    /// not have to know which document it is in.
+    window.__automataPostUp = postUp;
+
+    /// Send one command to every frame below this one.
+    window.__automataPostDown = postDown;
+
     window.__automataFrames = {
         unreachable: unreachable,
+        childFrames: childFrames,
         askResolve: askResolve,
+        askCall: askCall,
         askAct: askAct,
         get resolvedFrame() { return resolvedFrame; },
         set resolvedFrame(v) { resolvedFrame = v; }

@@ -49,10 +49,23 @@
         return tag;
     }
 
+    /// Every visible element matching `selector`, in the FIRST root that has any.
+    ///
+    /// Roots come from resolver.js's own walk — the document, every shadow root open or closed,
+    /// every same-origin frame — so a harvest reaches wherever a resolve reaches. The document
+    /// comes first in that walk, which settles the awkward case by giving it the obvious answer:
+    /// the page as written wins, and a component's insides only answer when the page itself has
+    /// nothing. Rows are never mixed across roots, because "all the things like this one" means one
+    /// list, and two lists in two places is a different harvest with the same selector.
     function matchAll(selector) {
-        try {
-            return Array.prototype.filter.call(document.querySelectorAll(selector), isVisible);
-        } catch (e) { return []; }
+        var roots = window.__automataReachableRoots ? window.__automataReachableRoots() : [document];
+        for (var r = 0; r < roots.length; r++) {
+            var hits;
+            try { hits = Array.prototype.filter.call(roots[r].querySelectorAll(selector), isVisible); }
+            catch (e) { continue; }
+            if (hits.length) return hits;
+        }
+        return [];
     }
 
     /// Generalises one clicked element into a repeating-row selector.
@@ -182,6 +195,8 @@
     window.__automataHarvest = function (spec) {
         var rows = matchAll(spec.itemSelector);
         if (!rows.length) {
+            // Nothing in any root this document can walk. A cross-origin frame is not one of those,
+            // and the copy of this script running inside it can be asked — see the deep pass below.
             return JSON.stringify({ ok: false, count: 0, error: 'no rows matched', rows: [] });
         }
 
@@ -204,5 +219,38 @@
         for (var name in filled) if (filled[name] === 0) empty.push(name);
 
         return JSON.stringify({ ok: true, count: out.length, rows: out, emptyFields: empty });
+    };
+
+    /// What the engine calls. One pass here; if nothing matched and this document holds frames it
+    /// cannot read into, one round of asking them — which cannot finish inside this call, so it
+    /// reports itself as waiting and the caller's next attempt collects the answer.
+    ///
+    /// Same shape as the resolver's deep pass, and for the same reason: an answer that has to cross
+    /// a frame boundary does not exist yet when the call that asked for it returns. Unlike the
+    /// resolver's action path this needs no `eval` in the frame — the function is looked up by name
+    /// on the frame's own `window`, where the host already put it.
+    window.__automataHarvestDeep = function (spec) {
+        var here = window.__automataHarvest(spec);
+        var frames = window.__automataFrames;
+        if (here.indexOf('"ok":true') >= 0 || !frames || !frames.unreachable().length) {
+            window.__automataHarvestAnswer = null;
+            return here;
+        }
+
+        var sig = JSON.stringify(spec);
+        var state = window.__automataHarvestAnswer;
+        if (!state || state.sig !== sig) {
+            state = window.__automataHarvestAnswer = { sig: sig, done: false, result: null };
+            frames.askCall('__automataHarvest', [spec], function (answer) {
+                return answer.indexOf('"ok":true') >= 0;
+            }).then(
+                function (r) { state.result = r; state.done = true; },
+                function () { state.result = null; state.done = true; });
+            return JSON.stringify({ ok: false, waitingOnFrames: true, count: 0, rows: [] });
+        }
+        if (!state.done) return JSON.stringify({ ok: false, waitingOnFrames: true, count: 0, rows: [] });
+
+        window.__automataHarvestAnswer = null;
+        return state.result !== null ? state.result : here;
     };
 })();

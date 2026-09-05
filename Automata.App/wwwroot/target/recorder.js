@@ -1,20 +1,47 @@
-// Capture script for the TARGET pane. Installed dormant on every document (the host prepends
-// Automata.Core's embedded fingerprint.js and injects both via AddScriptToExecuteOnDocumentCreated);
-// the Record button enables it. Listeners sit on document in the CAPTURE phase so pages that
-// stopPropagation can't hide events. This file is read from disk by the host — never served.
+// Capture script for the TARGET pane. Installed dormant on every document — the top one AND every
+// frame inside it, at any depth and any origin, because the host injects it with
+// AddScriptToExecuteOnDocumentCreated; the Record button enables it. Listeners sit on document in
+// the CAPTURE phase so pages that stopPropagation can't hide events. This file is read from disk by
+// the host — never served.
+//
+// Being in every frame is not the same as WORKING in every frame, and the two things that had to be
+// arranged are both about which document a message can reach:
+//
+//   * A frame's `chrome.webview` posts to that frame's own WebMessageReceived, which nothing is
+//     listening to. So an event captured in a frame travels OUT through frames.js, parent by
+//     parent, and only the top document hands it to the host.
+//   * Each document has its own copy of this script and its own `enabled` flag. Arming the top one
+//     arms one document, so the Record button's command travels IN the same way, to every frame
+//     below, at any depth.
+//
+// A CLOSED shadow root is still out of reach for recording, and unlike the rest of that family it
+// is not a plumbing problem: an event leaving a closed root is retargeted to the host element with
+// an EMPTY composedPath, so there is nothing to read. Replaying into one works; watching someone
+// click inside one does not.
 (function () {
     'use strict';
     if (window.__automataRecorder) return;
 
     var enabled = false;
+    var inFrame = window.top !== window;
 
     function post(payload) {
+        payload.source = 'automata-recorder';
+        payload.url = location.href;
+        payload.ts = Date.now();
+        // In a frame, up the bridge; the top document is the only one with a host to talk to.
+        if (inFrame && window.__automataPostUp && window.__automataPostUp(payload)) return;
         try {
-            payload.source = 'automata-recorder';
-            payload.url = location.href;
-            payload.ts = Date.now();
             window.chrome.webview.postMessage(payload);
         } catch (e) { /* host bridge unavailable — nothing to do */ }
+    }
+
+    /// What a frame's event does when it finally reaches the top document. Set only here, because
+    /// only here is there a host to hand it to.
+    if (!inFrame) {
+        window.__automataOnFrameEvent = function (payload) {
+            try { window.chrome.webview.postMessage(payload); } catch (e) { /* nothing to do */ }
+        };
     }
 
     function targetKind(el) {
@@ -88,8 +115,9 @@
     // that clicks the wrapper and never the control inside. composedPath()[0] is the element the
     // user actually hit; for an ordinary page it is e.target and nothing changes.
     //
-    // A closed root retargets with no path to look at, and an iframe never delivers the event here
-    // at all — recording inside either needs the recorder running in there too, which it is not.
+    // An iframe never delivers its events here either, and the answer to that one was to be in
+    // there as well rather than to reach further from here — see the header. A CLOSED root remains
+    // out of reach: it retargets with an empty path, so there is nothing to read.
     function realTarget(e) {
         var path = e.composedPath ? e.composedPath() : null;
         return (path && path.length ? path[0] : e.target);
@@ -170,17 +198,40 @@
         e.stopImmediatePropagation();
     }, true);
 
+    // ---- one command, every document ------------------------------------------------------------
+    //
+    // The host only ever talks to the top document, so everything the Record button does has to be
+    // repeated in every frame below. Applied here first, then passed on down by frames.js — which
+    // is what makes a frame's recorder arm at the same moment as the top one's, rather than
+    // whenever somebody remembers to arm it.
+    function apply(command) {
+        if (command.what === 'enable') enabled = true;
+        else if (command.what === 'disable') enabled = false;
+        else if (command.what === 'pick') {
+            pending = { mode: command.mode === 'field' ? 'field' : 'row', itemSelector: command.itemSelector || '' };
+        } else if (command.what === 'cancelPick') pending = null;
+    }
+
+    window.__automataOnFrameCommand = apply;
+
+    function command(payload) {
+        apply(payload);
+        if (window.__automataPostDown) window.__automataPostDown(payload);
+    }
+
     window.__automataRecorder = {
-        enable: function () { enabled = true; },
-        disable: function () { enabled = false; },
+        enable: function () { command({ what: 'enable' }); },
+        disable: function () { command({ what: 'disable' }); },
         isEnabled: function () { return enabled; },
 
-        /// Arms a one-shot pick. 'row' generalises the click into "everything like this"; 'field'
-        /// locates it relative to the row set that a previous 'row' pick found.
+        /// Arms a one-shot pick, here and in every frame. 'row' generalises the click into
+        /// "everything like this"; 'field' locates it relative to the row set that a previous 'row'
+        /// pick found. Armed everywhere because the user points at a thing on screen and has no
+        /// reason to know, or care, which document drew it.
         pick: function (mode, itemSelector) {
-            pending = { mode: mode === 'field' ? 'field' : 'row', itemSelector: itemSelector || '' };
+            command({ what: 'pick', mode: mode, itemSelector: itemSelector || '' });
         },
-        cancelPick: function () { pending = null; },
+        cancelPick: function () { command({ what: 'cancelPick' }); },
         isPicking: function () { return pending !== null; }
     };
 })();

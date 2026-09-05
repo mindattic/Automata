@@ -576,7 +576,8 @@ public static class DemoPages
         <body>
           <h1>Behind a boundary</h1>
           <p class="lede">Neither of the two controls below is reachable from the top document:
-             one lives in a shadow root, the other in a frame of its own.</p>
+             one lives in a shadow root, the other in a frame of its own. Nor is the file input in
+             the shadow root, nor the list in the frame — and every one of them is now.</p>
 
           <h2 class="section">In a shadow root</h2>
           <div id="host"></div>
@@ -589,13 +590,18 @@ public static class DemoPages
                (shop.example embedding shop.example/cart) looks like, and is therefore the case
                this example is actually about. -->
           <iframe id="frame" title="An embedded page"
-                  style="width: 420px; height: 160px; border: 1px solid #d4d4d4;"
+                  style="width: 420px; height: 240px; border: 1px solid #d4d4d4;"
                   srcdoc="<!doctype html><meta charset='utf-8'>
                           <style>body { font: 15px/1.5 system-ui, sans-serif; margin: 8px; }
                                  button { font: inherit; padding: 6px 14px; }</style>
                           <p>This page is inside an iframe on the page that embedded it.</p>
                           <button id='in-frame'>The button in the frame</button>
                           <p id='frame-said'></p>
+                          <ul class='framed-list'>
+                            <li class='framed-row' data-ref='F-1'>First, in the frame</li>
+                            <li class='framed-row' data-ref='F-2'>Second, in the frame</li>
+                            <li class='framed-row' data-ref='F-3'>Third, in the frame</li>
+                          </ul>
                           <script>
                             document.getElementById('in-frame').addEventListener('click', function () {
                               document.getElementById('frame-said').textContent = 'the frame was clicked';
@@ -609,7 +615,11 @@ public static class DemoPages
             shadow.innerHTML =
               '<style>p { font: inherit; } button { font: inherit; padding: 6px 14px; }</style>' +
               '<button id="in-shadow">The button in the shadow root</button>' +
-              '<p id="shadow-said"></p>';
+              '<p id="shadow-said"></p>' +
+              // A file input in here is the case that used to be unreachable for a different
+              // reason from all the others: every action goes through the resolver, and this one
+              // went through a selector run against the top document.
+              '<input type="file" id="in-shadow-file" />';
             shadow.getElementById('in-shadow').addEventListener('click', function () {
               shadow.getElementById('shadow-said').textContent = 'the shadow root was clicked';
             });
@@ -653,7 +663,7 @@ public static class DemoPages
                embedder's origin (see shadow.html); a file:// document has an OPAQUE origin, so
                loading a sibling file by src produces a frame this page is not allowed to read. -->
           <iframe id="opaque-frame" title="A page from another origin"
-                  style="width: 420px; height: 160px; border: 1px solid #d4d4d4;"
+                  style="width: 420px; height: 230px; border: 1px solid #d4d4d4;"
                   src="closed-frame.html"></iframe>
 
           <script>
@@ -664,7 +674,8 @@ public static class DemoPages
               root.innerHTML =
                 '<style>p { font: inherit; } button { font: inherit; padding: 6px 14px; }</style>' +
                 '<button id="in-closed">The button in the closed root</button>' +
-                '<p id="closed-said"></p>';
+                '<p id="closed-said"></p>' +
+                '<input type="file" id="in-closed-file" />';
               root.getElementById('in-closed').addEventListener('click', function () {
                 root.getElementById('closed-said').textContent = 'the closed root was clicked';
               });
@@ -685,11 +696,16 @@ public static class DemoPages
           body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 8px; }
           button { font: inherit; padding: 6px 14px; }
           .clicked { margin-top: 8px; color: #157f3d; }
+          .opaque-list { margin: 8px 0 0; padding-left: 18px; }
         </style></head>
         <body>
           <p>This page is its own origin. The page that embeds it cannot read a word of it.</p>
           <button id="in-opaque">The button in the cross-origin frame</button>
           <p id="opaque-said" class="clicked"></p>
+          <ul class="opaque-list">
+            <li class="opaque-row" data-ref="O-1">First, across the origin</li>
+            <li class="opaque-row" data-ref="O-2">Second, across the origin</li>
+          </ul>
           <script>
             document.getElementById('in-opaque').addEventListener('click', function () {
               document.getElementById('opaque-said').textContent = 'the cross-origin frame was clicked';
