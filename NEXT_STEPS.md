@@ -1311,6 +1311,47 @@ Healing edits the example, so the seeder thereafter treats it as edited and leav
 same protection every hand-edited task gets, and `demos regenerate` puts the stale fingerprint back
 when you want to watch it happen again.
 
+### Phase 28 - the loop, end to end, driven by a machine (2026-09-04)
+
+"Interactive end-to-end verification" has sat on the list since phase 1, and its wording had gone
+stale twice over: it names Validate and Dry Run, which were removed by design in v2, and most of
+what it describes - record at a gap, splice, Continue, run a collection past a failure - `verify-ui`
+has covered for some time. What it had never covered was the half where a task leaves the app.
+
+**Export and Import go through WPF file dialogs, which CDP cannot touch**, so the one part of the
+loop that crosses the process boundary was the one part nothing could check. It gets a seam in the
+shape every store root already has: `AUTOMATA_FILE_DIALOG_PATH`, honoured only when set, and the
+harness sets it to one archive path that both ends of the round trip name - which is what makes it a
+round trip rather than two unrelated file operations.
+
+The new fixture is a task recorded WRONG on purpose: its id and selector name a button the fixture
+page does not have, and only the words on it still match. So the four checks read as one story - it
+heals on its first run and the repaired id reaches disk, the collection exports, the import lands
+beside the original rather than over it with fresh ids, and the imported copy runs with **nothing
+left to repair**. That last assertion is the one worth having: a copy that healed again would mean
+the repair had not travelled, and every earlier check would still have passed.
+
+**The postMessage bridge stops being smoke-tested.** Both halves of it are hand-written - `post('x')`
+in the panel, `case "x":` in the host - and nothing had ever compared them. A source-only check now
+does, in both directions, because both directions are a defect: a post nobody answers is a control
+that silently does nothing, and a handler nobody posts to is a feature that was written and never
+reached. It found one of each on its first run:
+
+- **`post('ready')` went nowhere.** No case for it anywhere; deleted.
+- **`cancelHarvestPick` was waiting for a message the panel had no way to send.** Arming a pick puts
+  the TARGET pane into a one-shot listening state, and there was no way back out of it - changing
+  your mind meant picking something you did not want. Escape cancels it now, which is what the
+  handler was written for.
+
+The inbound half matched exactly, nineteen for nineteen, and the check keeps it that way: the host
+calls `window.ssPanel.onX(...)` as injected script, so a renamed function there fails silently
+inside WebView2 rather than anywhere a person would see it.
+
+One thing the check had to be taught: slice the host's switch from the method DECLARATION, not from
+the handler's name. The name appears again where the event is subscribed, and slicing from there
+reads an empty body and cheerfully finds no cases at all - a checker that passes because it looked
+in the wrong place is worse than no checker.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

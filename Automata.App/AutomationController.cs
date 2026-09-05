@@ -868,6 +868,16 @@ public sealed class AutomationController
 
     // ---- import / export -----------------------------------------------------------------------
 
+    /// <summary>
+    /// The path the Save/Open dialog would have returned, when the acceptance harness is driving.
+    /// A WPF file dialog cannot be operated over CDP, so the one part of the record→run→export→
+    /// import→re-run loop that leaves the app was also the one part nothing could check. Both ends
+    /// of the round trip name the same file, which is what makes it a round trip. Unset in every
+    /// ordinary launch, and then the real dialog opens.
+    /// </summary>
+    private static string? HarnessFilePath =>
+        Environment.GetEnvironmentVariable("AUTOMATA_FILE_DIALOG_PATH") is { Length: > 0 } path ? path : null;
+
     private async Task ExportAsync(JsonNode msg)
     {
         var collectionId = Str(msg, "collectionId");
@@ -883,17 +893,22 @@ public sealed class AutomationController
 
         // Recorder JSON rides on the existing Export flow as a second file type rather than a
         // tenth toolbar button: "export as" is already the question being asked.
-        var dialog = new SaveFileDialog
+        var chosen = HarnessFilePath;
+        if (chosen == null)
         {
-            FileName = ArchiveService.SuggestedZipName(display),
-            Filter = "Automata export (*.automata.zip)|*.automata.zip|Zip archive (*.zip)|*.zip"
-                   + "|Chrome DevTools Recorder (*.json)|*.json",
-        };
-        if (dialog.ShowDialog() != true) return;
+            var dialog = new SaveFileDialog
+            {
+                FileName = ArchiveService.SuggestedZipName(display),
+                Filter = "Automata export (*.automata.zip)|*.automata.zip|Zip archive (*.zip)|*.zip"
+                       + "|Chrome DevTools Recorder (*.json)|*.json",
+            };
+            if (dialog.ShowDialog() != true) return;
+            chosen = dialog.FileName;
+        }
 
         try
         {
-            if (dialog.FileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            if (chosen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
                 if (taskId == null)
                 {
@@ -901,14 +916,14 @@ public sealed class AutomationController
                     return;
                 }
                 var task = store.GetTask(taskId)!;
-                await File.WriteAllTextAsync(dialog.FileName, RecorderFlowIO.Export(task));
-                await logAsync($"Exported '{display}' as a Recorder flow to {dialog.FileName}");
+                await File.WriteAllTextAsync(chosen, RecorderFlowIO.Export(task));
+                await logAsync($"Exported '{display}' as a Recorder flow to {chosen}");
                 return;
             }
 
             var zip = collectionId != null
-                ? archive.ExportCollection(collectionId, dialog.FileName)
-                : archive.ExportTask(taskId!, dialog.FileName);
+                ? archive.ExportCollection(collectionId, chosen)
+                : archive.ExportTask(taskId!, chosen);
             await logAsync($"Exported '{display}' to {zip}");
         }
         catch (Exception ex)
@@ -919,21 +934,26 @@ public sealed class AutomationController
 
     private async Task ImportAsync()
     {
-        var dialog = new OpenFileDialog
+        var chosen = HarnessFilePath;
+        if (chosen == null)
         {
-            Filter = "Automata export (*.zip)|*.zip|Chrome DevTools Recorder (*.json)|*.json|All files|*.*",
-        };
-        if (dialog.ShowDialog() != true) return;
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Automata export (*.zip)|*.zip|Chrome DevTools Recorder (*.json)|*.json|All files|*.*",
+            };
+            if (dialog.ShowDialog() != true) return;
+            chosen = dialog.FileName;
+        }
 
         try
         {
-            if (dialog.FileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            if (chosen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
-                await ImportRecorderFlowAsync(dialog.FileName);
+                await ImportRecorderFlowAsync(chosen);
                 return;
             }
 
-            var result = archive.Import(dialog.FileName);
+            var result = archive.Import(chosen);
             foreach (var warning in result.Warnings)
                 await logAsync($"⚠ {warning}");
             await logAsync($"Imported {result.Collections.Count} collection(s), {result.Tasks.Count} task(s).");

@@ -487,6 +487,17 @@ export function wireFlowFields(root, task, step, onChange) {
     wireHarvestFields(root, task, step, onChange);
 }
 
+/// Escape gets out of an armed pick. Arming one puts the TARGET pane into a one-shot listening
+/// state, and until this there was no way back out of it: the host had a cancel handler waiting
+/// and nothing in the panel ever sent to it, so changing your mind meant picking something you did
+/// not want. Registered once, at load, rather than per editor render.
+document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !state.harvestPick) return;
+    state.harvestPick = null;
+    post('cancelHarvestPick');
+    window.ssPanel.onLog('Picking cancelled.');
+});
+
 /// A pick is a round trip through the target pane: the panel arms it, the user clicks in the page,
 /// and the answer comes back through onHarvestPick. `state.harvestPick` remembers which step and
 /// which column the answer belongs to, because by then this editor has been re-rendered.

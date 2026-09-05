@@ -100,7 +100,8 @@ Two gotchas worth knowing before you write assertions against computed style:
 `AUTOMATA_PANEL_CDP_PORT`, `AUTOMATA_TARGET_CDP_PORT`, `AUTOMATA_PANEL_PROFILE_DIR`,
 `AUTOMATA_TARGET_PROFILE_DIR`, `AUTOMATA_COLLECTIONS_ROOT`, `AUTOMATA_DATASETS_ROOT`,
 `AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`, `AUTOMATA_LIVE_ROOT`,
-`AUTOMATA_DEMOS_ROOT`, `AUTOMATA_SETTINGS_PATH` — all opt-in, all no-ops when unset
+`AUTOMATA_DEMOS_ROOT`, `AUTOMATA_SETTINGS_PATH`, `AUTOMATA_FILE_DIALOG_PATH` — all opt-in, all
+no-ops when unset
 (see `MainWindow.xaml.cs`'s `DebugOptions`/`ProfileDir` helpers and
 `ServiceCollectionExtensions.cs`'s `CollectionStore` registration). Never set these when running
 the app normally.
@@ -117,6 +118,12 @@ and BYO keys) was the one store with no environment hook, so before it existed a
 touched Settings would have been reading and writing the developer's own keys. `AUTOMATA_DEMOS_ROOT`
 matters for a blunter reason: the app WRITES the generated example pages on first load, so without
 the hook every test run would rewrite the developer's own `Documents\Automata\Demos`.
+
+`AUTOMATA_FILE_DIALOG_PATH` is the odd one out: it is not a store root but the path the Export and
+Import file dialogs return instead of opening. A WPF `SaveFileDialog` cannot be operated over CDP,
+so without it the export/import half of the loop was unreachable from here. Both ends name the same
+archive, which is what makes the round-trip check a round trip. Unset in any ordinary launch, and
+then the real dialog opens.
 
 ## Where the sidebar code lives
 

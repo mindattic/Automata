@@ -54,7 +54,6 @@ $('run').addEventListener('click', function () {
 $('cancel').addEventListener('click', function () { post('cancel'); });
 wireAuthoring();
 
-post('ready');
 post('getState');
 post('getSettings');
 post('getDatasets');

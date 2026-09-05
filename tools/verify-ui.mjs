@@ -267,6 +267,43 @@ function writeFixture(collectionsRoot, fixtureUrl) {
   return { collectionId, taskId, failTaskId };
 }
 
+// Its own collection, because the round trip EXPORTS one and importing it back adds another — both
+// of which would disturb the pass/fail counts the Verify collection's checks assert on.
+//
+// Its one step is deliberately mis-recorded: the id and selector name a button `verify-ui-fixture`
+// does not have, and only the words on it still match. That is what a redeployed site looks like,
+// and it makes the task heal on its first run — which is the thing the round trip then has to carry
+// across an export and an import.
+function writeRoundTripFixture(collectionsRoot, fixtureUrl) {
+  const collectionId = newId();
+  const taskId = newId();
+  const stepId = newId();
+  const now = new Date().toISOString();
+
+  const dir = path.join(collectionsRoot, 'Verify Round Trip');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'collection.json'), JSON.stringify({
+    schemaVersion: 1, id: collectionId, name: 'Verify Round Trip', description: '',
+    createdUtc: now, modifiedUtc: now, taskOrder: [taskId],
+  }, null, 2));
+
+  writeFileSync(path.join(dir, 'Round Trip.json'), JSON.stringify({
+    schemaVersion: 1, id: taskId, collectionId, name: 'Round Trip', description: '',
+    startUrl: fixtureUrl,
+    steps: [{
+      id: stepId, action: 'click', label: "Click 'Gamma'",
+      target: {
+        tag: 'button', id: 'gamma-was-here', cssSelector: '#gamma-was-here',
+        classList: [], visibleText: 'Gamma',
+      },
+      children: [],
+    }],
+    createdUtc: now, modifiedUtc: now,
+  }, null, 2));
+
+  return { roundTripCollectionId: collectionId, roundTripTaskId: taskId, roundTripStepId: stepId };
+}
+
 // A second collection, so the control-flow task never joins the Verify collection's run and
 // cannot disturb the pass/fail counts the checks above assert on. Named to sort after "Verify".
 function writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl) {
@@ -520,6 +557,9 @@ async function main() {
   const fixtureUrl = 'file:///' + fixtureHtmlPath.replace(/\\/g, '/');
   const { collectionId, taskId, failTaskId } = writeFixture(collectionsRoot, fixtureUrl);
   const { flowCollectionId, flowTaskId } = writeFlowFixture(collectionsRoot, datasetsRoot, fixtureUrl);
+  const { roundTripCollectionId, roundTripTaskId } = writeRoundTripFixture(collectionsRoot, fixtureUrl);
+  // Both ends of the round trip name the same file, which is what makes it one.
+  const roundTripZip = path.join(scratch, 'round-trip.automata.zip');
 
   console.log(`Scratch dir: ${scratch}`);
   console.log(`Launching Automata.App (panel CDP :${PANEL_PORT}, target CDP :${TARGET_PORT})...`);
@@ -540,6 +580,10 @@ async function main() {
       AUTOMATA_LIVE_ROOT: liveRoot,
       AUTOMATA_DEMOS_ROOT: demosRoot,
       AUTOMATA_SETTINGS_PATH: path.join(scratch, 'settings.json'),
+      // Export and Import open WPF file dialogs, which CDP cannot touch — so the one part of the
+      // loop that leaves the app was the one part nothing could check. Set here only; an ordinary
+      // launch leaves it unset and gets the real dialog.
+      AUTOMATA_FILE_DIALOG_PATH: roundTripZip,
     },
     stdio: 'ignore',
   });
@@ -637,6 +681,64 @@ async function main() {
       assertEqual(JSON.stringify(missingKinds), '[]',
         `the binding picker cannot produce ${JSON.stringify(missingKinds)} — the engine resolves ` +
         'it but nothing in the editor can write one');
+    });
+
+    // Also source-only, and for the same kind of reason as the check above. Every conversation
+    // between the window and the sidebar goes through two hand-written halves — `post('x')` in the
+    // panel, `case "x":` in the host — and nothing has ever compared them. Both directions matter:
+    // a post nobody handles is a button that silently does nothing, and a handler nobody posts to
+    // is a feature that was written and never reached. When this was first run it found one of
+    // each: `post('ready')` went nowhere, and `cancelHarvestPick` sat waiting for a message the
+    // panel had no way to send, which is why an armed harvest pick could not be called off.
+    await group('the bridge: every message the panel sends is handled, and every handler is used', async () => {
+      const read = (file) => readFileSync(path.join(repoRoot, file), 'utf8');
+      // The host's half is split in two: MainWindow answers the few messages that are about the
+      // window itself and hands everything else to the controller. Anchored on the DECLARATION,
+      // not the name — the handler is named again where it is subscribed, and slicing from there
+      // would read an empty method body and quietly find no cases at all.
+      const slice = (src, from) => {
+        const at = src.indexOf(from);
+        assertTrue(at >= 0, `could not find ${from}`);
+        const end = src.indexOf('\n    }', at);
+        return src.slice(at, end < 0 ? undefined : end);
+      };
+      const cases = (text) => [...text.matchAll(/case "([a-z][A-Za-z]*)":/g)].map((m) => m[1]);
+      const handled = new Set([
+        ...cases(slice(read('Automata.App/AutomationController.cs'),
+          'Task<bool> TryHandlePanelMessageAsync')),
+        ...cases(slice(read('Automata.App/MainWindow.xaml.cs'),
+          'void OnControlPanelMessage(')),
+      ]);
+
+      const panelJs = readdirSync(path.join(repoRoot, 'Automata.App/wwwroot'))
+        .filter((f) => f.endsWith('.js'));
+      const posted = new Set(panelJs.flatMap((f) => [
+        ...read(`Automata.App/wwwroot/${f}`).matchAll(/\bpost\(\s*'([a-zA-Z]\w*)'/g),
+      ].map((m) => m[1])));
+
+      const unhandled = [...posted].filter((a) => !handled.has(a)).sort();
+      assertEqual(JSON.stringify(unhandled), '[]',
+        `the panel sends ${JSON.stringify(unhandled)} and nothing in the host answers`);
+
+      const unsent = [...handled].filter((a) => !posted.has(a)).sort();
+      assertEqual(JSON.stringify(unsent), '[]',
+        `the host handles ${JSON.stringify(unsent)} and nothing in the panel ever sends it`);
+
+      // The inbound half, the other way round: the host calls window.ssPanel.onX(...) as injected
+      // script, so a renamed or deleted function there fails silently inside the WebView2 rather
+      // than anywhere a person would see it.
+      const declared = new Set([...read('Automata.App/wwwroot/bridge.js')
+        .matchAll(/^\s{4}(on[A-Za-z]+):/gm)].map((m) => m[1]));
+      const called = new Set([...['AutomationController.cs', 'MainWindow.xaml.cs']
+        .flatMap((f) => [...read(`Automata.App/${f}`).matchAll(/ssPanel\.(on[A-Za-z]+)/g)])]
+        .map((m) => m[1]));
+
+      const missingFns = [...called].filter((f) => !declared.has(f)).sort();
+      assertEqual(JSON.stringify(missingFns), '[]',
+        `the host calls window.ssPanel.${JSON.stringify(missingFns)}, which the panel does not define`);
+      const deadFns = [...declared].filter((f) => !called.has(f)).sort();
+      assertEqual(JSON.stringify(deadFns), '[]',
+        `the panel defines ${JSON.stringify(deadFns)} and the host never calls it`);
     });
 
     // The fixture task exists but starts collapsed/unselected — select it to expand its step
@@ -2551,6 +2653,95 @@ async function main() {
       await panelPage.locator('#tab-build').click();
       await waitFor(async () => (await panelPage.locator('#tab-build').getAttribute('aria-selected')) === 'true',
         { timeoutMs: 5000, label: 'Build to be reselected' });
+    });
+
+    // ---- the whole loop, in one pass ------------------------------------------------------------
+    // Record → refine → Run is covered above, step by step. What was never covered is what happens
+    // after: a task leaves the app as a file and comes back. These run last because importing adds
+    // a collection, and every count above would rather it did not.
+    const roundTripDir = path.join(collectionsRoot, 'Verify Round Trip');
+    const importedDir = path.join(collectionsRoot, 'Verify Round Trip (2)');
+    const readRoundTrip = (dir) =>
+      JSON.parse(readFileSync(path.join(dir, 'Round Trip.json'), 'utf8'));
+    // The imported copy's ids are only known once it exists, and the run check needs them to
+    // address ITS rows — both collections hold a task called "Round Trip", so anything matching by
+    // name would be a coin toss.
+    let imported = null;
+
+    await group('round trip: a step whose page moved repairs itself and the repair reaches disk', async () => {
+      const before = readRoundTrip(roundTripDir);
+      assertEqual(before.steps[0].target.id, 'gamma-was-here', 'the fixture should start mis-recorded');
+
+      await panelPage.locator(`.node.collection[data-collection="${roundTripCollectionId}"] .name`).click();
+      await clickRowOp(panelPage.locator(`.node.task[data-task="${roundTripTaskId}"]`), 'run-task');
+      await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
+        { timeoutMs: 20000, label: 'the round-trip task to finish its first run' });
+
+      await waitFor(() => readRoundTrip(roundTripDir).steps[0].target.id === 'gamma',
+        { timeoutMs: 15000, label: 'the healed id to be written back to disk' });
+      const after = readRoundTrip(roundTripDir);
+      assertEqual(after.steps[0].target.cssSelector, '#gamma',
+        'the refreshed fingerprint should carry the selector it actually matched');
+    });
+
+    await group('round trip: Export writes the archive the dialog would have been asked for', async () => {
+      // A task selection wins over a collection one, so select the collection row itself.
+      await panelPage.locator(`.node.collection[data-collection="${roundTripCollectionId}"] .name`).click();
+      await panelPage.locator('#btn-export').click();
+      await waitFor(() => existsSync(roundTripZip),
+        { timeoutMs: 15000, label: 'the export archive to appear on disk' });
+      await waitFor(() => panelPage.locator('#log').locator('div', { hasText: /Exported 'Verify Round Trip'/ })
+        .count().then((n) => n > 0), { timeoutMs: 10000, label: 'the log to name what it exported' });
+    });
+
+    await group('round trip: Import brings it back beside the original rather than over it', async () => {
+      await panelPage.locator('#btn-import').click();
+      await waitFor(() => panelPage.locator('#tree .node.collection .name', { hasText: 'Verify Round Trip (2)' })
+        .count().then((n) => n > 0), { timeoutMs: 15000, label: 'the imported collection to appear' });
+
+      // Ids are regenerated on import, or two copies of one task would fight over the same
+      // identity the moment either was edited.
+      imported = readRoundTrip(importedDir);
+      const original = readRoundTrip(roundTripDir);
+      assertTrue(imported.id !== original.id, 'the imported task kept the original task id');
+      assertTrue(imported.steps[0].id !== original.steps[0].id,
+        'the imported step kept the original step id');
+      assertEqual(imported.steps[0].target.id, 'gamma',
+        'the imported copy should carry the REPAIRED fingerprint, not the one that was recorded');
+    });
+
+    await group('round trip: the imported copy runs, and has nothing left to repair', async () => {
+      assertTrue(imported !== null, 'the import check has to have run first');
+      const modifiedBefore = imported.modifiedUtc;
+
+      // Expanding the collection only reveals its tasks; a task's steps render when the task
+      // itself is selected, and this check reads one of those rows.
+      await panelPage.locator(`.node.collection[data-collection="${imported.collectionId}"] .name`).click();
+      await waitFor(() => panelPage.locator(`.node.task[data-task="${imported.id}"]`).count().then((n) => n > 0),
+        { timeoutMs: 10000, label: 'the imported task row to appear' });
+      await panelPage.locator(`.node.task[data-task="${imported.id}"] .name`).click();
+      const row = panelPage.locator(`#tree .node.step[data-step="${imported.steps[0].id}"]`);
+      await waitFor(() => row.count().then((n) => n > 0),
+        { timeoutMs: 10000, label: "the imported task's step row to render" });
+
+      await clickRowOp(panelPage.locator(`.node.task[data-task="${imported.id}"]`), 'run-task');
+      // Waiting on the ROW's own status, not on the Cancel button: a run that never started leaves
+      // Cancel disabled, which a "wait until disabled" would read as a finished run.
+      const cls = await waitFor(async () => {
+        const c = (await row.getAttribute('class')) ?? '';
+        return /\bst-(passed|healed|failed)\b/.test(c) ? c : null;
+      }, { timeoutMs: 20000, label: "the imported copy's step to reach a final status" });
+      await waitFor(() => panelPage.locator('#btn-cancel-run').isDisabled(),
+        { timeoutMs: 20000, label: 'the imported copy to finish running' });
+
+      assertTrue(/\bst-passed\b/.test(cls),
+        `expected the imported copy's step to pass outright, its class was "${cls}"`);
+      assertTrue(!/\bst-healed\b/.test(cls),
+        'the imported copy healed again, so the repair did not survive the round trip');
+      // The other half of the same claim, from disk: healing is what saves a task, so a file whose
+      // timestamp did not move is a run that found everything first time.
+      assertEqual(readRoundTrip(importedDir).modifiedUtc, modifiedBefore,
+        'the imported copy was rewritten, which means something in it healed');
     });
 
     await group('3.2.6: a consistent help entry point exists and is named', async () => {
