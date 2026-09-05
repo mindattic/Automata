@@ -217,6 +217,12 @@ fingerprint/resolver/harvest against a real DOM in the real WebView2),
 `tools/verify-demos.mjs` (every generated example, run in a browser), and `tools/verify-shop.mjs`
 (the harvest-and-loop total, checked three ways against the pages themselves).
 
+`tools/collect-names.mjs` sits beside them and is not a check at all — it never fails, it reports.
+It visits a spread of real sites and sorts every id and class they use into what `stability.js` would
+keep and what it would throw away, which is how the filter gets tuned against what shipped rather
+than against what somebody imagined. What it turns up goes into the corpus in `verify-js.mjs`, which
+is where a pattern is proven.
+
 A fourth is deliberately outside that set. `tools/verify-live.mjs --live` runs the **acceptance
 profiles** — a Google search, a Bing search and a webmail inbox — against the real sites, after
 `automata-runner profiles seed` installs them. It is never part of the green bar, because a search

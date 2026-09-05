@@ -1719,6 +1719,71 @@ Green at the end of it: **495 NUnit tests**, `verify-ui` **84/84**, `verify-js` 
 group harvesting inside a closed root - the strongest case, since nothing can walk into one),
 `verify-demos` all pass including both harvest datasets, `verify-shop` all pass.
 
+### Phase 35 - the name filter, tuned against what actually shipped (2026-09-04)
+
+`stability.js` decides which ids and classes are worth recording as an element's identity, and it
+had been tuned against names somebody thought of. This phase pointed it at eight real sites and
+looked at what it got wrong in both directions.
+
+The instrument is `tools/collect-names.mjs`, and it is a tuning instrument rather than a check - it
+never fails, it reports. It visits Google, Bing, Wikipedia, Hacker News, GitHub, MDN, react.dev and
+Stack Overflow, collects every id and class, and sorts them into what the filter would KEEP and what
+it would THROW AWAY. Both lists are worth reading, and the second one turned out to matter more.
+
+**Whole conventions were being recorded as identity.**
+
+- **CSS Modules.** Every class on github.com looks like `HeaderSearch-module__icon__wcrHX`. It has
+  separators, so it never even reached the shape tests - the filter dismissed any separated name as
+  authored. An entire framework's output, kept.
+- **React 19's `useId`,** which changed shape from `:r0:` to `_R_5knd_`. The old pattern matched the
+  old form only.
+- **A React id welded onto a good name.** react.dev ships `react-collapsed-panel-:R24m6:`, and the
+  `:r…:` pattern was anchored to the start, so it saw a perfectly good name.
+- **A hash as the last segment.** `--stacks-s-tooltip-a63su8lv` is one readable name and one hash,
+  and reading it whole finds neither.
+- **Counters.** Hacker News item ids (`49519850`), Bing's `5607`.
+
+**And one rule was matching English.** `HEX_RUN` was any six characters of a-f, which makes
+`feedback` a hash - so Bing's `b_algo_feedback` and `feedback-binded` were both being thrown away.
+So are `decade`, `facade` and `deface`. A hex run has to contain a digit or it is not a hex run.
+That is the more expensive kind of mistake, and the quieter one: the element was perfectly
+identifiable and the resolver now has to fall back on something weaker.
+
+**A year is not a hash either.** `\d{4,}` was catching Wikipedia's `skin-vector-2022` alongside Stack
+Overflow's `question-summary-80000853`. Five digits separates them, and a name that is nothing but
+digits is decisive on its own, which covers the counters.
+
+What replaced the "separated means authored" shortcut is a **segment-by-segment** pass, and the two
+guards on it are where the second half of this phase went - because switching it on cost half a
+dozen honest names immediately:
+
+- A segment is only examined if it contains a **digit or a capital**. Hashes out of these tools are
+  base36 or base62 and effectively never come out as unbroken lowercase; a squashed phrase always
+  does. `element.innerhtml`, `mw-watchlink` and `js-tagname-postgresql` were all being thrown away
+  until this.
+- The consonant run is measured **within each camelCase word**, not across the token. Across the
+  whole thing it counts letters nowhere near each other in the reading: `inTextBlock` scores five on
+  `xtBl`, which spans two words and a capital, and GitHub's `Link--inTextBlock` went with it.
+- The low-vowel signal applies only to **short** tokens. A long run of letters with few vowels is a
+  squashed phrase, and `3dprinting` is nine letters with two of them.
+- Two capitals in a row no longer count when they **end** the token. A trailing initialism is a
+  choice - `iconAnswerAI`, `parseURL`, `toJSON` - and counting it cost Stack Overflow its icon.
+
+Two new signals, neither decisive: **case churn of three or more** (camelCase changes twice per word
+boundary and no more, while a token out of a hat changes wherever it likes), and **three or more
+digits in two or more runs** (`sha256` and `base64` put their digits in one run at the end, which is
+what a person does; a hash threads them through).
+
+Everything is in the corpus in `verify-js.mjs`, which is where a pattern is PROVEN - a rule added to
+`stability.js` and nowhere else is a rule the next person deletes by accident. Seventeen new
+generated names and seventeen new authored ones, every one of them copied off a real page.
+
+Green at the end of it: **495 NUnit tests**, `verify-ui` 84/84, `verify-js` 13/13, `verify-demos` all
+pass, `verify-shop` all pass, `verify-live --live` all pass. A second pass of the collector over the
+same eight sites finds no authored name being thrown away on MDN, Hacker News or Google, one on
+Wikipedia, and only vowel-less abbreviations on Bing - which the two-signal rule has always
+sacrificed on purpose, and which make poor identity anyway.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1732,7 +1797,6 @@ yet** below.
   gone. What no check replaces is somebody sitting down and recording a Google search by hand,
   refining it, and running it: not because a step is unproven, but because how it FEELS to do that
   is the thing this product is for and nothing automated can report on it.
-- **Fingerprint heuristic tuning** against real sites (auto-generated id/class reject patterns).
 - **Orchestration (old Phase 4)**: several instances running the SAME task at once with different
   parameter bindings. **Cut in phase 31, along with every other form of concurrency.** Everything
   runs one thing at a time now, deliberately, and the pipeline that replaced it needs that to be

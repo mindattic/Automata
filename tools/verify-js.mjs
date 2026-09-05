@@ -68,7 +68,10 @@ function loadStability() {
   return sandbox.window.__automataStability;
 }
 
-/// Names a machine produced. Every one of these was seen on a real page.
+/// Names a machine produced. Every one of these was seen on a real page — the second block by
+/// `node tools/collect-names.mjs`, which visits a spread of real sites and sorts what they use
+/// into what the filter would keep and what it would throw away. A rule invented at a desk catches
+/// what its author imagined; these are what shipped.
 const GENERATED = {
   'ti6dpd': 'Google, the id healed onto the search box — different on every page load',
   'gLFyf': 'Google, the class beside it',
@@ -84,6 +87,25 @@ const GENERATED = {
   'headlessui-menu-button-1': 'Headless UI',
   'a1b2c3d4': 'hex-shaped run',
   'x9zqpv': 'no vowels to speak of, a digit in the middle',
+
+  // Found by the collector, and every one of them was being RECORDED as identity before.
+  'HeaderSearch-module__icon__wcrHX': 'github.com — CSS Modules, and the commonest template there is',
+  'MarketingHeader-module__visuallyHidden__sqKsl': 'github.com — the same, on a readable local name',
+  'NavDropdown-module__buttonIcon__Tkl8_': 'github.com — and again, with a trailing underscore',
+  '_R_5knd_': "github.com — React 19's useId, which changed shape from the `:r0:` form",
+  '_R_nd_': 'github.com — the same, short',
+  'react-collapsed-panel-:R24m6:': 'react.dev — a good name with a generated id welded on the end',
+  '--stacks-s-tooltip-a63su8lv': 'stackoverflow.com — a readable name and one hash segment',
+  'question-summary-80000853': 'stackoverflow.com — a row id',
+  '49519850': 'news.ycombinator.com — an item id, all digits',
+  'score_49519850': 'news.ycombinator.com — the same, with a prefix',
+  '5607': 'bing.com — an id that is nothing but a counter',
+  'paint0_linear_627_396207': 'react.dev — an SVG gradient id',
+  'SAKrtYCw': 'bing.com — case changing wherever it likes, with two capitals mid-token',
+  'XEt2Gp1imA': 'bing.com — the same, with digits through it',
+  'Uwa4y3LB7': 'bing.com — three digits scattered through eight characters',
+  'acf-icon__ChevronRight__acaa7c6e2deed': 'bing.com — a readable name and a hex hash',
+  'emb16D43D1A5': 'bing.com — an uppercase hex run',
 };
 
 /// Names a person chose. Rejecting one of these is the expensive failure: it throws away the
@@ -101,6 +123,24 @@ const AUTHORED = [
   'navBar', 'myButton',           // camelCase is a choice
   'ed-harvest-pick-row',
   'product', 'results', 'invoices',
+
+  // Also from the collector, and these are the more expensive half: every one was being thrown
+  // away, which costs the strongest strategy in the cascade on an element that was identifiable.
+  'feedback',                     // seven characters of a-f. So are `decade`, `facade`, `deface`.
+  'b_algo_feedback',              // bing.com — the same word, inside a name
+  'feedback-binded',              // bing.com again
+  'skin-vector-2022',             // wikipedia.org — a YEAR is not a hash
+  'copyright-2024',
+  'base64', 'sha256',             // digits last, on purpose
+  'section2part3',                // two numbers a person could have written
+  'IconAssistant',                // stackoverflow.com — camelCase with an initialism
+  'firstHeading',                 // wikipedia.org
+  'cdx-typeahead-search--auto-expand-width',   // wikipedia.org — long, and every word chosen
+  'b-scopeListItem-copilotsearch',             // bing.com — camelCase inside a separated name
+  'article-footer__contribute',                // developer.mozilla.org — BEM, not a hash
+  'everyoneloves__mid-sidebar',                // stackoverflow.com — long and deliberate
+  'element.ariaactivedescendantelement',       // developer.mozilla.org
+  'hnmain', 'athing', 'titleline', 'votearrow', // news.ycombinator.com, all hand-written
 ];
 
 const STATE = ['is-open', 'has-error', 'js-toggle', 'active', 'selected', 'hover', 'expanded'];
