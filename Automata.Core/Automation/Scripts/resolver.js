@@ -5,16 +5,17 @@
 // evaluated first (for __automataFingerprint) when refingerprint is requested.
 //
 // Every query runs across every REACHABLE ROOT, not just the top document: each open shadow root,
-// and each same-origin iframe's document, recursively. A component library that renders its button
-// inside a shadow root is not exotic any more, and a document.querySelector that stops at the
-// boundary simply reports "element not found by any strategy" — which reads as a broken recording
-// rather than as a limit of the tool.
+// each CLOSED shadow root the page created while closed.js was watching, and each same-origin
+// iframe's document, recursively. A component library that renders its button inside a shadow root
+// is not exotic any more, and a document.querySelector that stops at the boundary simply reports
+// "element not found by any strategy" — which reads as a broken recording rather than as a limit of
+// the tool.
 //
-// Two things stay out of reach, and the reason is the same for both: the page cannot see in.
-// A CLOSED shadow root exposes nothing to script by design, and a CROSS-ORIGIN iframe's document
-// throws on access. Reaching those means evaluating in each frame's own context over CDP rather
-// than running one script in the top document, which is a different mechanism, not a longer
-// selector.
+// One boundary is left, and it is a different shape: a CROSS-ORIGIN iframe's document throws on
+// access, so no walk from here gets in. That one is answered by frames.js, which does not try to
+// reach in — it talks to the copy of this script already running inside, over postMessage. See the
+// header of that file. A resolve that has to go through a frame cannot answer in one call, so it
+// reports itself as still waiting and the caller's existing poll picks the answer up.
 (function () {
     'use strict';
 
@@ -32,31 +33,54 @@
     var currentRoots = null;
     function activeRoots() { return currentRoots || (currentRoots = roots()); }
 
-    // Every root a query should look in: the document, every open shadow root inside it, and every
-    // same-origin iframe's document — recursively, because components nest.
+    // Every root a query should look in: the document, every shadow root inside it — open ones off
+    // the host, closed ones off the registry closed.js keeps — and every same-origin iframe's
+    // document, recursively, because components nest.
     function roots() {
         var found = [];
         walk(document);
         return found;
 
         function walk(root) {
+            // A closed root reached both from the registry and from inside another root would be
+            // walked twice, and the same element found twice reads as ambiguous — which is the one
+            // way this could turn a working resolve into a failing one.
+            for (var d = 0; d < found.length; d++) if (found[d] === root) return;
             found.push(root);
+
+            // The roots this document made that nothing can find by walking. Read per document,
+            // because a frame's closed roots are registered in the frame, by the frame's own copy.
+            if (root.nodeType === 9) {
+                var view = null;
+                try { view = root.defaultView; } catch (e) { view = null; }
+                var closed = view && view.__automataClosedRoots;
+                for (var c = 0; closed && c < closed.length; c++) {
+                    // isConnected walks out through shadow boundaries, so this is also the test for
+                    // a root whose host was itself detached inside another root.
+                    if (closed[c] && closed[c].host && closed[c].host.isConnected) walk(closed[c]);
+                }
+            }
+
             var all;
             try { all = root.querySelectorAll('*'); } catch (e) { return; }
             for (var i = 0; i < all.length; i++) {
                 var el = all[i];
-                // Only OPEN roots have a shadowRoot to read; a closed one is null here, which is
-                // exactly what "closed" means and not something to work around.
+                // Only OPEN roots have a shadowRoot to read. A closed one is null here — that is
+                // what "closed" means — and came in through the registry above instead.
                 if (el.shadowRoot) walk(el.shadowRoot);
-                if (el.tagName === 'IFRAME') {
+                if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
                     var doc = null;
-                    // Cross-origin: the access itself throws, and that is the whole answer.
+                    // Cross-origin: the access itself throws. frames.js takes it from here.
                     try { doc = el.contentDocument; } catch (e) { doc = null; }
                     if (doc) walk(doc);
                 }
             }
         }
     }
+
+    /// Every root this document can see, for frames.js — which needs the same walk to find the
+    /// frames it CANNOT see, wherever they are nested.
+    window.__automataReachableRoots = function () { return roots(); };
 
     // A rect inside an iframe is measured against THAT iframe's viewport, but a click is dispatched
     // in the top document's — so walk out through every enclosing frame and add each one's own
@@ -145,7 +169,10 @@
         } catch (e) { /* cosmetic only — never let a highlight failure break a resolve */ }
     };
 
-    window.__automataResolve = function (fp, opts) {
+    /// The cascade, run against this document alone. Returns an OBJECT rather than JSON text,
+    /// because two callers want it: the entry point below, which stringifies it for the host, and
+    /// frames.js, which forwards it to a parent that still has coordinates to add.
+    function resolveLocal(fp, opts) {
         opts = opts || {};
         // Fresh for every attempt: a poll is waiting for the page to CHANGE, so a root list held
         // over from the last one would be exactly the wrong thing to look in.
@@ -306,10 +333,10 @@
                 winnerStrategy = 'scored';
                 winnerScore = top.s;
             } else {
-                return JSON.stringify({ found: false, ambiguous: pool.length > 1, candidateCount: pool.length });
+                return { found: false, ambiguous: pool.length > 1, candidateCount: pool.length };
             }
         }
-        if (!winner) return JSON.stringify({ found: false, ambiguous: false, candidateCount: 0 });
+        if (!winner) return { found: false, ambiguous: false, candidateCount: 0 };
 
         winner.scrollIntoView({ block: 'center', inline: 'center' });
         // Translated out of any enclosing frame: the click that follows is dispatched against the
@@ -324,7 +351,7 @@
             refreshed = window.__automataFingerprint(winner);
         }
 
-        return JSON.stringify({
+        return {
             found: true,
             unique: winnerStrategy !== 'scored',
             strategy: winnerStrategy,
@@ -336,6 +363,64 @@
             tag: winner.tagName.toLowerCase(),
             text: elText(winner).slice(0, 120) || null,
             refreshedFingerprint: refreshed
-        });
+        };
+    }
+
+    /// The cascade, this document only. What frames.js calls on a frame that was asked whether it
+    /// holds the element.
+    window.__automataResolveLocal = resolveLocal;
+
+    function frames() { return window.__automataFrames || null; }
+
+    /// What the host calls. One try here; if that fails and this document holds frames it cannot
+    /// read into, one round of asking them — which cannot finish inside this call, so it reports
+    /// itself as still waiting and the host's next poll collects the answer.
+    ///
+    /// The poll already exists and already runs every half second, because an element that is not
+    /// there yet is the normal case on a page that renders late. Reusing it is what keeps this a
+    /// change to one script rather than a new asynchronous shape through the whole engine.
+    window.__automataResolve = function (fp, opts) {
+        opts = opts || {};
+        var local = resolveLocal(fp, opts);
+        if (local.found) {
+            // Found HERE, so any frame the last resolve went through is no longer where actions
+            // should be sent. Forgetting this is how the next step acts in the wrong document.
+            if (frames()) frames().resolvedFrame = null;
+            window.__automataDeepResolve = null;
+            return JSON.stringify(local);
+        }
+
+        var f = frames();
+        if (!f || !f.unreachable().length) {
+            window.__automataDeepResolve = null;
+            return JSON.stringify(local);
+        }
+
+        // Keyed by the fingerprint, so a poll for a DIFFERENT element never collects this one's
+        // answer — the same reason the host re-sends the whole fingerprint on every attempt.
+        var sig = JSON.stringify(fp);
+        var state = window.__automataDeepResolve;
+        if (!state || state.sig !== sig) {
+            state = window.__automataDeepResolve = { sig: sig, done: false, result: null };
+            f.askResolve(fp, opts).then(
+                function (r) { state.result = r; state.done = true; },
+                function () { state.result = null; state.done = true; });
+            return JSON.stringify(waiting());
+        }
+        if (!state.done) return JSON.stringify(waiting());
+
+        // Consumed once. A stale answer satisfying a later poll would report an element that has
+        // since gone as still being there.
+        window.__automataDeepResolve = null;
+        if (!state.result) return JSON.stringify(local);
+        if (state.result.found) window.__automataLastResolved = null;
+        return JSON.stringify(state.result);
     };
+
+    /// Not "not found" — "no answer yet". The host cannot tell the difference from the outside and
+    /// does not need to: it polls either way, and a genuine miss arrives on the next attempt with
+    /// its candidate count intact.
+    function waiting() {
+        return { found: false, ambiguous: false, candidateCount: 0, waitingOnFrames: true };
+    }
 })();

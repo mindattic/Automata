@@ -1521,6 +1521,78 @@ Two things worth knowing if this is ever revisited:
 - **The console mangles `←` and `→`.** A check that matched the runner's carried-value line by its
   arrow failed on a codepage, not on a bug. Match the names, not the punctuation.
 
+### Phase 32 - getting there first, and letting the page talk to itself (2026-09-04)
+
+The two boundaries phase 18 left standing were listed together for one reason: **the page cannot see
+in.** A closed shadow root exposes nothing to script by design, and a cross-origin document throws on
+access. The plan written down for them was per-frame `Runtime.evaluate` over CDP with coordinates
+reconciled afterwards. Neither of them ended up needing it, and what they needed instead is the same
+idea twice: **stop trying to reach in, and be inside already.**
+
+The host registers the whole toolkit with `AddScriptToExecuteOnDocumentCreated`, which runs before a
+page's own first line of script AND applies to every child frame. That one fact answers both:
+
+- **A closed root is visible for exactly one instant** — the moment `attachShadow` hands it back.
+  `closed.js` patches `Element.prototype.attachShadow` and keeps the closed ones in a per-document
+  list; the resolver's root walk reads that list alongside the open roots it can already find.
+  Nothing else changes: every strategy in the cascade already ran per root.
+- **A cross-origin frame already has our resolver in it.** Nothing needs to reach in. The two copies
+  only have to talk, and `postMessage` crosses origins by design — it is the one channel the
+  same-origin policy leaves open on purpose. `frames.js` asks each child frame it cannot read into
+  "do you have this element?", each child answers for itself or asks ITS unreachable children, and
+  the answer comes back up the tree.
+
+**The coordinates come out for free, which is the part the CDP plan would have had to work for.**
+Every hop adds its own frame's position on the way up, and the party doing the adding is the only one
+that can: a cross-origin child cannot know where it sits (`window.frameElement` throws), while its
+parent owns the `<iframe>` element and knows exactly. The parent also scrolls that frame into view
+before measuring — the element scrolled itself to the middle of its own viewport, which says nothing
+about where that viewport is.
+
+**An answer that has to cross a boundary cannot exist in the call that asks for it**, and the shape
+that falls out of that is the nicest thing in the phase. A resolve that has to ask a frame returns
+`waitingOnFrames` and the host's **existing** poll — the one that already runs every half second
+because late-rendering elements are the norm — collects the answer next time round. No new
+asynchronous shape had to be threaded through the engine. Actions do the same thing on a faster
+poll, since there is nothing to wait for but one message crossing one boundary.
+
+Four things worth knowing, each of them a deliberate cost:
+
+- **A closed root created before we arrive is unreachable, and never becomes reachable.** That is
+  not a bug to fix later; it is what "closed" means. It is also why `closed.js` is the one script
+  that genuinely cannot be injected on demand like the rest.
+- **Forwarding an action into a frame needs `new Function` there.** A frame whose CSP forbids
+  `unsafe-eval` can be searched but not acted in, and the step says so — which is better information
+  than either half failing. The ordinary same-document path never goes near it: the action body is
+  written into the script TWICE, inlined for here and as a string for there, so a page with a strict
+  CSP behaves exactly as it always did.
+- **Two frames both holding the element is reported as ambiguous**, not resolved to the first one.
+  It is the frame-level shape of the near-tie the scoring pass already refuses to guess at.
+- **Attaching a FILE still stops at every boundary**, including a same-origin frame, because it is
+  the one action that does not go through the resolver — `DOM.setFileInputFiles` needs a selector
+  against the top document. What changed is that it now looks for its own marker first and reports
+  what is actually wrong, instead of retrying a selector for ten seconds and blaming the marker.
+
+New example, **"Reach into a closed root and a cross-origin frame"**, beside the phase-18 one and
+deliberately not folded into it: these are reached by a different mechanism, and when one breaks the
+other is unlikely to be the cause. Its frame is loaded with `src` rather than `srcdoc`, which is the
+whole difference — a `file://` document has an opaque origin, so one local file embedding another is
+a genuine cross-origin embed. shadow.html relies on precisely the opposite fact and says so.
+
+**The bug worth writing down.** A stray NUL byte, written as a separator inside a string literal in
+`frames.js`, passed `node --check` and passed the build, and made WebView2 refuse the ENTIRE
+document-start bundle with "Invalid or unexpected token". Nothing was installed, in any frame, and
+the only symptom was every element on every page suddenly being unfindable — a failure that looks
+exactly like the feature not existing. An injected script crosses a COM boundary as a string, and
+that boundary has opinions no JavaScript parser holds. `BeyondBoundaryTests` now rejects a control
+character in any injected script.
+
+Green at the end of it: **481 NUnit tests**, `verify-ui` 82/82, `verify-js` **12/12** (two new
+groups, both against a real DOM in the real WebView2 — a fake browser answering canned JSON could
+never show that a closed root was actually opened), `verify-demos` all pass, `verify-shop` all pass,
+`verify-live --live` all pass. Google failed the heal-holds check once and passed on a retry against
+the same binary — the rate-limit flake phases 29 and 31 already documented, not a regression.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done
@@ -1540,23 +1612,23 @@ yet** below.
   runs one thing at a time now, deliberately, and the pipeline that replaced it needs that to be
   true. If this comes back it starts from a working sequential product rather than from a pool that
   was never used.
-- **Cross-origin iframes, and closed shadow roots.** Open shadow roots and same-origin iframes
-  landed in phase 18; these two did not, and the reason is the same for both: **the page cannot see
-  in.** A closed root exposes nothing to script by design, and a cross-origin document throws on
-  access. Reaching either means evaluating in each frame's own context over CDP - `Page.getFrameTree`
-  plus `Runtime.evaluate` against a specific execution context - rather than running one script in
-  the top document, and then reconciling coordinates across those contexts. That is a different
-  mechanism, not a longer selector.
 - **Recording inside an iframe.** The recorder listens on the top document, and an iframe never
-  delivers its events there; it would have to be injected into every frame. Recording inside an open
-  SHADOW root does work, since phase 18 - the recorder reads `composedPath()[0]` instead of
-  `event.target`.
+  delivers its events there; it would have to be injected into every frame. Phase 32 put the
+  RESOLVER in every frame and gave the frames a way to talk to each other, so the hard half is done
+  - what is missing is a recorder that rides the same bridge, posting its events up rather than into
+  the frame's own dead-end `chrome.webview`. Recording inside an open SHADOW root does work, since
+  phase 18 - the recorder reads `composedPath()[0]` instead of `event.target`. A CLOSED root
+  retargets with nothing to look at, so recording in one is out of reach even though replaying in
+  one is not.
 - **Harvesting inside a shadow root or a frame.** `harvest.js` still queries the top document only.
   The resolver's root walk is the shape the answer takes; the picker also has to be able to point at
   something in there, which is the harder half.
 - **Uploading into a shadow root or a frame.** `DomFileInjector` matches its file input by a
   selector against the top document, so the one action that does not go through the resolver is the
-  one action that still stops at the boundary.
+  one action that still stops at the boundary. Phase 32 made it SAY so rather than time out, which
+  is not the same as fixing it: the fix is either a resolver-shaped path to
+  `DOM.setFileInputFiles` (it takes an objectId, so a RemoteObject for the resolved element would
+  do it) or accepting that this action alone needs CDP per frame.
 - **A condition wait can only hold immediately or time out.** `WaitMode.UntilCondition` polls
   `Evaluate(spec.Condition, state)`, and nothing writes to that state while the poll loop is
   running, and no other step is in flight. So it is

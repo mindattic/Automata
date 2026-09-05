@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Automata.Core.Automation;
 using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
 
@@ -22,7 +23,31 @@ public class WebView2BrowserSurface : IBrowserSurface
     {
         this.core = core;
         this.setZoom = setZoom;
+        // Lazy, and shared: whichever call needs the page first pays for the registration, and every
+        // call after it awaits the same completed task.
+        install = new Lazy<Task>(() => core.AddScriptToExecuteOnDocumentCreatedAsync(
+            AutomationScripts.DocumentStartJs));
     }
+
+    private readonly Lazy<Task> install;
+
+    /// <summary>
+    /// Registers the toolkit to run at document-creation time, in this page and every frame inside
+    /// it. Idempotent, and awaited by every call that touches the page.
+    /// <para>
+    /// Two things depend on being there BEFORE the page's own script, and only one of them is
+    /// obvious. The closed-shadow-root registry can only see a root at the instant it is created, so
+    /// arriving late means arriving after every root the page built on startup. Less obvious: a
+    /// CROSS-ORIGIN frame can only be reached by a script that is already inside it, and nothing out
+    /// here can put one there afterwards — WebView2 applies a document-created script to child
+    /// frames, which is the entire reason reaching into one is possible at all.
+    /// </para>
+    /// <para>
+    /// Callers that drive the page themselves — a WPF host with its own address bar — should await
+    /// this once at startup rather than rely on the first replay step to trigger it.
+    /// </para>
+    /// </summary>
+    public Task EnsureInstalledAsync(CancellationToken ct = default) => install.Value;
 
     public string CurrentUrl => core.Source;
 
@@ -32,6 +57,7 @@ public class WebView2BrowserSurface : IBrowserSurface
 
     public async Task NavigateAsync(string url, CancellationToken ct)
     {
+        await EnsureInstalledAsync(ct);
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong? navigationId = null;
 
@@ -77,6 +103,7 @@ public class WebView2BrowserSurface : IBrowserSurface
 
     public async Task<string> EvalAsync(string script, CancellationToken ct)
     {
+        await EnsureInstalledAsync(ct);
         var raw = await WithTimeout(core.ExecuteScriptAsync(script), "ExecuteScriptAsync", ct);
         // ExecuteScriptAsync JSON-encodes the JS expression's result. Every tool script returns
         // JSON.stringify(...) (a JS string), so `raw` is a JSON-encoded STRING — unwrap that one

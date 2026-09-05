@@ -106,7 +106,8 @@ public static class DemoPages
         var pages = new List<DemoPage>
         {
             Buttons(), Form(), Attachment(), Slow(), Order(), Zoom(), Invoices(),
-            Shadow(), Roster(), ShopSearch(), Drift(), TicketQueue(), TicketLookup(),
+            Shadow(), Closed(), ClosedFrame(), Roster(), ShopSearch(), Drift(), TicketQueue(),
+            TicketLookup(),
         };
         for (var i = 0; i < ProductCount; i++) pages.Add(ShopItem(i));
         return pages;
@@ -603,6 +604,87 @@ public static class DemoPages
               '<p id="shadow-said"></p>';
             shadow.getElementById('in-shadow').addEventListener('click', function () {
               shadow.getElementById('shadow-said').textContent = 'the shadow root was clicked';
+            });
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>
+    /// The two boundaries nothing can be walked through: a CLOSED shadow root and a CROSS-ORIGIN
+    /// iframe.
+    /// <para>
+    /// Both are the real thing rather than a stand-in. The root is opened with
+    /// <c>mode: 'closed'</c>, and the page keeps the only reference the language hands out —
+    /// <c>host.shadowRoot</c> is null forever after, so nothing that walks the DOM finds the way in.
+    /// The frame is loaded with <c>src</c> and not <c>srcdoc</c>, which is what makes it
+    /// cross-origin: a document loaded from <c>file://</c> gets an OPAQUE origin, so one local file
+    /// embedding another is a genuine cross-origin embed even though the two sit in the same folder.
+    /// The neighbouring shadow.html example relies on exactly the opposite fact, and says so.
+    /// </para>
+    /// <para>
+    /// As there, each control writes its answer INTO ITS OWN TREE, so a step that asserts on the
+    /// result has to get back in as well.
+    /// </para>
+    /// </summary>
+    private static DemoPage Closed() => new("closed.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — a closed root and a cross-origin frame</title>{{Css}}</head>
+        <body>
+          <h1>Behind a boundary nothing can be walked through</h1>
+          <p class="lede">The two below are not merely hidden from a selector — they are hidden from
+             script itself. A closed shadow root hands its only reference to the component that made
+             it, and a cross-origin document throws the moment anything reads it.</p>
+
+          <h2 class="section">In a closed shadow root</h2>
+          <div id="closed-host"></div>
+
+          <h2 class="section">In a cross-origin frame</h2>
+          <!-- src, not srcdoc, and that is the whole difference. A srcdoc frame inherits its
+               embedder's origin (see shadow.html); a file:// document has an OPAQUE origin, so
+               loading a sibling file by src produces a frame this page is not allowed to read. -->
+          <iframe id="opaque-frame" title="A page from another origin"
+                  style="width: 420px; height: 160px; border: 1px solid #d4d4d4;"
+                  src="closed-frame.html"></iframe>
+
+          <script>
+            // Closed. The reference below is the only one there will ever be, and it never leaves
+            // this function — which is exactly the shape a component library ships.
+            (function () {
+              var root = document.getElementById('closed-host').attachShadow({ mode: 'closed' });
+              root.innerHTML =
+                '<style>p { font: inherit; } button { font: inherit; padding: 6px 14px; }</style>' +
+                '<button id="in-closed">The button in the closed root</button>' +
+                '<p id="closed-said"></p>';
+              root.getElementById('in-closed').addEventListener('click', function () {
+                root.getElementById('closed-said').textContent = 'the closed root was clicked';
+              });
+            })();
+          </script>
+        </body>
+        </html>
+        """);
+
+    /// <summary>The page inside the cross-origin frame. Its own file, because being a separate
+    /// <c>file://</c> document is the entire reason it is unreachable from the one that embeds
+    /// it.</summary>
+    private static DemoPage ClosedFrame() => new("closed-frame.html", $$"""
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Automata demo — the framed page</title>
+        <style>
+          body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 8px; }
+          button { font: inherit; padding: 6px 14px; }
+          .clicked { margin-top: 8px; color: #157f3d; }
+        </style></head>
+        <body>
+          <p>This page is its own origin. The page that embeds it cannot read a word of it.</p>
+          <button id="in-opaque">The button in the cross-origin frame</button>
+          <p id="opaque-said" class="clicked"></p>
+          <script>
+            document.getElementById('in-opaque').addEventListener('click', function () {
+              document.getElementById('opaque-said').textContent = 'the cross-origin frame was clicked';
             });
           </script>
         </body>

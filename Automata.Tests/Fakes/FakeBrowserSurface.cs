@@ -38,7 +38,7 @@ public sealed class FakeBrowserSurface : IBrowserSurface
             // A real field holds what was typed into it. Answering from Calls rather than making
             // every test spell this out keeps a TypeText step's failure meaning what it says.
             return Task.FromResult(
-                System.Text.Json.JsonSerializer.Serialize(new { value = LastTyped }));
+                System.Text.Json.JsonSerializer.Serialize(new { ok = true, value = LastTyped }));
         }
         var responder = EvalResponses.Count > 0 ? EvalResponses.Dequeue() : DefaultEvalResponse;
         return Task.FromResult(responder(script));

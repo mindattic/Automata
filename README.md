@@ -224,8 +224,19 @@ engine redesigning itself is not a regression in this repo and a check that cann
 is worth less than none. The mail profile reads its account from `AUTOMATA_MAIL_URL`,
 `AUTOMATA_MAIL_USER` and `AUTOMATA_MAIL_PASS`, and skips itself by name when they are not set.
 
-Known limitations: closed shadow roots and CROSS-origin iframes are unreachable — the page cannot
-see into either, so reaching them needs per-frame evaluation over CDP rather than one script in the
-top document. Open shadow roots and same-origin iframes are resolved into. Recording still happens
-in the top document, so a click inside an iframe is not recorded (one inside an open shadow root
-is).
+Every boundary a selector stops at is now reached into: open shadow roots and same-origin iframes
+by walking them, CLOSED shadow roots by being installed before the page runs and keeping a list of
+the roots it opens, and CROSS-ORIGIN iframes by talking to the copy of the resolver already running
+inside them over `postMessage`. The last one carries coordinates back out through each enclosing
+frame, because a cross-origin document cannot know where it sits on the page and its parent can.
+
+Known limitations: a closed shadow root that existed BEFORE the toolkit was installed is not
+reachable, and never becomes reachable — there is one instant when a closed root is visible to
+anything, and it is the instant it is created. A frame that runs no script at all (`sandbox` with no
+`allow-scripts`) cannot answer. Forwarding an ACTION into a cross-origin frame needs `new Function`
+there, so a frame whose CSP forbids `unsafe-eval` can be searched but not acted in, and says so;
+nothing about the ordinary same-document path goes near `eval`. Attaching a FILE still stops at
+every boundary, including a same-origin frame, because it matches its input against the top document
+rather than through the resolver — it now reports that rather than timing out. Recording still
+happens in the top document, so a click inside an iframe is not recorded (one inside an open shadow
+root is).

@@ -152,7 +152,24 @@ const fixture = `<!doctype html>
     <li class="product css-9f8e7d selected" data-sku="bbb"><span class="title">Second</span></li>
     <li class="product css-4c3b2a" data-sku="ccc"><span class="title">Third</span></li>
   </ul>
+
+  <!-- The two boundaries nothing can be walked through. The host below is left EMPTY on purpose:
+       the closed root is opened from the check itself, so the assertion is about a root that was
+       created while the injected registry was already watching — which is the only kind there is
+       any way to reach. -->
+  <div id="closed-host"></div>
+
+  <!-- src, not srcdoc. A file:// document has an opaque origin, so this is a genuine cross-origin
+       embed: the page above is not allowed to read a word of it. -->
+  <iframe id="opaque" title="Another origin" style="width:300px;height:120px;margin-top:40px"
+          src="fixture-frame.html"></iframe>
 </body></html>`;
+
+/// The page inside the cross-origin frame. Its own file, because being a separate file:// document
+/// is the entire reason the fixture cannot read it.
+const frameFixture = `<!doctype html>
+<html><head><meta charset="utf-8"><title>verify-js frame</title></head>
+<body><button id="in-opaque">The button in the frame</button></body></html>`;
 
 async function waitForHttp200(port, label, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
@@ -177,6 +194,7 @@ async function main() {
   mkdirSync(scratch, { recursive: true });
   const fixturePath = path.join(scratch, 'fixture.html');
   writeFileSync(fixturePath, fixture);
+  writeFileSync(path.join(scratch, 'fixture-frame.html'), frameFixture);
   const fixtureUrl = 'file:///' + fixturePath.replace(/\\/g, '/');
 
   const proc = spawn(exePath, [], {
@@ -271,6 +289,55 @@ async function main() {
       assertEqual(fp.id ?? null, null,
         `a heal wrote a generated id back into the record: ${fp.id}`);
       assertEqual(JSON.stringify(fp.classList), '[]', 'a heal wrote a generated class back');
+    });
+
+    // Not injected like the checks above it: the registry that makes this possible is installed by
+    // the app at DOCUMENT-CREATION time, in this page and every frame in it. That is the whole
+    // mechanism — a closed root is visible for exactly the instant it is handed back, and a
+    // cross-origin frame can only be reached by a script that was already inside it.
+    await groupAsync('elements: a closed shadow root is reachable, and genuinely closed', async () => {
+      const answer = await page.evaluate(() => {
+        const host = document.getElementById('closed-host');
+        const root = host.attachShadow({ mode: 'closed' });
+        root.innerHTML = '<button id="in-closed">Shut</button>';
+        return {
+          // If this is not null the root is not closed, and the check below proves nothing at all.
+          exposed: host.shadowRoot !== null,
+          found: JSON.parse(window.__automataResolve({ tag: 'button', cssSelector: '#in-closed' }, {})),
+        };
+      });
+      assertTrue(!answer.exposed, 'host.shadowRoot was readable — that root was not closed');
+      assertTrue(answer.found.found,
+        `the closed root was not walked: ${JSON.stringify(answer.found)}`);
+      assertEqual(answer.found.strategy, 'css', 'it should resolve by the ordinary cascade, in there');
+    });
+
+    await groupAsync('elements: a cross-origin frame answers for what the page cannot see', async () => {
+      const sealed = await page.evaluate(() => {
+        const el = document.getElementById('opaque');
+        let readable = false;
+        try { readable = el.contentDocument !== null; } catch (e) { readable = false; }
+        return { readable, frameTop: el.getBoundingClientRect().top };
+      });
+      assertTrue(!sealed.readable,
+        'the fixture could read into its own frame — that frame is not cross-origin, so this proves nothing');
+
+      // The first attempt starts the errand and says so; the host's poll collects the answer. Both
+      // halves matter: an answer on the first call would mean the frame was never asked.
+      const first = await page.evaluate(() =>
+        JSON.parse(window.__automataResolve({ tag: 'button', cssSelector: '#in-opaque' }, {})));
+      assertTrue(first.waitingOnFrames === true,
+        `the first attempt should report itself waiting, got ${JSON.stringify(first)}`);
+
+      await sleep(400);
+      const second = await page.evaluate(() =>
+        JSON.parse(window.__automataResolve({ tag: 'button', cssSelector: '#in-opaque' }, {})));
+      assertTrue(second.found, `the frame never answered: ${JSON.stringify(second)}`);
+      assertEqual(second.frameDepth, 1, 'the answer should say it came from one frame down');
+      // The coordinate is the part that is easy to get silently wrong: a rect measured inside the
+      // frame would put the button near the top of the page, where the click would land on nothing.
+      assertTrue(second.centerY > sealed.frameTop,
+        `the centre was not translated out of the frame: ${second.centerY} is above the frame at ${sealed.frameTop}`);
     });
 
     await groupAsync('elements: a harvest generalises rows past their per-row hash classes', async () => {

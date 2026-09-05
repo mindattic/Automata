@@ -42,15 +42,18 @@ public static class BrowserActions
     {
         await browser.ClickAtPointAsync(centerX, centerY, ct);
         await Task.Delay(150, ct);
-        await browser.EvalAsync("(function(){ var el = document.activeElement; if (el && el.select) el.select(); return 'ok'; })()", ct);
+        // Focus-relative, and therefore routed: when the field is inside a cross-origin frame the
+        // click landed in there, and it is THAT document's activeElement that matters. The top
+        // document's is the <iframe> element, which selects nothing and reads back nothing.
+        await EvalRoutedAsync(browser, "active",
+            "if (el.select) el.select(); return JSON.stringify({ ok: true, value: null });", ct);
         await Task.Delay(100, ct);
         await browser.TypeTextAsync(text, ct);
         await Task.Delay(200, ct);
 
-        var readBack = await browser.EvalAsync(
-            "(function(){ var el = document.activeElement; return JSON.stringify({ value: el ? el.value : null }); })()", ct);
-        using var doc = JsonDocument.Parse(readBack);
-        return doc.RootElement.GetProperty("value").GetString();
+        var readBack = await EvalRoutedAsync(browser, "active",
+            "return JSON.stringify({ ok: true, value: el ? el.value : null });", ct);
+        return ParseReadback(readBack).Value;
     }
 
     /// <summary>Set the last-resolved element's value via the native setter; returns the read-back value.</summary>
@@ -203,22 +206,47 @@ public static class BrowserActions
     /// Attach a local file to the last-resolved file input via CDP. The input is tagged with a
     /// temporary attribute so the injector's querySelector hits exactly the resolved element —
     /// the step's own selector may have matched only through a fallback strategy.
+    /// <para>
+    /// Upload is the one action that does NOT go through the resolver: it matches its input by a
+    /// selector run against the top document, because that is what <c>DOM.setFileInputFiles</c>
+    /// needs. So it is also the one action that still stops at a boundary — a shadow root of either
+    /// kind, or any frame. The marker is looked for before the injector runs, so that case says
+    /// what it is instead of spending ten seconds retrying a selector that was never going to
+    /// match.
+    /// </para>
     /// </summary>
-    public static async Task UploadToResolvedAsync(IBrowserSurface browser, string filePath, CancellationToken ct)
+    public static async Task<ValueReadback> UploadToResolvedAsync(
+        IBrowserSurface browser, string filePath, CancellationToken ct)
     {
         const string marker = "data-automata-upload";
         await EvalOnResolvedAsync(browser,
             $"el.setAttribute('{marker}', '1'); return JSON.stringify({{ ok: true, value: null }});", ct);
+
+        var reachable = ParseReadback(await browser.EvalAsync(
+            $"(function(){{ return JSON.stringify({{ ok: !!document.querySelector('[{marker}]') }}); }})()", ct));
+        if (!reachable.Ok)
+        {
+            await ClearMarkerAsync(browser, marker, ct);
+            return new ValueReadback(false, null,
+                "the file input is behind a boundary the uploader cannot cross — a shadow root or a " +
+                "frame. Every other action reaches in there; attaching a file does not, because it " +
+                "matches its input against the top document rather than through the resolver.");
+        }
+
         try
         {
             await browser.InjectFileAsync(filePath, $"[{marker}]", ct);
         }
         finally
         {
-            await browser.EvalAsync(
-                $"(function(){{ var el = document.querySelector('[{marker}]'); if (el) el.removeAttribute('{marker}'); return 'ok'; }})()", ct);
+            await ClearMarkerAsync(browser, marker, ct);
         }
+        return new ValueReadback(true, null, null);
     }
+
+    private static Task ClearMarkerAsync(IBrowserSurface browser, string marker, CancellationToken ct)
+        => browser.EvalAsync(
+            $"(function(){{ var el = document.querySelector('[{marker}]'); if (el) el.removeAttribute('{marker}'); return 'ok'; }})()", ct);
 
     /// <summary>
     /// Poll the page-busy detector until it clears or <paramref name="capMs"/> elapses.
@@ -240,16 +268,74 @@ public static class BrowserActions
 
     // ---- plumbing ----------------------------------------------------------------------------
 
+    /// <summary>How long an action forwarded into a cross-origin frame may take to come back.</summary>
+    private const int FrameActTimeoutMs = 5000;
+
+    /// <summary>How often a forwarded action is asked for its answer. Faster than a resolve poll,
+    /// because there is nothing to wait for here but one message crossing one boundary.</summary>
+    private const int FrameActPollMs = 100;
+
     /// <summary>Run a JS body with <c>el</c> bound to the last-resolved element.</summary>
     private static Task<string> EvalOnResolvedAsync(IBrowserSurface browser, string bodyJs, CancellationToken ct)
-        => browser.EvalAsync($$"""
+        => EvalRoutedAsync(browser, "resolved", bodyJs, ct);
+
+    /// <summary>
+    /// Run a JS body with <c>el</c> bound, wherever the element actually is.
+    /// <para>
+    /// <paramref name="target"/> is <c>resolved</c> for the element the last resolve found, or
+    /// <c>active</c> for whatever now holds focus — the two things an action ever means by "el".
+    /// </para>
+    /// <para>
+    /// The body goes into the script TWICE, and the duplication is the point. The first copy is
+    /// inlined and runs in this document, exactly as it always has, so a page whose
+    /// Content-Security-Policy forbids <c>eval</c> is unaffected. The second is a string, forwarded
+    /// into the frame the element turned out to be in and called there through <c>new Function</c>
+    /// — the only way to run a script in a document nothing out here can reach, and a cost paid
+    /// only by the case that could not work at all before.
+    /// </para>
+    /// </summary>
+    private static async Task<string> EvalRoutedAsync(
+        IBrowserSurface browser, string target, string bodyJs, CancellationToken ct)
+    {
+        var bodyLiteral = JsonSerializer.Serialize(bodyJs);
+        var targetLiteral = JsonSerializer.Serialize(target);
+        var elJs = target == "active" ? "document.activeElement" : "window.__automataLastResolved";
+        var script = $$"""
             (function() {
-                var el = window.__automataLastResolved;
+                var f = window.__automataFrames;
+                if (f && f.resolvedFrame) return window.__automataActInFrame({{targetLiteral}}, {{bodyLiteral}});
+                var el = {{elJs}};
                 if (!el || !el.getBoundingClientRect)
                     return JSON.stringify({ ok: false, error: 'no element resolved' });
                 {{bodyJs}}
             })()
-            """, ct);
+            """;
+
+        var deadline = Environment.TickCount64 + FrameActTimeoutMs;
+        while (true)
+        {
+            var raw = await browser.EvalAsync(script, ct);
+            if (!IsWaitingOnFrames(raw)) return raw;
+            if (Environment.TickCount64 + FrameActPollMs > deadline)
+                return """{"ok":false,"error":"the frame holding the element never answered"}""";
+            await Task.Delay(FrameActPollMs, ct);
+        }
+    }
+
+    /// <summary>Whether a result is "no answer yet" rather than an answer.</summary>
+    private static bool IsWaitingOnFrames(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return doc.RootElement.TryGetProperty("waitingOnFrames", out var w) &&
+                   w.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     private static ValueReadback ParseReadback(string raw)
     {

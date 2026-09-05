@@ -93,6 +93,7 @@ public static class DemoTasks
         Zoom(demoRoot),
         Invoices(demoRoot),
         Shadow(demoRoot),
+        Closed(demoRoot),
         Roster(demoRoot),
         Search(demoRoot),
         Chain(demoRoot),
@@ -760,6 +761,62 @@ public static class DemoTasks
                 Label = "Read what it wrote, inside that same frame",
                 Target = Css("p", "#frame-said"),
                 Value = "the frame was clicked",
+            },
+        ]);
+
+    /// <summary>
+    /// The example for the two boundaries that cannot be walked through at all: a CLOSED shadow
+    /// root, and a CROSS-ORIGIN frame.
+    /// <para>
+    /// Its neighbour, <see cref="Shadow"/>, covers the pair a walk from the top document can still
+    /// cross. These two cannot be crossed by any walk, and the difference is worth having as its own
+    /// example rather than four more steps on that one: they are reached by a different mechanism,
+    /// and when one of them breaks the other is very unlikely to be the cause.
+    /// </para>
+    /// <para>
+    /// Same assertion discipline as there. Each click is answered INSIDE the tree it happened in, so
+    /// reading the answer back is a second, independent proof that the resolver got in — a step that
+    /// checked something on the outer page would pass on a click that landed anywhere at all.
+    /// </para>
+    /// </summary>
+    private static DemoTask Closed(string demoRoot) => new(
+        "closed",
+        "Reach into a closed root and a cross-origin frame",
+        "A closed shadow root hands its only reference to the component that made it, and a "
+        + "cross-origin frame throws the moment anything reads it — neither can be found by "
+        + "searching the page. This clicks a button in each and reads the answer back out of the "
+        + "same place it was written.",
+        PageUrl(demoRoot, "closed.html"),
+        [
+            new Step
+            {
+                Id = "demo-closed-click",
+                Action = StepAction.Click,
+                Label = "Click the button inside the closed shadow root",
+                Target = Css("button", "#in-closed"),
+            },
+            new Step
+            {
+                Id = "demo-closed-assert",
+                Action = StepAction.AssertElement,
+                Label = "Read what it wrote, inside that same closed root",
+                Target = Css("p", "#closed-said"),
+                Value = "the closed root was clicked",
+            },
+            new Step
+            {
+                Id = "demo-closed-frame-click",
+                Action = StepAction.Click,
+                Label = "Click the button inside the cross-origin frame",
+                Target = Css("button", "#in-opaque"),
+            },
+            new Step
+            {
+                Id = "demo-closed-frame-assert",
+                Action = StepAction.AssertElement,
+                Label = "Read what it wrote, inside that same frame",
+                Target = Css("p", "#opaque-said"),
+                Value = "the cross-origin frame was clicked",
             },
         ]);
 

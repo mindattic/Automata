@@ -54,7 +54,8 @@ function runner(...args) {
 
 /// Examples this check runs to completion, in the order a person would meet them.
 const RUNNABLE = [
-  'buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'shadow', 'roster', 'search', 'chain',
+  'buttons', 'form', 'slow', 'order', 'zoom', 'invoices', 'shadow', 'closed', 'roster',
+  'search', 'chain',
 ];
 
 /// Covered more strictly elsewhere, or not finishable on purpose.

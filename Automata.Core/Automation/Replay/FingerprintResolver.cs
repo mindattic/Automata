@@ -24,6 +24,14 @@ public sealed record ResolveResult(
 /// Polls until the element resolves or the step's timeout elapses — late-rendering SPA elements
 /// are the norm, not the exception. A successful resolve leaves the element on
 /// <c>window.__automataLastResolved</c> for the follow-up act script.
+/// <para>
+/// That poll does a second job now. An element inside a CROSS-ORIGIN frame is found by asking the
+/// copy of the resolver running in there, and an answer that has to cross a frame boundary cannot
+/// exist in the call that asks for it — so the script reports itself as waiting and the next
+/// attempt collects the answer. Nothing here needed changing for that, which is the point: the
+/// poll already existed, for a different reason, and "not there yet" and "not answered yet" want
+/// exactly the same treatment.
+/// </para>
 /// </summary>
 public class FingerprintResolver
 {
@@ -67,11 +75,17 @@ public class FingerprintResolver
     {
         var fpJson = JsonSerializer.Serialize(fingerprint, AutomataJson.Options);
         var optsJson = $"{{ \"highlight\": {(highlight ? "true" : "false")}, \"refingerprint\": {(refingerprint ? "true" : "false")} }}";
+        // The whole toolkit on every attempt, because a surface may have no way to install anything
+        // at document-creation time and this has to work there too. Only the closed-shadow-root
+        // registry genuinely cannot be installed late — a host that can, does, and this copy then
+        // finds the registry already in place and leaves it alone.
         return $$"""
         (function() {
+        {{AutomationScripts.ClosedRootsJs}}
         {{AutomationScripts.StabilityJs}}
         {{AutomationScripts.FingerprintJs}}
         {{AutomationScripts.ResolverJs}}
+        {{AutomationScripts.FramesJs}}
         return window.__automataResolve({{fpJson}}, {{optsJson}});
         })()
         """;

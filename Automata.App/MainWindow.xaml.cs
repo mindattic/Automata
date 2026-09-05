@@ -468,14 +468,28 @@ public partial class MainWindow : Window
             args.Accept();
         };
 
+        // The zoom lives on the WebView2 control, which is a WPF element — so unlike a headless
+        // pane, setting it has to hop back to the UI thread from whatever thread the replay
+        // engine is running a step on.
+        var surface = new WebView2BrowserSurface(
+            TargetBrowser.CoreWebView2,
+            factor => Dispatcher.Invoke(() => TargetBrowser.ZoomFactor = factor));
+        targetBrowser = surface;
+
+        // Built before anything navigates, and before the recorder, because both of those depend on
+        // it. The surface installs stability/fingerprint/resolver plus the closed-shadow-root
+        // registry and the cross-origin frame bridge on every document; a replay step would trigger
+        // that on its own, but this pane also navigates when a person types in the address bar, and
+        // a registry that arrives after the page's own script has already missed every root it made.
+        await surface.EnsureInstalledAsync();
+
         // The recorder rides along on every document, dormant until the Record button arms it.
-        // fingerprint.js and harvest.js are Automata.Core embedded resources; recorder.js ships in
-        // wwwroot. harvest.js rides along because picking a harvest is a gesture in the TARGET
-        // pane — the user clicks one row and the page itself works out what "all the rows like this
-        // one" means, which is only answerable where the DOM is.
-        var recorderJs = Automata.Core.Automation.AutomationScripts.StabilityJs + "\n" +
-            Automata.Core.Automation.AutomationScripts.FingerprintJs + "\n" +
-            Automata.Core.Automation.AutomationScripts.HarvestJs + "\n" +
+        // harvest.js is an Automata.Core embedded resource; recorder.js ships in wwwroot. harvest.js
+        // rides along because picking a harvest is a gesture in the TARGET pane — the user clicks one
+        // row and the page itself works out what "all the rows like this one" means, which is only
+        // answerable where the DOM is. Registered SECOND, so the fingerprint it calls is already
+        // defined: WebView2 runs document-created scripts in registration order.
+        var recorderJs = Automata.Core.Automation.AutomationScripts.HarvestJs + "\n" +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wwwroot", "target", "recorder.js"));
         await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(recorderJs);
         TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;
@@ -483,13 +497,6 @@ public partial class MainWindow : Window
             _ = controller.OnTargetNavigationCompletedAsync(TargetBrowser.CoreWebView2.Source);
 
         TargetBrowser.CoreWebView2.Navigate("about:blank");
-
-        // The zoom lives on the WebView2 control, which is a WPF element — so unlike a headless
-        // pane, setting it has to hop back to the UI thread from whatever thread the replay
-        // engine is running a step on.
-        targetBrowser = new WebView2BrowserSurface(
-            TargetBrowser.CoreWebView2,
-            factor => Dispatcher.Invoke(() => TargetBrowser.ZoomFactor = factor));
     }
 
     private void OnTargetMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)

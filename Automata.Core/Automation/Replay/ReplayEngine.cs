@@ -386,7 +386,8 @@ public class ReplayEngine
             {
                 if (string.IsNullOrWhiteSpace(value) || !File.Exists(value))
                     return (StepStatus.Failed, $"file not found: '{value}' — set a local path on this step", null);
-                await BrowserActions.UploadToResolvedAsync(browser, value!, ct);
+                var attached = await BrowserActions.UploadToResolvedAsync(browser, value!, ct);
+                if (!attached.Ok) return (StepStatus.Failed, attached.Error, null);
                 var count = await BrowserActions.CountResolvedFilesAsync(browser, ct);
                 return count > 0
                     ? (passStatus, $"attached {Path.GetFileName(value)}{healNote}", null)
