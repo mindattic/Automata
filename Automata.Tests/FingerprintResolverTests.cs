@@ -108,6 +108,10 @@ public class FingerprintResolverTests
         Assert.That(script, Does.Contain("btnK"));                    // the fingerprint payload
         Assert.That(script, Does.Contain("__automataResolve"));       // resolver.js
         Assert.That(script, Does.Contain("__automataFingerprint"));   // fingerprint.js
+        // fingerprint.js calls into this and would throw without it, taking the whole resolve with
+        // it — and WebView2 swallows an exception in injected script, so the symptom would be a
+        // resolve that silently never finds anything.
+        Assert.That(script, Does.Contain("__automataStability"));      // stability.js
         Assert.That(script, Does.Contain("\"highlight\": true"));
     }
 
@@ -128,5 +132,23 @@ public class FingerprintResolverTests
         Assert.That(AutomationScripts.FingerprintJs, Does.Contain("__automataFingerprint"));
         Assert.That(AutomationScripts.ResolverJs, Does.Contain("__automataResolve"));
         Assert.That(AutomationScripts.ResolverJs, Does.Contain("__automataHighlight"));
+        Assert.That(AutomationScripts.StabilityJs, Does.Contain("__automataStability"));
+    }
+
+    /// <summary>
+    /// Both scripts have to be given the filter, because both ask it the same question — and
+    /// keeping their own copies is exactly how they drifted apart, one rejecting a class the other
+    /// recorded as identity.
+    /// </summary>
+    [Test]
+    public void BothScriptsDeferToTheSharedStabilityRule()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(AutomationScripts.FingerprintJs, Does.Contain("__automataStability"));
+            Assert.That(AutomationScripts.HarvestJs, Does.Contain("__automataStability"));
+            Assert.That(AutomationScripts.FingerprintJs, Does.Not.Contain("AUTO_CLASS"),
+                "fingerprint.js should no longer carry a filter of its own");
+        });
     }
 }

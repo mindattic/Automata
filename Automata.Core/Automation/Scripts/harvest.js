@@ -23,18 +23,12 @@
     // A class list minus the noise that varies per row. Framework hash classes and state classes
     // are exactly what makes two otherwise identical tiles look different, so they are dropped:
     // keeping them would generalise one tile into one tile.
+    //
+    // The rule lives in stability.js, prepended to this file, because a fingerprint wants the
+    // identical answer — these two lists had drifted apart, and a class could be unstable enough to
+    // spoil a harvest while still being recorded as part of an element's identity.
     function stableClasses(el) {
-        var out = [];
-        for (var i = 0; i < el.classList.length; i++) {
-            var c = el.classList[i];
-            if (!c) continue;
-            if (/^(is-|has-|js-)/.test(c)) continue;          // state toggles
-            if (/^(active|selected|current|hover|focus|open)$/i.test(c)) continue;
-            if (/\d{4,}/.test(c)) continue;                    // generated ids
-            if (/^[a-z]+-[a-f0-9]{6,}$/i.test(c)) continue;    // css-module / emotion hashes
-            out.push(c);
-        }
-        return out;
+        return window.__automataStability.stableClasses(el.classList);
     }
 
     // The signature that decides "these two elements are the same KIND of thing".

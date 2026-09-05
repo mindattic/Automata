@@ -73,6 +73,15 @@ function runner(...args) {
   return { code: result.status, out: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 }
 
+/// A few seconds between scenarios. Partly manners — these are somebody else's servers and this
+/// suite can fire four searches in under a minute — and partly accuracy: a run that arrives while a
+/// search engine is still deciding whether to rate-limit you comes back with an interstitial, which
+/// looks exactly like the profile being wrong. This is not in the green bar precisely because that
+/// kind of failure exists, but there is no reason to go looking for it.
+function pause(seconds = 4) {
+  spawnSync(process.execPath, ['-e', `setTimeout(() => {}, ${seconds * 1000})`], { timeout: 60000 });
+}
+
 /// A harvest writes a CSV; this reads back what it actually collected.
 function rowsOf(dataset) {
   const file = join(roots.AUTOMATA_DATASETS_ROOT, dataset);
@@ -114,6 +123,10 @@ function healedInto(before, after) {
   return changes;
 }
 
+function tailOf(text, lines = 4) {
+  return text.trim().split(/\r?\n/).slice(-lines).join(' | ');
+}
+
 /// Says what kind of "it did not work" this was, because on a live site there are several and they
 /// call for different things. Guessing precisely would be dishonest — this only reports HOW FAR it
 /// got, which is genuinely known and is what tells you where to look.
@@ -152,6 +165,7 @@ try {
     ['profile-google', 'Google search — result titles', 'google-titles.csv'],
     ['profile-bing', 'Bing search — result titles', 'bing-titles.csv'],
   ]) {
+    pause();
     const before = profileOnDisk(id);
     const result = runner('run', '--task', name, '--input', `term=${term}`);
     const rows = rowsOf(dataset);
@@ -175,8 +189,22 @@ try {
         `none of ${rows.length} titles mention "${term}"`,
       );
     }
-    for (const change of healedInto(before, profileOnDisk(id))) {
-      console.log(`       healed and saved — ${change}`);
+    const healed = healedInto(before, profileOnDisk(id));
+    for (const change of healed) console.log(`       healed and saved — ${change}`);
+
+    // A repair has to CONVERGE. Before the reject patterns were tightened this profile healed on
+    // every single run, because what it wrote back was a generated id that would not be there next
+    // time — so the file was rewritten forever and the strongest strategies never once matched.
+    // Running it twice is the only way to tell a repair from a treadmill.
+    if (healed.length) {
+      const second = profileOnDisk(id);
+      pause();
+      const again = runner('run', '--task', name, '--input', `term=${term}`);
+      check(
+        `${name}: the repair holds — a second run has nothing left to heal`,
+        again.code === 0 && healedInto(second, profileOnDisk(id)).length === 0,
+        healedInto(second, profileOnDisk(id)).join('; ') || tailOf(again.out),
+      );
     }
   }
 

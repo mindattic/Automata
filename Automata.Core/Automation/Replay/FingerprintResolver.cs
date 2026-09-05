@@ -69,6 +69,7 @@ public class FingerprintResolver
         var optsJson = $"{{ \"highlight\": {(highlight ? "true" : "false")}, \"refingerprint\": {(refingerprint ? "true" : "false")} }}";
         return $$"""
         (function() {
+        {{AutomationScripts.StabilityJs}}
         {{AutomationScripts.FingerprintJs}}
         {{AutomationScripts.ResolverJs}}
         return window.__automataResolve({{fpJson}}, {{optsJson}});

@@ -194,8 +194,10 @@ Automata.Tests  NUnit 4 over model, store (incl. name round-trip and healing), a
                 resolver, replay, workflow, recorder, settings, logs, demos
 ```
 
-Beyond the unit tests, three acceptance harnesses drive the real app and the real runner:
+Beyond the unit tests, four acceptance harnesses drive the real app and the real runner:
 `tools/verify-ui.mjs` (the sidebar over CDP, including a WCAG 2.2 AA baseline),
+`tools/verify-js.mjs` (the injected scripts themselves — the naming rule as a pure function, and
+fingerprint/resolver/harvest against a real DOM in the real WebView2),
 `tools/verify-demos.mjs` (every generated example, run in a browser), and `tools/verify-shop.mjs`
 (the harvest-and-loop total, checked three ways against the pages themselves).
 

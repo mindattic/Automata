@@ -10,6 +10,10 @@ namespace Automata.Core.Automation;
 /// </summary>
 public static class AutomationScripts
 {
+    /// <summary>Prepended to every other script here: both of them ask it the same question,
+    /// and answering it twice is how the two copies drifted apart.</summary>
+    public static string StabilityJs { get; } = Load("stability.js");
+
     public static string FingerprintJs { get; } = Load("fingerprint.js");
     public static string ResolverJs { get; } = Load("resolver.js");
     public static string HarvestJs { get; } = Load("harvest.js");

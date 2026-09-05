@@ -1392,6 +1392,49 @@ Two things the first live run found, which is the entire argument for having one
   what a heal WROTE rather than merely that one happened - "a step self-healed" reads like good news
   and this one was not.
 
+### Phase 30 - what a name is worth, decided once and actually tested (2026-09-04)
+
+Phase 29 pointed the profiles at Google and watched self-healing make a recording **worse**: the
+search box matched by its name, so the fingerprint was refreshed, and what got written back was
+`id: "ti6dpd"` with the class `gLFyf` - both generated fresh on every page load. The next run
+therefore missed on `id` and `css`, healed again, wrote a different generated id, and rewrote the
+task file. Forever. A repair that does not converge is not a repair.
+
+Three things were wrong at once, and only the third is the interesting one.
+
+**The rule lived in two places and they had drifted.** `fingerprint.js` rejected
+`^css-|^sc-|[0-9a-f]{6,}`; `harvest.js` separately rejected state prefixes, state words, long digit
+runs and a stricter hash shape. So a class could be unstable enough to spoil a harvest's row
+selector and stable enough to be recorded as part of an element's identity. It is one embedded
+resource now, `stability.js`, prepended to both - and to the recorder, and to the resolver, because
+a heal writes back whatever `__automataFingerprint` returns.
+
+**Nothing in the repo had ever executed these files.** `FakeBrowserSurface` answers a resolve with
+canned JSON, which proves the C# around the script and nothing about the script. That is precisely
+why a filter that let `ti6dpd` through could survive: no check could have caught it, because no check
+ran the filter. `tools/verify-js.mjs` does now, in two halves - the naming rule as a pure function in
+plain Node against a corpus of real ids and classes, and everything else in the real WebView2, with
+the scripts evaluated exactly as the engine evaluates them.
+
+**Detecting a generated name is a judgement, so it is made carefully.** Known prefixes
+(`css-`, `sc-`, `jsx-`, `svelte-`, `ember`, `radix-`, `headlessui-`, `react-aria-`, `:r0:`, a bare
+CSS-modules hash) and long digit or hex runs are decisive on their own. Everything else needs **two**
+independent signals and only applies to a short name with no separator at all: a digit that is not
+at the end, an uppercase run inside the token, too few vowels, a long consonant run. `ti6dpd` trips
+two; `gLFyf` trips two; `search`, `nav2`, `b_results` and `sb_form_q` trip at most one each and
+survive. Rejecting a name a person chose is the expensive mistake - it throws away the strongest
+strategy in the cascade for an element that was perfectly identifiable - so one signal is never
+enough, and the corpus of names that must SURVIVE is as long as the corpus that must not.
+
+What it looks like now, against the site that produced the bug: the heal writes
+`textarea[name="q"]` and no id and no classes, and **a second run has nothing left to heal**. The
+live suite asserts that, because running once cannot tell a repair from a treadmill.
+
+It also learned some manners. Four searches in under a minute is enough for a search engine to
+start deciding whether you are a robot, and a rate-limited run comes back looking exactly like a
+profile that is wrong - which happened once during this phase, on Bing, between two runs that
+passed. There is a pause between scenarios now.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

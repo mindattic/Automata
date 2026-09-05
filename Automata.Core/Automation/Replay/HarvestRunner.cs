@@ -45,6 +45,7 @@ public static class HarvestRunner
 
         var script = $$"""
         (function() {
+        {{AutomationScripts.StabilityJs}}
         {{AutomationScripts.HarvestJs}}
         return window.__automataHarvest({{specJson}});
         })()

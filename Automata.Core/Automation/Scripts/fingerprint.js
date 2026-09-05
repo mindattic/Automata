@@ -4,26 +4,19 @@
 (function () {
     'use strict';
 
-    // Ids/classes that look machine-generated (hashed CSS-in-JS, framework counters) change on
-    // every build or render — recording them would poison the fingerprint's strongest strategies.
-    var AUTO_ID = /\d{4,}|^ember|^radix|^:r/;
-    var AUTO_CLASS = /^css-|^sc-|[0-9a-f]{6,}/;
+    // What counts as a name worth recording lives in stability.js, which is prepended to this
+    // file — see there for why, and for what it costs to get it wrong.
+    var stability = window.__automataStability;
 
     function norm(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
     function esc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/([^a-zA-Z0-9_-])/g, '\\$1'); }
 
     function stableId(el) {
-        var id = el.getAttribute && el.getAttribute('id');
-        return id && !AUTO_ID.test(id) ? id : null;
+        return stability.stableId(el.getAttribute && el.getAttribute('id'));
     }
 
     function stableClasses(el) {
-        var out = [];
-        for (var i = 0; i < el.classList.length; i++) {
-            var c = el.classList[i];
-            if (!AUTO_CLASS.test(c)) out.push(c);
-        }
-        return out;
+        return stability.stableClasses(el.classList);
     }
 
     function isUnique(sel) {
