@@ -394,6 +394,9 @@ function wireTree() {
             render();
         });
         el.addEventListener('dblclick', function () { inlineRename(el, 'renameCollection', cid); });
+        // Right-click opens the row's own menu instead of the browser's — the same one the wrench
+        // and Shift+F10/ContextMenu already open, so there is still exactly one menu per row.
+        el.addEventListener('contextmenu', function (e) { e.preventDefault(); openRowActions(el); });
         el.addEventListener('dragover', function (e) {
             if (dragCtx && dragCtx.type === 'task') { e.preventDefault(); el.classList.add('drop-into'); }
         });
@@ -425,6 +428,7 @@ function wireTree() {
             render();
         });
         el.addEventListener('dblclick', function () { inlineRename(el, 'renameTask', tid); });
+        el.addEventListener('contextmenu', function (e) { e.preventDefault(); openRowActions(el); });
         el.addEventListener('dragstart', function () { dragCtx = { type: 'task', id: tid }; });
         el.addEventListener('dragend', function () { dragCtx = null; });
     });
@@ -448,6 +452,7 @@ function wireTree() {
             if (selTask) state.expanded[tid] = true;
             render();
         });
+        el.addEventListener('contextmenu', function (e) { e.preventDefault(); openRowActions(el); });
         el.addEventListener('dragstart', function () { dragCtx = { type: 'step', id: sid, taskId: tid }; });
         el.addEventListener('dragend', function () { dragCtx = null; });
         el.addEventListener('dragover', function (e) {
