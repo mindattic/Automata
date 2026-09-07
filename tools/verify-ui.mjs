@@ -1047,10 +1047,10 @@ async function main() {
       }
     });
 
-    await group('hover gap: hr-line appears, and nothing around it moves', async () => {
-      // Every row's geometry, not just the gap's: revealing the label must not shift the strip OR
-      // nudge the steps either side of it, which is what "the gap causes a padding shift" looks
-      // like from the outside.
+    await group('hover gap: a 3px orange hairline appears, and nothing around it moves', async () => {
+      // Every row's geometry, not just the gap's: hovering must not shift the strip OR nudge the
+      // steps either side of it, which is what "the gap causes a padding shift" looks like from
+      // the outside.
       const geometry = () => panelPage.evaluate(() =>
         Array.prototype.slice.call(document.querySelectorAll('#tree .node, #tree .insert-zone'))
           .map((el) => {
@@ -1067,32 +1067,31 @@ async function main() {
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       });
       await sleep(100);
+
+      const heightBefore = await gap.evaluate((el) => el.getBoundingClientRect().height);
+      assertTrue(Math.round(heightBefore) === 3, `expected the gap to be 3px tall, got ${heightBefore}`);
+
+      // The line is a real ::after with its own explicit 1px height, not a background-clip trick,
+      // so it cannot round away to nothing at this size on a scaled display. Pseudo-element styles
+      // aren't exposed via getComputedStyle on the element itself, so read them via a page-side
+      // getComputedStyle(el, '::after') call instead.
+      const lineBg = () => gap.evaluate((el) => getComputedStyle(el, '::after').backgroundColor);
+      const bgBefore = await lineBg();
+      assertTrue(bgBefore === 'rgba(0, 0, 0, 0)' || bgBefore === 'transparent',
+        `expected the gap to be invisible before any hover, got "${bgBefore}"`);
+
       const before = await geometry();
       await gap.hover();
       await sleep(100);
-      assertEqual(await geometry(), before,
-        'revealing the insert-zone label moved something in the tree');
+      assertEqual(await geometry(), before, 'hovering the insert-zone moved something in the tree');
+      assertEqual(await lineBg(), 'rgb(224, 138, 46)',
+        'expected the hovered gap to turn the insert colour');
 
-      // The hover indicator is a plain hr-style line (::after), not a box/border — pseudo-element
-      // styles aren't exposed via getComputedStyle on the element itself, so read them via a
-      // page-side getComputedStyle(el, '::after') call instead.
-      const lineBg = await gap.evaluate((el) => getComputedStyle(el, '::after').backgroundColor);
-      assertTrue(lineBg !== 'rgba(0, 0, 0, 0)' && lineBg !== 'transparent',
-        `expected the ::after line to have a visible background on hover, got "${lineBg}"`);
-
-      // The label sits ON the line, on its own opaque ground, so the line stops either side of the
-      // text instead of striking through it. Colour alone would not prove that — the patch has to
-      // be opaque and above the line.
-      const label = await gap.locator('span').evaluate((el) => {
-        const style = getComputedStyle(el);
-        return { background: style.backgroundColor, color: style.color, z: style.zIndex };
-      });
-      assertTrue(!/rgba\(0, 0, 0, 0\)|transparent/.test(label.background),
-        `the label needs an opaque ground to mask the line, got "${label.background}"`);
-      assertEqual(label.background, 'rgb(23, 23, 23)',
-        'the label ground has to match the tree background, or it reads as a chip');
-      assertEqual(label.color, 'rgb(224, 138, 46)', 'the label text stays the insert colour');
-      assertTrue(Number(label.z) > 0, `the label must sit above the line, got z-index "${label.z}"`);
+      // The hint lives in a tooltip, not inline — there is no room in a 3px box for a readable
+      // label, so tooltip.js (a floating element sized on its own) carries it instead.
+      const tip = await panelPage.locator('#ma-tooltip.is-visible .ma-tooltip__body').textContent()
+        .catch(() => null);
+      assertEqual(tip, 'Add a step here', 'expected the insert-zone tooltip to explain the gap');
     });
 
     await group('click gap -> picker opens with Record option', async () => {

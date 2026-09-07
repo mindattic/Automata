@@ -264,7 +264,12 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
 .node .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .node.collection .name { font-weight: 600; }
 .node.task { padding-left: 20px; color: var(--color-fg-task); }
-.node.step { font-size: var(--text-sm); color: var(--color-fg-step); }
+/* Depth beyond this one is carried entirely by .tree-prefix's own repeating connectors, not by
+   more padding — so this is the one fixed indent every step, whatever its nesting, starts from. */
+/* No vertical padding of its own: the 3px insert-zone between every pair of steps is what
+   separates them now, so padding here would just be a second, redundant gap stacked on top. */
+.node.step { padding-top: 0; padding-bottom: 0; padding-left: 20px; font-size: var(--text-sm); color: var(--color-fg-step); }
+.insert-zone, .branch-end { padding-left: 20px; }
 
 .node .twist { width: 12px; color: var(--color-fg-subtle); flex: none; }
 .node .icon { width: 16px; flex: none; text-align: center; }
@@ -346,43 +351,31 @@ button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
 
    The tree is one flat list of rows — no element wraps a nesting level, because drag-and-drop, the
    insert gaps, the ARIA tree and a great many selectors all address rows as siblings. So depth is
-   drawn rather than structured: one hairline per ancestor level, absolutely positioned inside each
-   row and each gap, chaining into a continuous line because the rows sit flush.
+   drawn rather than structured: classic ├──/└──/│ connectors, one segment per ancestor level,
+   prepended as plain text — the same shape a terminal's own `tree` command draws, and one that
+   still reads correctly copy-pasted into a bug report.
 
-   Decorative only. Real nesting is carried by aria-level, which assistive tech already reads. */
-.rails { position: absolute; inset: 0; pointer-events: none; }
-
-.rail {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--color-border-strong);
-}
-
-/* A branch's own line is coloured AND dashed. Colour alone would be the one distinction a
-   colour-blind reader could not make, and this whole tree is otherwise monochrome. */
-.rail-branch {
-  background: none;
-  background-image: repeating-linear-gradient(
-    var(--color-info) 0 4px, transparent 4px 7px);
+   Decorative only. Real nesting is carried by aria-level, which assistive tech already reads.
+   `white-space: pre` is load-bearing: the connectors are built from literal spaces, and normal
+   HTML whitespace collapsing would silently close every gap between them. */
+.tree-prefix {
+  font-family: var(--font-mono);
+  white-space: pre;
+  color: var(--color-fg-subtle);
+  flex: none;
 }
 
 /* Where a branch or a loop stops. Indentation says where one starts and nothing says where it ends,
    which is exactly what makes a long task hard to read. Quiet on purpose: it is punctuation. */
 .branch-end {
-  position: relative;
+  display: flex;
+  align-items: center;
   min-height: 14px;
   padding-top: 1px;
   padding-bottom: 3px;
   font-size: var(--text-xs);
   color: var(--color-fg-subtle);
   pointer-events: none;
-}
-
-.branch-end > span {
-  border-top: 1px solid var(--color-border);
-  padding-right: var(--space-2);
 }
 
 /* An `otherwise` that no longer follows the `if` it was written for. The engine refuses to run it;
@@ -415,58 +408,60 @@ input.rename {
 
 /* ---- insert-between-steps zones ---- */
 
-/* Mouse-only shortcut, and deliberately so: at 10px it cannot meet SC 2.5.8's 24x24 minimum,
-   and growing it would add ~14px to every step row. It qualifies under the criterion's
-   "Equivalent" exception instead — the 24x24 ＋ button on each step row performs the same
-   insertion and is fully keyboard-operable — so this stays aria-hidden and unfocusable. */
-/* A fixed-height strip with the label centred in it. Flex rather than a block flow so revealing
-   the label cannot move anything: the box is 10px tall either way, and the label is centred
-   inside it instead of establishing a line box of its own. */
+/* Mouse-only shortcut, and deliberately so: at 3px it comes nowhere near SC 2.5.8's 24x24 minimum,
+   and growing it would add height to every step row for a gap most users never click. It
+   qualifies under the criterion's "Equivalent" exception instead — the step's own wrench menu
+   offers "Insert a step after this one" and is fully keyboard-operable — so this stays aria-hidden
+   and unfocusable. The hint text lives in its tooltip (see tooltip.js) rather than inline: there is
+   no room in 3px for a readable label, and a tooltip needs none of the row's own box to render in. */
+/* 3px total, a 1px orange line on hover only, 1px clear above and below it. An absolutely-
+   positioned ::after with its own explicit 1px height, not a content-box subtracted from padding
+   — subtracting under border-box rounds to nothing at these sizes on a scaled display, which is
+   exactly the failure a fixed height sidesteps. */
 .insert-zone {
-  height: 10px;
+  height: 3px;
   cursor: pointer;
-  overflow: hidden;
   position: relative;
+}
+
+.insert-zone::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 1px;
+  background: transparent;
+}
+
+.insert-zone:hover::after { background: var(--color-insert); }
+
+/* The one insert-zone a record-at-gap run has actually armed keeps its indicator regardless of
+   where the mouse is — the user is about to act in the TARGET pane, not this one, so the label
+   cannot wait for a hover that will not come. Tall enough to hold real text; every other gap stays
+   a 3px hairline. */
+.insert-zone.gap-active {
+  height: auto;
+  min-height: 14px;
   display: flex;
   align-items: center;
 }
 
-/* Three layers, back to front: the line, an opaque patch the width of the label, then the label.
-   The patch is what stops the line striking through the text — the alternative, breaking the line
-   into two absolutely-positioned halves, would have to know the text's width. */
-.insert-zone span {
-  display: none;
+.insert-zone.gap-active::after {
+  top: 0;
+  bottom: 0;
+  height: auto;
+  background: var(--color-info);
+}
+
+.insert-zone.gap-active span {
   position: relative;
   z-index: 1;
-  flex: none;
+  font-size: 10px;
+  color: var(--color-info);
   background: var(--color-bg-1);
   padding: 0 var(--space-1);
-  font-size: 10px;
-  line-height: 10px;
-  color: var(--color-insert);
 }
-
-/* A plain hr-style line centred in the strip — no box/border, so hovering never shifts spacing
-   between steps, just reveals the line and the label sitting on it. */
-.insert-zone::after {
-  content: '';
-  position: absolute;
-  z-index: 0;
-  left: var(--space-2);
-  right: var(--space-2);
-  top: 50%;
-  height: 1px;
-  background: transparent;
-  transform: translateY(-50%);
-}
-
-.insert-zone:hover::after { background: var(--color-insert); }
-.insert-zone:hover span { display: block; }
-
-/* Marks the specific gap currently armed/targeted by an in-progress record-at-gap run —
-   independent of mouse position, so it stays visible while the user performs the action. */
-.insert-zone.gap-active::after { background: var(--color-info); }
-.insert-zone.gap-active span { display: block; color: var(--color-info); }
 
 /* ---- step editor ---- */
 

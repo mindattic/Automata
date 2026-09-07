@@ -152,25 +152,24 @@ export function renderTree() {
     ensureFocusKey(hadFocus);
 }
 
-/// The indent column for one nesting level — half-way into the step it belongs to, which is where
-/// a line reads as "this row hangs off that one".
-function railLeft(level) { return 27 + level * 14; }
-
-/// The vertical guides for a row, one per ancestor level.
-///
-/// `rails` describes each ancestor: whether it has a later sibling, and whether it is a branch. A
-/// level's line is drawn when that ancestor continues below this row — otherwise the line would run
-/// past the last thing it owns — EXCEPT for the immediate parent, whose line is always drawn,
-/// because that is the one that says "this row belongs to the step above". Decorative and
+/// Classic tree-view connectors (├──/└──/│), text rather than a positioned line per ancestor —
+/// so the shape reads the same copy-pasted into a bug report as it does on screen. `rails`
+/// describes each ancestor's own "does it continue below this row"; `hasNext` is this row's own
+/// answer to the same question, which is what decides its own ├── vs └──. Decorative and
 /// aria-hidden: nesting is already carried properly by aria-level.
-function railsHtml(rails) {
+function treePrefix(rails, hasNext) {
     var out = '';
-    for (var k = 0; k < rails.length; k++) {
-        if (k !== rails.length - 1 && !rails[k].continues) continue;
-        out += '<i class="rail' + (rails[k].branch ? ' rail-branch' : '') +
-            '" style="left:' + railLeft(k) + 'px"></i>';
-    }
-    return out ? '<span class="rails" aria-hidden="true">' + out + '</span>' : '';
+    for (var k = 0; k < rails.length; k++) out += rails[k].continues ? '│   ' : '    ';
+    out += hasNext ? '├── ' : '└── ';
+    return '<span class="tree-prefix" aria-hidden="true">' + out + '</span>';
+}
+
+/// The ancestor columns alone, no connector of its own — for a decorative row (a branch-end
+/// marker) that sits AMONG real siblings without being one, so the trunk stays unbroken past it.
+function treeRails(rails) {
+    var out = '';
+    for (var k = 0; k < rails.length; k++) out += rails[k].continues ? '│   ' : '    ';
+    return out ? '<span class="tree-prefix" aria-hidden="true">' + out + '</span>' : '';
 }
 
 /// The quiet line that closes a branch or a loop.
@@ -178,9 +177,9 @@ function railsHtml(rails) {
 /// Not a tree item: no role, no data-key, not focusable — exactly like an insert zone, so the ARIA
 /// tree, the roving tabindex and every `.node.step` selector are untouched. It exists so a reader
 /// can see where a branch STOPS, which indentation alone never says.
-function branchEnd(text, depth, rails) {
-    return '<div class="branch-end" aria-hidden="true" style="padding-left:' +
-        (34 + depth * 14) + 'px">' + railsHtml(rails) + '<span>' + esc(text) + '</span></div>';
+function branchEnd(text, rails) {
+    return '<div class="branch-end" aria-hidden="true">' + treeRails(rails) +
+        '<span>' + esc(text) + '</span></div>';
 }
 
 function renderSteps(task, steps, depth, parentId, rails) {
@@ -188,7 +187,8 @@ function renderSteps(task, steps, depth, parentId, rails) {
     var pid = parentId || '';
     rails = rails || [];
     steps.forEach(function (s, i) {
-        html += insertZone(task.id, pid, i, depth, rails);
+        var hasNext = i < steps.length - 1;
+        html += insertZone(task.id, pid, i);
         var status = state.stepStatus[s.id] || '';
         var sel = state.sel.stepId === s.id;
         var kids = s.children || [];
@@ -212,52 +212,50 @@ function renderSteps(task, steps, depth, parentId, rails) {
             ' tabindex="' + tabIndexFor(key) + '" aria-level="' + (3 + depth) + '"' +
             ' aria-posinset="' + (i + 1) + '" aria-setsize="' + steps.length + '"' +
             (kids.length ? ' aria-expanded="true"' : '') +
-            ' aria-selected="' + sel + '"' +
-            ' style="padding-left:' + (34 + depth * 14) + 'px">' +
-            railsHtml(rails) +
+            ' aria-selected="' + sel + '">' +
+            treePrefix(rails, hasNext) +
             '<span class="status" role="img" aria-label="' + esc(status || 'not run') + '">' +
             (STATUS_GLYPH[status] || '▫') + '</span>' +
             '<span class="name">' + esc(phraseFor(s, state.collections)) + '</span>' + flags +
             wrench('step', phraseFor(s, state.collections)) + '</div>';
-        var mine = rails.concat([{
-            continues: i < steps.length - 1,
-            branch: s.action === 'if' || s.action === 'else',
-        }]);
+        var mine = rails.concat([{ continues: hasNext }]);
         html += renderSteps(task, kids, depth + 1, s.id, mine);
 
         // A branch closes after its `otherwise`, or after the `if` when it has none; a loop closes
         // after its body. Only when there is a body to close — an empty one needs no full stop.
         if (kids.length) {
-            if (s.action === 'forEach') html += branchEnd('end of loop', depth, rails);
-            else if (s.action === 'else') html += branchEnd('end of branch', depth, rails);
+            if (s.action === 'forEach') html += branchEnd('end of loop', rails);
+            else if (s.action === 'else') html += branchEnd('end of branch', rails);
             else if (s.action === 'if' && !(after && after.action === 'else')) {
-                html += branchEnd('end of branch', depth, rails);
+                html += branchEnd('end of branch', rails);
             }
         }
     });
-    if (steps.length) html += insertZone(task.id, pid, steps.length, depth, rails);
+    if (steps.length) html += insertZone(task.id, pid, steps.length);
     return html;
 }
 
-// The gap between two step rows — a constant-height strip at all times (no layout shift);
-// hovering just recolors it to signal "create a new step here". Clicking opens the action
-// picker and inserts the new step exactly there.
+// The gap between two step rows — a hairline, 3px whether hovered or not, so it never asks for
+// more room than the click it offers is worth. Hovering just recolors it; the hint text lives in
+// its tooltip instead of inline, since a 3px box has nowhere to put a readable label without
+// growing. Clicking opens the action picker and inserts the new step exactly there.
 //
-// Deliberately aria-hidden and unfocusable: at 10px tall it cannot meet WCAG 2.2 SC 2.5.8's
-// 24x24 pointer-target minimum, and growing it would add ~14px to every step row. It relies
-// on the criterion's "Equivalent" exception instead — the step's own menu, opened from a 24x24
-// wrench, offers "Insert a step after this one" and is fully keyboard-operable — so this remains
-// a pure mouse shortcut rather than a second, undersized focus stop per gap.
-function insertZone(taskId, parentId, index, depth, rails) {
+// Deliberately aria-hidden and unfocusable: at 3px tall it comes nowhere near WCAG 2.2 SC 2.5.8's
+// 24x24 pointer-target minimum, and growing it would add height to every single step row for a
+// gap most users never click. It relies on the criterion's "Equivalent" exception instead — the
+// step's own menu, opened from a 24x24 wrench, offers "Insert a step after this one" and is fully
+// keyboard-operable — so this remains a pure mouse shortcut rather than a second, undersized focus
+// stop per gap.
+function insertZone(taskId, parentId, index) {
     var active = state.gapInsert && state.gapInsert.taskId === taskId &&
         (state.gapInsert.parentId || '') === parentId && state.gapInsert.index === index;
-    // The gaps are full rows between the steps, so a guide drawn only on the steps would break the
-    // vertical line at every one of them.
+    // The armed gap is shown with an inline label rather than only its tooltip: the user is about
+    // to act in the TARGET pane, not hover this one, so a hint that only appears under the mouse
+    // would never be seen at the one moment it matters.
     return '<div class="insert-zone' + (active ? ' gap-active' : '') + '" aria-hidden="true"' +
-        ' data-task="' + taskId + '" data-parent="' + parentId + '" data-index="' + index +
-        '" style="padding-left:' + (34 + depth * 14) + 'px">' +
-        railsHtml(rails || []) +
-        '<span>＋ add step here</span></div>';
+        ' data-tooltip="Add a step here"' +
+        ' data-task="' + taskId + '" data-parent="' + parentId + '" data-index="' + index + '">' +
+        (active ? '<span>recording armed here</span>' : '') + '</div>';
 }
 // What a row's operations DO. One definition each, called both by the row menu and by anything
 // else that needs the same effect — a shortcut, a test, a future context menu — so there is never
