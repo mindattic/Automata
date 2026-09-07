@@ -162,10 +162,11 @@ export function renderEditor() {
             ? '<div class="field"><span>Value</span>' +
               fieldControlHtml('ed-value', valuePh, step.value, valuePh, bindingFor(step, 'ed-value')) +
               '</div>' : '') +
-        (step.action === 'extractText'
+        (step.action === 'extractText' || step.action === 'checkElement'
             ? '<div class="field"><span>Save as</span><input type="text" id="ed-output"' +
               ' aria-label="Name later steps use to bind to this captured value"' +
-              ' placeholder="e.g. total" value="' + esc(outputName(step)) + '" /></div>' : '') +
+              ' placeholder="' + (step.action === 'checkElement' ? 'e.g. found' : 'e.g. total') +
+              '" value="' + esc(outputName(step)) + '" /></div>' : '') +
         (step.action === 'wait' ? waitFieldsHtml(step) : '') +
         (waitNeedsCondition(step) ? waitConditionHtml(step) : '') +
         flowFieldsHtml(step, task) +
@@ -388,7 +389,7 @@ export function renderEditor() {
     }
 
     // Commit on blur/change of any field — the host echoes state back and the UI re-renders.
-    editorEl.querySelectorAll('input, select').forEach(function (inp) {
+    editorEl.querySelectorAll('input, select, textarea').forEach(function (inp) {
         inp.addEventListener('change', commitEditor);
     });
     // 🔗 on a literal field, or the chip itself once bound — both open the same source picker.

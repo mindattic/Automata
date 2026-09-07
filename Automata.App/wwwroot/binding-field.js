@@ -77,7 +77,29 @@ export function loopDatasetsInScope(task, step) {
     return found;
 }
 
-/// The column names of those datasets, as the host last reported them.
+/// True when the step sits inside a forEach that loops over values pasted straight into the step
+/// (no dataset file), i.e. `row.value` is in scope. Walked the same way as loopDatasetsInScope,
+/// since it is the same question about a different shape of loop.
+export function loopHasInlineValuesInScope(task, step) {
+    var found = false;
+
+    (function walk(steps, inScope) {
+        (steps || []).forEach(function (s) {
+            var inner = inScope;
+            if (s.action === 'forEach' && s.forEach && s.forEach.inlineValues
+                && s.forEach.inlineValues.length) {
+                inner = true;
+            }
+            if (s === step && inner) found = true;
+            walk(s.children, inner);
+        });
+    })(task && task.steps, false);
+
+    return found;
+}
+
+/// The column names of those datasets, as the host last reported them — plus the one synthetic
+/// column a pasted-list loop offers, since there is no dataset file to ask for its columns.
 function columnsInScope(task, step) {
     var found = [];
     var seen = {};
@@ -89,6 +111,9 @@ function columnsInScope(task, step) {
             found.push({ name: c, dataset: name });
         });
     });
+    if (loopHasInlineValuesInScope(task, step) && !seen.value) {
+        found.push({ name: 'value', dataset: null });
+    }
     return found;
 }
 
@@ -150,7 +175,9 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
         items.push({
             value: 'column:' + c.name,
             label: 'row.' + c.name,
-            detail: 'a column of ' + c.dataset + ', for the row this loop is on',
+            detail: c.dataset
+                ? 'a column of ' + c.dataset + ', for the row this loop is on'
+                : 'the value pasted into the loop, for the row it is on',
         });
     });
 
@@ -158,7 +185,7 @@ export function openBindingPicker(task, step, fieldLabel, current, onCommit) {
     // where the row sits in the list, and the row itself. Taken from the same walk the columns came
     // from, so a step outside every loop is offered neither.
     var loops = loopDatasetsInScope(task, step);
-    if (loops.length) {
+    if (loops.length || loopHasInlineValuesInScope(task, step)) {
         // Once, not once per loop: like a column, the position is named bare and means the loop you
         // are in. See ForEachSpec.RowNumberKey.
         items.push({

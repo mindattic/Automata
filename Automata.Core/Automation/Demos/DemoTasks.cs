@@ -985,6 +985,22 @@ public static class DemoTasks
                                 Condition = new ConditionSpec { Left = Column("Name"), Op = ConditionOp.NotExists },
                                 Children =
                                 [
+                                    // Absence would be the ordinary case for a search that comes
+                                    // back empty, not a broken run — this is what a run branches on
+                                    // to decide "skip this row" instead of aborting outright when
+                                    // WaitForElement or AssertElement would fail it.
+                                    new Step
+                                    {
+                                        Id = "demo-roster-check-skip",
+                                        Action = StepAction.CheckElement,
+                                        Label = "Check whether the skip button is there",
+                                        Target = Css("button", "#skip"),
+                                        Outputs = [new OutputField
+                                        {
+                                            Name = "present",
+                                            Description = "Whether the skip button resolved on this row",
+                                        }],
+                                    },
                                     new Step
                                     {
                                         Id = "demo-roster-skip",

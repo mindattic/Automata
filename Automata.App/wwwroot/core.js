@@ -237,6 +237,8 @@ export const ACTION_INFO = {
     extractAll: 'Read every matching row off this page into a dataset',
     setZoom: 'Zoom the page in or out, so a later step can reach what was cut off',
     aggregate: 'Total, count, or average one column of a dataset',
+    checkElement: 'Check whether an element is present right now, without failing the run — ' +
+        'pair it with an "if" to branch on it',
 };
 
 // Everything added after the original fourteen lives apart from them and is offered in a
@@ -246,7 +248,7 @@ export const ACTION_INFO = {
 // of its members is a list people stop adding to correctly.
 export const ADVANCED_ACTIONS = [
     'wait', 'if', 'else', 'forEach', 'runTask', 'writeDataset', 'extractAll', 'setZoom',
-    'aggregate',
+    'aggregate', 'checkElement',
 ];
 
 // Everything a step's action dropdown may show, including actions created elsewhere (imported,
@@ -338,6 +340,7 @@ export const ACTION_LABEL = {
     extractAll: 'Collect a list',
     setZoom: 'Zoom the page',
     aggregate: 'Work out a total',
+    checkElement: 'Check for something',
 };
 
 export const STATUS_GLYPH = { running: '⟳', passed: '✓', healed: '✓♻', failed: '✗', skipped: '▷', paused: '⏸' };

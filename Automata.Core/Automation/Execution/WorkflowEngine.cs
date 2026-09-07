@@ -496,23 +496,41 @@ public sealed partial class WorkflowEngine
             {
                 var spec = step.ForEach;
                 var name = spec?.Source?.DatasetName;
-                if (string.IsNullOrWhiteSpace(name))
+                IReadOnlyList<Dictionary<string, string>> rows;
+                string sourceDescription;
+
+                if (!string.IsNullOrWhiteSpace(name))
                 {
-                    await foreach (var e in FailAsync(step, scope, state, "no dataset chosen")) yield return e;
-                    yield break;
+                    if (!datasets.Exists(name))
+                    {
+                        await foreach (var e in FailAsync(step, scope, state,
+                            $"dataset '{name}' not found in {datasets.RootPath}")) yield return e;
+                        yield break;
+                    }
+                    rows = datasets.Read(name);
+                    sourceDescription = name;
                 }
-                if (!datasets.Exists(name))
+                else if (spec?.InlineValues is { Count: > 0 } inline)
+                {
+                    rows = inline
+                        .Select(v => new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            [ForEachSpec.InlineValueColumn] = v,
+                        })
+                        .ToList();
+                    sourceDescription = "the pasted list";
+                }
+                else
                 {
                     await foreach (var e in FailAsync(step, scope, state,
-                        $"dataset '{name}' not found in {datasets.RootPath}")) yield return e;
+                        "no dataset chosen and no values pasted")) yield return e;
                     yield break;
                 }
 
-                var rows = datasets.Read(name);
                 var spec2 = spec!;
 
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed,
-                    $"{rows.Count} row(s) from {name}", null);
+                    $"{rows.Count} row(s) from {sourceDescription}", null);
                 state.LastStatus = StepStatus.Passed;
                 state.Passed++;
 

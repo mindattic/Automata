@@ -281,6 +281,118 @@ public class WorkflowEngineTests
         Assert.That(completed.Message, Does.Contain("nope.csv"));
     }
 
+    /// <summary>A pasted list needs no dataset file at all — each line becomes a row under the
+    /// fixed <c>value</c> column, exactly as if it had come from one.</summary>
+    [Test]
+    public async Task ForEach_OverInlineValues_IteratesEachPastedLineAsARow()
+    {
+        var browser = Browser();
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach, Label = "Each title",
+                    ForEach = new ForEachSpec { InlineValues = ["Mad Max", "Predator"] },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "open", Action = StepAction.Navigate,
+                            Bindings = new Dictionary<string, BindingRef>
+                            {
+                                ["Url"] = new()
+                                {
+                                    Kind = BindingKind.DatasetColumn,
+                                    ColumnName = ForEachSpec.InlineValueColumn,
+                                    Prefix = "https://search.example/?q=",
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        await Run(task, browser);
+
+        Assert.That(NavigatedUrls(browser),
+            Is.EqualTo(new[] { "https://search.example/?q=Mad Max", "https://search.example/?q=Predator" }));
+    }
+
+    /// <summary>
+    /// A checkElement step never fails on absence — it publishes what it saw, so an "if" straight
+    /// after can skip a row instead of aborting the whole run over a search that legitimately came
+    /// back empty.
+    /// </summary>
+    [Test]
+    public async Task CheckElement_PublishesPresence_SoAnIfCanSkipTheRowsWithoutIt()
+    {
+        var resolveCalls = 0;
+        var browser = new FakeBrowserSurface
+        {
+            DefaultEvalResponse = script =>
+            {
+                if (script.Contains("isProcessing")) return """{ "isProcessing": false }""";
+                if (script.Contains("__automataResolve("))
+                {
+                    resolveCalls++;
+                    // First row: the element is there. Second row: it is not — the ordinary
+                    // shape of "this search returned nothing".
+                    return resolveCalls == 1 ? ResolveFoundCss : """{ "found": false, "ambiguous": false, "candidateCount": 0 }""";
+                }
+                return "{}";
+            },
+        };
+
+        var task = new TaskDefinition
+        {
+            Name = "T",
+            Steps =
+            [
+                new Step
+                {
+                    Id = "loop", Action = StepAction.ForEach,
+                    ForEach = new ForEachSpec { InlineValues = ["found", "not-found"] },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "check", Action = StepAction.CheckElement, Label = "Check for a result",
+                            Target = Target(),
+                            Outputs = [new OutputField { Name = "found" }],
+                        },
+                        new Step
+                        {
+                            Id = "gate", Action = StepAction.If, Label = "If found",
+                            Condition = new ConditionSpec
+                            {
+                                Left = new BindingRef
+                                {
+                                    Kind = BindingKind.StepOutput, SourceStepId = "check", OutputField = "found",
+                                },
+                                Op = ConditionOp.IsTrue,
+                            },
+                            Children = [Nav("clicked", "https://clicked.example/")],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var events = await Run(task, browser);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.OfType<StepEvent.RunCompleted>().Single().Success, Is.True,
+                "absence is the answer for the second row, not a run failure");
+            Assert.That(NavigatedUrls(browser), Is.EqualTo(new[] { "https://clicked.example/" }),
+                "only the row whose element resolved should take the branch");
+        });
+    }
+
     /// <summary>Row variables belong to their loop; leaking them would make a later binding resolve
     /// to a stale row instead of failing honestly.</summary>
     [Test]

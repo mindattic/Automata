@@ -111,9 +111,20 @@ export function flowFieldsHtml(step, task) {
         case 'forEach': {
             var spec = step.forEach || {};
             var source = spec.source || {};
-            return '<div class="field"><span>For each row in</span>' +
-                '<select id="ed-foreach-dataset" aria-label="Dataset to iterate">' +
-                datasetOptions(source.datasetName) + '</select></div>' +
+            var kind = spec.inlineValues && spec.inlineValues.length ? 'inline' : 'dataset';
+            return '<div class="field"><span>Loop over</span>' +
+                '<select id="ed-foreach-kind" aria-label="Where this loop gets its rows from">' +
+                '<option value="dataset"' + (kind === 'dataset' ? ' selected' : '') + '>a dataset file</option>' +
+                '<option value="inline"' + (kind === 'inline' ? ' selected' : '') + '>values pasted here</option>' +
+                '</select></div>' +
+                (kind === 'inline'
+                    ? '<div class="field"><span>Values, one per line</span>' +
+                      '<textarea id="ed-foreach-values" aria-label="Values to loop over, one per line" rows="6"' +
+                      ' placeholder="Star Wars: Episode II&#10;Terminator 3">' +
+                      esc((spec.inlineValues || []).join('\n')) + '</textarea></div>'
+                    : '<div class="field"><span>Dataset</span>' +
+                      '<select id="ed-foreach-dataset" aria-label="Dataset to iterate">' +
+                      datasetOptions(source.datasetName) + '</select></div>') +
                 '<div class="field"><span>Row named</span>' +
                 '<input type="text" id="ed-foreach-var" aria-label="Name the substeps use for the current row"' +
                 ' placeholder="row" value="' + esc(spec.rowVariableName || '') + '" /></div>';
@@ -330,11 +341,25 @@ export function commitFlowFields(step, root) {
     } else if (waitNeedsCondition(step)) {
         step.wait = Object.assign({}, step.wait, { condition: readCondition((step.wait || {}).condition) });
     } else if (step.action === 'forEach') {
-        var name = ($('ed-foreach-dataset') || {}).value || '';
-        step.forEach = Object.assign({}, step.forEach, {
-            source: { kind: 'datasetRow', datasetName: name },
-            rowVariableName: (($('ed-foreach-var') || {}).value || '').trim() || 'row',
-        });
+        var kind = ($('ed-foreach-kind') || {}).value || 'dataset';
+        var rowVar = (($('ed-foreach-var') || {}).value || '').trim() || 'row';
+        if (kind === 'inline') {
+            var raw = ($('ed-foreach-values') || {}).value || '';
+            var values = raw.split('\n').map(function (s) { return s.trim(); })
+                .filter(function (s) { return s; });
+            step.forEach = Object.assign({}, step.forEach, {
+                source: { kind: 'literal', datasetName: null },
+                inlineValues: values,
+                rowVariableName: rowVar,
+            });
+        } else {
+            var name = ($('ed-foreach-dataset') || {}).value || '';
+            step.forEach = Object.assign({}, step.forEach, {
+                source: { kind: 'datasetRow', datasetName: name },
+                inlineValues: null,
+                rowVariableName: rowVar,
+            });
+        }
     } else if (step.action === 'runTask') {
         step.runTaskId = (($('ed-runtask') || {}).value || '') || null;
         step.runTaskOpensStartUrl = !!($('ed-runtask-starturl') || {}).checked;

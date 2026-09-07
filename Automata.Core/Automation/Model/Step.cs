@@ -106,6 +106,16 @@ public enum StepAction
     /// largest, the average. See <see cref="Step.Aggregate"/>.
     /// </summary>
     Aggregate,
+
+    /// <summary>
+    /// Look for <see cref="Step.Target"/> right now and say whether it is there — unlike
+    /// <see cref="WaitForElement"/> and <see cref="AssertElement"/>, absence is not a failure, it
+    /// is the answer. Publishes <c>"true"</c> or <c>"false"</c> as this step's declared output, so
+    /// an <see cref="If"/> straight after can branch on it (<c>isTrue</c> / <c>isFalse</c>) —
+    /// "did this search return anything, or should this row be skipped" — without a page that
+    /// legitimately has nothing to find aborting the whole run.
+    /// </summary>
+    CheckElement,
 }
 
 /// <summary>

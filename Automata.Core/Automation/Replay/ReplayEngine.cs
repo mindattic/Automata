@@ -287,6 +287,21 @@ public class ReplayEngine
             return (StepStatus.Passed, "pressed Enter", null);
         }
 
+        // Absence is the answer, not a failure — the one target-based action that does not belong
+        // in the generic resolve-or-fail block below. WaitForElement and AssertElement exist to
+        // stop a run when something is not there; this exists for the opposite case, branching on
+        // it instead ("did this search return anything, or should this row be skipped").
+        if (step.Action == StepAction.CheckElement)
+        {
+            if (step.Target == null)
+                return (StepStatus.Failed, "checkElement step has no target fingerprint", null);
+            var checkResolved = await resolver.ResolveAsync(
+                browser, step.Target, highlight: true, refingerprint: false, timeoutMs, ct);
+            return (StepStatus.Passed,
+                checkResolved.Found ? "element present" : "element not present",
+                checkResolved.Found ? "true" : "false");
+        }
+
         if (step.Target == null)
             return (StepStatus.Failed, $"{step.Action} step has no target fingerprint", null);
 

@@ -125,12 +125,21 @@ export function phraseFor(step, collections) {
         case 'extractText': return 'Read ' + target(step) +
             (step.outputs && step.outputs.length && step.outputs[0].name
                 ? ' as ' + step.outputs[0].name : '');
+        case 'checkElement': return 'Check whether ' + target(step) + ' is present' +
+            (step.outputs && step.outputs.length && step.outputs[0].name
+                ? ' as ' + step.outputs[0].name : '');
         case 'group': return 'A group of steps';
         case 'wait': return waitText(step.wait);
         case 'if': return 'Only if ' + conditionText(step.condition);
         case 'else': return 'Otherwise';
-        case 'forEach': return 'For every row of ' +
-            ((step.forEach && step.forEach.source && step.forEach.source.datasetName) || 'a list');
+        case 'forEach': {
+            var fe = step.forEach || {};
+            if (fe.inlineValues && fe.inlineValues.length) {
+                return 'For every one of ' + fe.inlineValues.length + ' pasted value' +
+                    (fe.inlineValues.length === 1 ? '' : 's');
+            }
+            return 'For every row of ' + ((fe.source && fe.source.datasetName) || 'a list');
+        }
         case 'runTask': return 'Run ' + quote(calledTaskName(step, collections));
         case 'writeDataset': return 'Save a row to ' +
             ((step.writeDataset && step.writeDataset.datasetName) || 'a file');

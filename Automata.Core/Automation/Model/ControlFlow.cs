@@ -107,10 +107,27 @@ public sealed class ConditionSpec
     public BindingRef? Right { get; set; }
 }
 
-/// <summary>Fan a step's children out over the rows of a dataset.</summary>
+/// <summary>Fan a step's children out over the rows of a dataset — or over a plain list pasted
+/// straight into the step, when there is no file worth naming for a handful of values.</summary>
 public sealed class ForEachSpec
 {
+    /// <summary>
+    /// Ignored when <see cref="InlineValues"/> is set. A step is never both at once — a pasted list
+    /// and a dataset file are two different answers to "what does this loop over", and the editor
+    /// keeps them mutually exclusive rather than leaving it to be guessed which one wins.
+    /// </summary>
     public BindingRef Source { get; set; } = new();
+
+    /// <summary>
+    /// Values pasted straight into the step, one per row, under a single column named
+    /// <see cref="InlineValueColumn"/> — a dozen movie titles typed into a search box, for
+    /// instance, with nowhere else worth keeping them. Null or empty means "use <see cref="Source"/>
+    /// instead".
+    /// </summary>
+    public List<string>? InlineValues { get; set; }
+
+    /// <summary>The column name a pasted list's rows publish their one value under: <c>row.value</c>.</summary>
+    public const string InlineValueColumn = "value";
 
     /// <summary>The name children use to reach the current row, e.g. <c>row.sku</c>.</summary>
     public string RowVariableName { get; set; } = "row";
