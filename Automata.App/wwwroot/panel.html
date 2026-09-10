@@ -19,9 +19,6 @@
       <button id="btn-stop" disabled data-tooltip="Stop recording and save the captured steps">■ Stop</button>
       <button id="btn-continue" disabled data-tooltip="Resume a run paused by a wait-for-user step">➤ Continue</button>
       <button id="btn-cancel-run" disabled data-tooltip="Cancel the current run">✕ Cancel</button>
-      <button id="btn-import" data-tooltip="Import a collection or task from a zip">⇪ Import</button>
-      <button id="btn-export" disabled data-tooltip="Export the selected collection or task as a zip">⇩ Export</button>
-      <button id="btn-folder" data-tooltip="Open the Collections folder in File Explorer">📁 Files</button>
       <button id="btn-settings" data-tooltip="LLM provider, API keys, and appearance">⚙ Settings</button>
     </div>
     <div class="row">
@@ -123,24 +120,35 @@
         </div>
       </fieldset>
       <div class="row settings-row">
-        <span class="key-status">selected provider runs first; others are fallbacks</span>
+        <span class="key-status">Selected provider runs first; others are fallbacks</span>
         <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
       </div>
       <div class="row settings-row">
-        <span class="key-status">timeouts, retries and self-heal for every run</span>
+        <span class="key-status">Timeouts, retries and self-heal for every run</span>
         <button id="set-engine-defaults" class="mini"
                 data-tooltip="Engine defaults that every collection, task and step inherits">Engine defaults…</button>
       </div>
       <div class="row settings-row">
-        <span class="key-status">the worked examples in the Demos collection</span>
+        <span class="key-status">The worked examples in the Demos collection</span>
         <button id="set-regen-demos" class="mini"
-                data-tooltip="Rebuild the example pages and tasks; anything you have edited is asked about first">Examples…</button>
+                data-tooltip="Review the examples, reset them, or take a guided tour">Examples…</button>
+      </div>
+      <div class="row settings-row">
+        <span class="key-status">Move a collection or task in or out of this workspace</span>
+        <button id="btn-import" class="mini" data-tooltip="Import a collection or task from a zip">⇪ Import</button>
+        <button id="btn-export" class="mini" disabled
+                data-tooltip="Export the selected collection or task as a zip">⇩ Export</button>
+      </div>
+      <div class="row settings-row">
+        <span class="key-status">Where collections are stored on disk</span>
+        <button id="btn-folder" class="mini"
+                data-tooltip="Open the Collections folder in File Explorer">📁 Files</button>
       </div>
       <div class="field">
         <span id="lbl-layout">Layout</span>
         <button id="set-detach" class="mini"
                 data-tooltip="Move the sidebar into its own window — put it on another monitor, and give the browser the whole of this one">Detach the sidebar</button>
-        <span class="key-status">closing that window docks it again</span>
+        <span class="key-status">Closing that window docks it again</span>
       </div>
       <div class="field">
         <span id="lbl-theme">Theme</span>
@@ -165,9 +173,11 @@
       </div>
       <div id="demos-body"></div>
       <div class="row settings-row">
-        <span class="key-status">every example goes back to the version this build ships</span>
+        <span class="key-status">Every example goes back to the version this build ships</span>
         <button id="demos-regen" class="mini"
                 data-tooltip="Rebuild the example pages and restore every example task">Regenerate</button>
+        <button id="demos-take-tour" class="mini"
+                data-tooltip="Reset the examples and run through them, one at a time, with an explanation for each">Take Tour</button>
       </div>
     </div>
   </div>

@@ -2239,7 +2239,7 @@ async function main() {
         'clearing the columns has to be said out loud, not done silently');
     });
 
-    await group('harvest: the Examples dialog reports each example, and warns before replacing any', async () => {
+    await group('harvest: the Examples dialog reports each example, with no warning to negotiate', async () => {
       // Safe to open Settings now that AUTOMATA_SETTINGS_PATH isolates it; before that hook
       // existed this dialog would have been reading the developer's real provider and API keys.
       await panelPage.locator('#btn-settings').click();
@@ -2250,13 +2250,13 @@ async function main() {
       const body = await panelPage.locator('#demos-body').innerText();
       assertTrue(/up to date/.test(body), `expected the untouched examples to read as current: ${body}`);
       // Regenerating is wholesale — there is nothing to choose per example, and the dialog must
-      // not imply otherwise by offering controls.
+      // not imply otherwise by offering controls, or by warning as if it were optional.
       assertEqual(await panelPage.locator('.demo-choices, .demo-row input').count(), 0,
-        'the dialog offers a warning, not a negotiation');
-      // Freshly generated, so nothing is at stake and there is nothing to warn about yet.
+        'the dialog offers a plain description, not a negotiation');
       assertEqual(await panelPage.locator('.demo-warning').count(), 0,
-        'a warning with nothing to lose behind it teaches people to ignore warnings');
-      assertTrue(/Nothing here has been changed/.test(body), 'the dialog should say nothing is at stake');
+        'there is no warning to negotiate — regenerating always resets everything');
+      assertTrue(/always puts every example back/i.test(body),
+        `the dialog should say regenerating is unconditional: ${body}`);
       assertTrue(body.includes(demosRoot) || /demos/i.test(body), 'the dialog should name where pages are written');
 
       // Opening this closes Settings rather than stacking on top of it — two live modals would
@@ -2269,9 +2269,9 @@ async function main() {
         { timeoutMs: 5000, label: 'the examples dialog to close' });
     });
 
-    await group('examples: an edited one is named in the warning before it is replaced', async () => {
-      // Edit an example the way a user would — through the store, since the point is what the
-      // dialog SAYS about it afterwards, not how it came to be edited.
+    await group('examples: an edited one is restored with no warning, silently', async () => {
+      // Edit an example the way a user would — through the store, since the point is what
+      // regenerating DOES about it, not how it came to be edited.
       const demoFile = path.join(collectionsRoot, 'Demos', 'Click a button.json');
       const demo = JSON.parse(readFileSync(demoFile, 'utf8'));
       demo.steps[0].label = 'mine now';
@@ -2279,18 +2279,13 @@ async function main() {
 
       await panelPage.locator('#btn-settings').click();
       await panelPage.locator('#set-regen-demos').click();
-      await waitFor(() => panelPage.locator('.demo-warning').count().then((n) => n > 0),
-        { timeoutMs: 10000, label: 'the warning about the edited example' });
+      await waitFor(async () => (await panelPage.locator('#demos-body').innerText()).includes('you have changed'),
+        { timeoutMs: 10000, label: 'the edited example to be surveyed' });
 
-      const warning = await panelPage.locator('.demo-warning').innerText();
-      assertTrue(/Click a button/.test(warning),
-        `the warning has to NAME what is about to go, got: ${warning}`);
-      assertTrue(/move or duplicate/i.test(warning),
-        'and say what to do instead of offering a choice it does not have');
-      assertEqual(await panelPage.locator('.demo-row-edited').count(), 1,
-        'exactly the edited example is marked in the list');
+      // Edited or not, there is still no alert — the dialog never singles an example out by name.
+      assertEqual(await panelPage.locator('.demo-warning').count(), 0,
+        'an edit does not turn the plain description into a warning');
 
-      // And it does what it says.
       await panelPage.locator('#demos-regen').click();
       await waitFor(() => Promise.resolve(
         JSON.parse(readFileSync(demoFile, 'utf8')).steps[0].label !== 'mine now'),
@@ -2766,17 +2761,26 @@ async function main() {
     await group('round trip: Export writes the archive the dialog would have been asked for', async () => {
       // A task selection wins over a collection one, so select the collection row itself.
       await panelPage.locator(`.node.collection[data-collection="${roundTripCollectionId}"] .name`).click();
+      // Import/Export live in Settings now, not the toolbar.
+      await panelPage.locator('#btn-settings').click();
       await panelPage.locator('#btn-export').click();
       await waitFor(() => existsSync(roundTripZip),
         { timeoutMs: 15000, label: 'the export archive to appear on disk' });
       await waitFor(() => panelPage.locator('#log').locator('div', { hasText: /Exported 'Verify Round Trip'/ })
         .count().then((n) => n > 0), { timeoutMs: 10000, label: 'the log to name what it exported' });
+      await panelPage.locator('#settings-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'Settings to close' });
     });
 
     await group('round trip: Import brings it back beside the original rather than over it', async () => {
+      await panelPage.locator('#btn-settings').click();
       await panelPage.locator('#btn-import').click();
       await waitFor(() => panelPage.locator('#tree .node.collection .name', { hasText: 'Verify Round Trip (2)' })
         .count().then((n) => n > 0), { timeoutMs: 15000, label: 'the imported collection to appear' });
+      await panelPage.locator('#settings-modal-close').click();
+      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
+        { timeoutMs: 5000, label: 'Settings to close' });
 
       // Ids are regenerated on import, or two copies of one task would fight over the same
       // identity the moment either was edited.

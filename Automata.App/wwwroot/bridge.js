@@ -14,6 +14,7 @@ import { renderSchedule, onSchedulePushed } from './schedule.js';
 import { renderDemosDialog } from './demos.js';
 import { showDraft, showFeatureView } from './flow.js';
 import { maybeStartTutorial, advanceTutorial } from './tutorial.js';
+import { advanceTour, onTourRunFinished } from './tour.js';
 import { showBuildTab } from './tabs.js';
 import { LLM_PROVIDERS } from './settings.js';
 
@@ -43,6 +44,7 @@ window.ssPanel = {
         $('cancel').disabled = !running;
         announce(running ? 'Run started.' : 'Run finished.');
         render();
+        if (!running) onTourRunFinished();
     },
     onTaskStarted: function (payload) {
         var taskId = payload && payload.taskId;
@@ -63,6 +65,7 @@ window.ssPanel = {
         render();
         maybeStartTutorial();
         advanceTutorial();
+        advanceTour();
     },
     /// One task, after a change that touched only that task — the host's delta push.
     ///

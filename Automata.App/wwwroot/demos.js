@@ -1,17 +1,17 @@
-// The "Examples…" dialog: what the generated demo tasks are in, and what regenerating will do.
+// The "Examples…" dialog: what the generated demo tasks are, and what regenerating does.
 //
-// Demos is generated territory. Regenerating puts every example back to the version this build
-// ships — there is no per-example negotiation, because the answer to "I want to keep my version"
-// is not a checkbox: it is to move or duplicate that task into a collection of your own, where
-// nothing regenerates anything. Both of those gestures take the example marker off the copy, so it
-// stops being an example the moment you claim it.
-//
-// What this dialog owes the user, then, is not a set of choices but an honest warning: exactly
-// which of their edits are about to go, named, before they press the button.
+// Demos is generated territory. Regenerating always puts every example back to the version this
+// build ships, unconditionally — the same demo, in the same order, every time. There is no
+// per-example negotiation and nothing to warn about: the answer to "I want to keep my version" is
+// to move or duplicate that task into a collection of your own, where nothing regenerates
+// anything. Both of those gestures take the example marker off the copy, so it stops being an
+// example the moment you claim it — a capability that already exists (the tree's row menu), not
+// something this dialog needs to broker.
 
 import { $, esc, post, state } from './core.js';
 import { trapFocus } from './modal.js';
 import { closeSettings } from './settings.js';
+import { startTour } from './tour.js';
 
 var STATE_TEXT = {
     missing: 'not there yet — will be added',
@@ -54,29 +54,19 @@ export function renderDemosDialog() {
     }
 
     var items = survey.items || [];
-    var edited = items.filter(function (d) { return d.state === 'edited'; });
 
     var html = '<p class="scope-note">Pages are written to <code>' + esc(survey.root || '') +
         '</code> and rebuilt every time.</p><ul class="demo-list">' +
         items.map(function (d) {
-            return '<li class="demo-row' + (d.state === 'edited' ? ' demo-row-edited' : '') +
-                '" data-demo="' + esc(d.key) + '">' +
+            return '<li class="demo-row" data-demo="' + esc(d.key) + '">' +
                 '<b>' + esc(d.name) + '</b> <span class="key-status">' +
                 esc(STATE_TEXT[d.state] || d.state) + '</span></li>';
         }).join('') + '</ul>';
 
-    // Named, not counted. "3 examples will be replaced" is a number; "Fill in a form will be
-    // replaced" is the thing the user actually has to decide about.
-    html += edited.length
-        ? '<p class="demo-warning" role="alert"><b>Regenerating replaces every example here with ' +
-          'the version this build ships</b> — including the ' + edited.length +
-          ' you have changed: ' +
-          edited.map(function (d) { return esc(d.name); }).join(', ') + '. ' +
-          'To keep one of those, close this and move or duplicate it into a collection of your ' +
-          'own first. A copy that leaves Demos stops being an example, and is never regenerated ' +
-          'again.</p>'
-        : '<p class="scope-note">Nothing here has been changed, so regenerating only brings the ' +
-          'examples up to date.</p>';
+    html += '<p class="scope-note">Regenerating always puts every example back to the version ' +
+        'this build ships, in the same order — including any you have changed. To keep a change, ' +
+        'duplicate that task (or its collection) into one of your own first; a copy stops being ' +
+        'an example and is never touched by this again.</p>';
 
     body.innerHTML = html;
 }
@@ -86,9 +76,19 @@ function regenerate() {
     close();
 }
 
+// Take Tour is a regenerate too — the tour never runs against anything but the shipped
+// version — plus the guided walkthrough after. Closing this dialog first is what lets the
+// tour's own popups (and the tree selection it drives) show through without a second overlay
+// behind them.
+function takeTour() {
+    close();
+    startTour();
+}
+
 $('set-regen-demos').addEventListener('click', openDemosDialog);
 $('demos-modal-close').addEventListener('click', close);
 $('demos-regen').addEventListener('click', regenerate);
+$('demos-take-tour').addEventListener('click', takeTour);
 $('demos-modal').addEventListener('keydown', function (e) { trapFocus($('demos-modal'), e); });
 $('demos-modal').addEventListener('mousedown', function (e) {
     if (e.target === $('demos-modal')) close();

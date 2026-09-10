@@ -172,6 +172,17 @@ public sealed class DemoSeeder(
             }
         }
 
+        // An explicit reset is a promise that the same demo is shown every time — order included.
+        // Left alone, a demo added after someone's install already exists would land wherever
+        // SaveTask happened to append it (the end), not where All() puts it. SeedMissing leaves
+        // TaskOrder untouched: a silent per-launch pass may not reorder something a person already
+        // rearranged by hand.
+        if (restoreEverything)
+        {
+            collection.TaskOrder = DemoTasks.All(RootPath).Select(f => f.TaskId).ToList();
+            collections.SaveCollection(collection);
+        }
+
         return new DemoSeedReport(collection.Id, pages, before, added, refreshed, restored, kept);
     }
 

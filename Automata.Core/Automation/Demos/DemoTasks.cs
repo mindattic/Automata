@@ -87,14 +87,9 @@ public static class DemoTasks
     /// </summary>
     public const string FallbackTicketId = "TCK-2316";
 
-    /// <summary>
-    /// The time of day the parking example waits for. Any fixed time works — the point is that it
-    /// is far enough away to be worth releasing the browser for, which is what parking means.
-    /// </summary>
-    public static readonly TimeOnly ParkTimeOfDay = new(9, 0);
-
     public static IReadOnlyList<DemoTask> All(string demoRoot) =>
     [
+        WolfTshirts(demoRoot),
         Buttons(demoRoot),
         Drift(demoRoot),
         Form(demoRoot),
@@ -111,7 +106,7 @@ public static class DemoTasks
         PipelineFind(demoRoot),
         PipelineLookUp(demoRoot),
         PipelineRecord(demoRoot),
-        Park(demoRoot),
+        Wait5Seconds(demoRoot),
     ];
 
     /// <summary>A <c>file://</c> URL for a page under the demo root.</summary>
@@ -121,6 +116,66 @@ public static class DemoTasks
     /// <summary>The local path of a generated file, for steps that take a path rather than a URL.</summary>
     public static string FilePath(string demoRoot, string relativePath) =>
         Path.Combine(demoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+    // ---- the one that leaves the machine ------------------------------------------------------
+
+    /// <summary>
+    /// The first-run tutorial's own example (<c>Automata.App/wwwroot/tutorial.js</c>'s
+    /// <c>tutorialSteps()</c>), seeded here too so the guided tour has something to open with that
+    /// a new user has already watched get built by hand.
+    /// <para>
+    /// The one demo that reaches outside the machine. Every other example runs against a page this
+    /// build generates, deterministic and offline; this one runs against Google's own results page,
+    /// which is also the one thing here whose outcome the seeder does not control.
+    /// </para>
+    /// </summary>
+    private static DemoTask WolfTshirts(string demoRoot) => new(
+        "wolf-tshirts",
+        "Wolf Tshirts",
+        "Search Google for 'wolf tshirts' and open the Images results — the same walk the "
+        + "first-run tutorial builds by hand, kept here so the guided tour can run it too.",
+        "https://www.google.com",
+        [
+            new Step
+            {
+                Id = "demo-wolf-search",
+                Action = StepAction.TypeText,
+                Label = "Type 'wolf tshirts' into Search",
+                Value = "wolf tshirts",
+                Target = new ElementFingerprint
+                {
+                    Tag = "textarea",
+                    NameAttr = "q",
+                    AriaRole = "combobox",
+                    AriaLabel = "Search",
+                    CssSelector = "textarea[name=\"q\"]",
+                },
+            },
+            new Step
+            {
+                // No target on purpose: Enter goes to whatever has focus, the same idiom as
+                // demo-form-enter and demo-search-enter.
+                Id = "demo-wolf-enter",
+                Action = StepAction.PressEnter,
+                Label = "Press Enter to search",
+            },
+            new Step
+            {
+                Id = "demo-wolf-wait",
+                Action = StepAction.WaitForElement,
+                Label = "Wait for results",
+                Target = Css("div", "#search"),
+                TimeoutMs = 15_000,
+            },
+            new Step
+            {
+                // The results page's "Images" tab — found by its visible link text.
+                Id = "demo-wolf-images",
+                Action = StepAction.Click,
+                Label = "Click 'Images'",
+                Target = new ElementFingerprint { Tag = "a", VisibleText = "Images" },
+            },
+        ]);
 
     // ---- the smallest one --------------------------------------------------------------------
 
@@ -1479,31 +1534,31 @@ public static class DemoTasks
             },
         ]);
 
-    // ---- parking ---------------------------------------------------------------------------------
+    // ---- pausing ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// The one demo that deliberately does not finish while you watch it.
+    /// The smallest example of a Task pausing before it acts.
     /// <para>
-    /// A wait long enough to be worth parking checkpoints the run and hands the browser back, and
-    /// a later scheduler tick picks it up. There is no way to demonstrate that in two seconds —
-    /// the whole property being shown is that hours can pass with nothing held open.
+    /// This used to wait until a fixed time of day and park the run — a real capability, but one
+    /// that cannot be shown finishing while you watch it, which makes it the wrong shape for
+    /// anything meant to run to completion on its own (a guided tour included). A plain duration
+    /// wait demonstrates the same <see cref="StepAction.Wait"/> step; the engine's actual parking
+    /// behavior is covered independently by <c>ParkAndResumeTests</c>.
     /// </para>
     /// </summary>
-    private static DemoTask Park(string demoRoot) => new(
+    private static DemoTask Wait5Seconds(string demoRoot) => new(
         "park",
-        "Start at a set time",
-        $"Waits until {ParkTimeOfDay:HH\\:mm} and then does its work. Running it parks the run — "
-        + "the browser is released straight away and a later scheduler tick carries on from the "
-        + "step after the wait, which is what lets an overnight job cost nothing all day. It will "
-        + "sit under 'Parked' in status until then; cancel it there if you only wanted to look.",
+        "Wait 5 seconds",
+        "Pause for five seconds, then click 'Beta' and confirm the page reacted — long enough to "
+        + "see a Task actually wait, short enough to finish on its own.",
         PageUrl(demoRoot, "buttons.html"),
         [
             new Step
             {
                 Id = "demo-park-wait",
                 Action = StepAction.Wait,
-                Label = $"Wait until {ParkTimeOfDay:HH\\:mm}",
-                Wait = new WaitSpec { Mode = WaitMode.UntilTimeOfDay, TimeOfDay = ParkTimeOfDay },
+                Label = "Wait 5 seconds",
+                Wait = new WaitSpec { Mode = WaitMode.Duration, DurationMs = 5000 },
             },
             new Step
             {

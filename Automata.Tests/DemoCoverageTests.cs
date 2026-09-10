@@ -39,7 +39,17 @@ public class DemoCoverageTests
     /// come from - which is exactly why that one is seeded on request rather than on launch, and
     /// why <see cref="AcceptanceProfileTests"/> asserts the binding rather than this file.
     /// </para>
-    private static readonly HashSet<object> NotDemonstrable = [WaitMode.UntilSignal, BindingKind.EnvVar];
+    /// <para>
+    /// <see cref="WaitMode.UntilTimeOfDay"/>: the only honest demonstration of it is an example
+    /// that sits there until that time of day arrives — an example that cannot finish while you
+    /// watch it, and therefore cannot be one of the things a guided walkthrough runs to completion.
+    /// <c>DemoTasks</c> used to carry exactly that (<c>"park"</c>, née "Start at a set time"); it is
+    /// now a plain duration wait, and the engine's actual time-of-day parking is covered
+    /// independently by <c>ParkAndResumeTests</c>. Delete this entry the day some example can show
+    /// it working without hanging anything that has to finish.
+    /// </para>
+    private static readonly HashSet<object> NotDemonstrable =
+        [WaitMode.UntilSignal, WaitMode.UntilTimeOfDay, BindingKind.EnvVar];
 
     /// <summary>The demo root only decides what the baked-in URLs point at, not the shape.</summary>
     private static IReadOnlyList<DemoTask> Demos() =>
