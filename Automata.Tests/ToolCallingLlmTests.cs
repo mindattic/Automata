@@ -1,5 +1,6 @@
 using Automata.Core.Operator;
 using Microsoft.Extensions.Logging.Abstractions;
+using MindAttic.Vault.Credentials;
 using NUnit.Framework;
 
 namespace Automata.Tests;
@@ -7,6 +8,60 @@ namespace Automata.Tests;
 [TestFixture]
 public class ToolCallingLlmTests
 {
+    /// <summary>
+    /// <see cref="AnthropicToolCallingLlm.DefaultResolveApiKey"/> checks the shared credential
+    /// store under "claude-api" (Automata's own historical id) then "claude" (the id Tutor,
+    /// ThinkTank, IdiotProof, and TaxRateCollector use) — a shared key set via either convention
+    /// must be recognized. Redirects MINDATTIC_LLM_CREDENTIALS to a temp dir so no real profile
+    /// is touched.
+    /// </summary>
+    [TestFixture]
+    public class DefaultResolveApiKeyTests
+    {
+        private string? previousEnv;
+        private string tempDir = null!;
+
+        [SetUp]
+        public void SetUp()
+        {
+            previousEnv = Environment.GetEnvironmentVariable(LlmCredentialStore.DirectoryEnvVar);
+            tempDir = Path.Combine(Path.GetTempPath(), "automata-claude-alias-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            Environment.SetEnvironmentVariable(LlmCredentialStore.DirectoryEnvVar, tempDir);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            Environment.SetEnvironmentVariable(LlmCredentialStore.DirectoryEnvVar, previousEnv);
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+
+        [Test]
+        public void FallsBackToSharedClaudeAlias_WhenNoClaudeApiKey()
+        {
+            new LlmCredentialStore(tempDir).SetKey("claude", "shared-under-claude");
+
+            Assert.That(AnthropicToolCallingLlm.DefaultResolveApiKey(), Is.EqualTo("shared-under-claude"));
+        }
+
+        [Test]
+        public void PrefersClaudeApiKey_OverTheSharedClaudeAlias()
+        {
+            var store = new LlmCredentialStore(tempDir);
+            store.SetKey("claude", "shared-under-claude");
+            store.SetKey("claude-api", "own-under-claude-api");
+
+            Assert.That(AnthropicToolCallingLlm.DefaultResolveApiKey(), Is.EqualTo("own-under-claude-api"));
+        }
+
+        [Test]
+        public void ReturnsNull_WhenNeitherKeyPresent()
+        {
+            Assert.That(AnthropicToolCallingLlm.DefaultResolveApiKey(), Is.Null);
+        }
+    }
+
     [Test]
     public async Task AnthropicToolCallingLlm_IsConfiguredAsync_FalseWhenResolverReturnsNull()
     {
