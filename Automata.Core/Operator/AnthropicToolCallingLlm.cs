@@ -41,8 +41,8 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
     {
         var apiKey = resolveApiKey()
             ?? throw new InvalidOperationException(
-                "No Anthropic API key configured — set one in Settings, or add a 'claude-api' " +
-                "(or 'claude') provider key to the shared credential store.");
+                "No Anthropic API key configured — set one in Settings, or add a 'claude' " +
+                "provider key to the shared credential store.");
 
         var messages = ToAnthropicMessages(history);
         var toolsArray = ToAnthropicTools(tools);
@@ -52,22 +52,19 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
     }
 
     /// <summary>
-    /// Default credential chain: the shared MindAttic credential store, checked under both
-    /// "claude-api" (this app's own historical id, matching MindAttic.Legion's provider
-    /// vocabulary) and "claude" (the id Tutor, ThinkTank, IdiotProof, and TaxRateCollector use),
-    /// so a shared key set via either convention is recognized. Public so DI can compose it
-    /// behind a user-supplied BYO-key override.
+    /// Default credential chain: the shared MindAttic credential store, under the "claude" id
+    /// every MindAttic app uses. Public so DI can compose it behind a user-supplied BYO-key
+    /// override.
     /// </summary>
     /// <remarks>
-    /// Deliberately does NOT fall back to a Claude Code Team OAuth session
-    /// (<see cref="LegionClient.GetClaudeTeamOAuthToken"/>) — a Team-subscription OAuth token
-    /// authenticates the Claude Code CLI itself, not arbitrary calls to the public Anthropic
-    /// Messages API; substituting one for the other here silently produced a token that looked
-    /// resolved but didn't actually authenticate real API calls. Only an actual API key works.
+    /// Deliberately does NOT fall back to a Claude Code Team OAuth session — a Team-subscription
+    /// OAuth token authenticates the Claude Code CLI itself, not arbitrary calls to the public
+    /// Anthropic Messages API; substituting one for the other here silently produced a token that
+    /// looked resolved but didn't actually authenticate real API calls. Only an actual API key
+    /// works (MindAttic.Legion 25.0.0 removed this OAuth path entirely for the same reason).
     /// </remarks>
     public static string? DefaultResolveApiKey() =>
-        MindAtticCredentialStore.GetKey("claude-api")
-        ?? MindAtticCredentialStore.GetKey("claude");
+        MindAtticCredentialStore.GetKey("claude");
 
     private static string? ResolveApiKey() => DefaultResolveApiKey();
 
