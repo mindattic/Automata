@@ -48,6 +48,7 @@ public partial class MainWindow : Window
             App.Services.GetRequiredService<Automata.Core.Automation.Demos.DemoSeeder>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Scheduling.IClock>(),
             App.Services.GetRequiredService<Automata.Core.Automation.Flow.FlowAuthoringService>(),
+            App.Services.GetRequiredService<IReadOnlyList<IToolCallingLlm>>(),
             () => targetBrowser,
             () => TargetBrowser.CoreWebView2,
             script => ControlPanel.CoreWebView2 == null

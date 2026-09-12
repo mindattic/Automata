@@ -5,27 +5,29 @@ through the Chrome DevTools Protocol; you **record** a series of browser actions
 them in a **WYSIWYG step editor**, and **replay** them any time — with a self-healing element
 resolver that keeps finding the same controls even after a site redesigns its markup.
 
-## Build & test
+## Getting started
 
-```
-dotnet build Automata.slnx
-dotnet test Automata.Tests
-```
+Automata is a Windows desktop app (WPF + WebView2). If you were handed a published build rather
+than building from source:
 
-## Run
+1. Run `Automata.App.exe`. Windows may offer to install the **.NET Desktop Runtime** the first
+   time, if it isn't already on the machine — accept that prompt once and relaunch. The
+   **WebView2 Runtime** is already installed on virtually every current Windows 10/11 machine, so
+   nothing else is needed.
+2. The window has two panes: the **sidebar** (collections/tasks/steps tree, step editor, record
+   and replay controls) and the live **browser pane** the automation acts on. The browser pane
+   uses its own persistent WebView2 profile, so a site login survives app restarts without
+   touching your regular browser.
+3. First launch walks you through building a real example — see
+   [First run — the built-in tour](#first-run--the-built-in-tour) below.
+4. **Automata is driven by the LLM of your choice — bring your own API key to turn it on.**
+   Settings → pick a provider (Claude, OpenAI, Gemini, or Kimi) and paste in a key. Without one,
+   free-text task authoring and self-heal repair have nothing to call; recording, editing and
+   replaying steps you've already built still works either way. Automata asks once, on first
+   launch, if no key is configured — add one there, or dismiss it and add one later from Settings.
 
-```
-launch.bat
-```
-
-`launch.bat` (repo root) stops any running instance, clean-rebuilds, publishes to
-`C:\Apps\Automata\`, and opens that deployed copy — so a double-click always runs current
-source, never a stale build. (`dotnet run --project Automata.App` works too for a quick dev run.)
-
-The window has two panes: the **sidebar** (collections/tasks/steps tree, step editor, record and
-replay controls) and the live **browser pane** the automation acts on. The browser pane uses its
-own persistent WebView2 profile, so a site login survives app restarts without touching your
-regular browser.
+Building from source instead, or want to publish your own build? See
+[For developers](#for-developers) at the end of this file.
 
 ## First run — the built-in tour
 
@@ -156,7 +158,7 @@ Documents\Automata\
     20260825-141005-wolf-tshirts.log
 ```
 
-The **📁 button** in the sidebar toolbar opens the Collections folder in File Explorer.
+The **📁 Files** button in Settings opens the Collections folder in File Explorer.
 
 - **A task is one file** — copy `Wolf Tshirts.json` to share that task; copy a collection folder
   to share the set.
@@ -179,10 +181,22 @@ names get ` (2)` suffixes, and a task imported without its collection lands in a
 
 The **⚙ Settings** fold-out in the sidebar holds:
 
-- **Anthropic key (BYO-key)** — an API key that overrides the default credential chain
-  (Claude Code OAuth session → shared MindAttic credential store) for the AI paths. The escape
-  hatch when the OAuth session is rate-limited or out of quota. Saved to
-  `%APPDATA%\MindAttic\Automata\settings.json`; takes effect on the next run, no restart.
+- **LLM provider & keys** — **bring your own key here to turn Automata's AI side on.** Four
+  providers (Claude, OpenAI, Gemini, Kimi/Moonshot); pick which one runs first, the rest stay
+  fallbacks. Without a key for at least one of them, free-text task authoring and self-heal repair
+  have nothing to call — Automata asks once on first launch if none is configured. A key entered
+  here is Automata's own — it's stored separately from every other MindAttic app you might have, so
+  it never changes what one of those resolves. A blank key falls back to whatever shared default is
+  actually configured on this machine, which is checked live rather than assumed: the field says
+  "Not configured" when nothing backs it, never a label that might not be true. Takes effect on the
+  next run, no restart. Recording, editing and replaying steps you've already built works with none
+  configured.
+- **Engine defaults…** — timeouts, retries and self-heal behavior every collection, task and step
+  inherits unless something further down overrides it.
+- **Examples…** — review the generated Demos collection, reset it to the version this build ships,
+  or take a guided tour through every example, one at a time.
+- **Import / Export** — move a collection or task in or out of this workspace as a `*.automata.zip`.
+- **📁 Files** — opens the Collections folder in File Explorer.
 - **Layout** — **Detach the sidebar** moves the build panel into its own window: put it on another
   monitor, or take a third of the screen for building and give the browser the rest. Closing that
   window docks it again, and where it was is remembered across launches. It is the same panel
@@ -197,10 +211,43 @@ The **⚙ Settings** fold-out in the sidebar holds:
 The original plain-English path is folded under *AI task (advanced)*: type an instruction and an
 LLM drives the pane through generic DOM tools (click, set field, type, select, check, upload,
 page status). Recording + the WYSIWYG editor are the primary workflow — free text is for
-one-offs and exploration. Providers (Anthropic first, OpenAI fallback) read credentials from
-MindAttic.Vault.
+one-offs and exploration. Whichever provider is selected in Settings runs first, with the other
+three as fallbacks — first one with a usable key wins. A key added in Settings always takes
+priority; some providers can otherwise fall back to a shared default that is only ever configured
+on the maintainer's own machine, and is never assumed to be there (see [Settings](#settings)).
 
-## Architecture
+## For developers
+
+### Build & test
+
+```
+dotnet build Automata.slnx
+dotnet test Automata.Tests
+```
+
+### Run from source
+
+```
+launch.bat
+```
+
+`launch.bat` (repo root) stops any running instance, clean-rebuilds, publishes to
+`C:\Apps\Automata\` — a convention specific to the maintainer's own machine — and opens that
+deployed copy, so a double-click always runs current source, never a stale build.
+`dotnet run --project Automata.App` works too for a quick dev run.
+
+### Publish a distributable build
+
+```
+dotnet publish Automata.App -c Release -r win-x64 --self-contained false
+```
+
+Framework-dependent: the output (`Automata.App\bin\Release\net10.0-windows\win-x64\publish\`) is a
+few MB and needs the .NET 10 Desktop Runtime on the machine it runs on — Windows offers to install
+that automatically the first time `Automata.App.exe` runs, if it's missing. Hand that folder to
+someone and it runs as-is; there is no separate installer.
+
+### Architecture
 
 ```
 Automata.App    WPF host: two WebView2 panes, postMessage bridge, AutomationController

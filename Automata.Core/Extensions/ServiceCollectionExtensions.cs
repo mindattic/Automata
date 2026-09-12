@@ -8,7 +8,7 @@ using Automata.Core.Operator;
 using Automata.Core.Operator.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using MindAttic.Legion;
+using MindAttic.Vault.Credentials;
 
 namespace Automata.Core.Extensions;
 
@@ -28,21 +28,23 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient();                    // generic factory for the LLM adapters
         services.AddHttpClient<AnthropicToolClient>();
 
-        // BYO-key: a key saved in the sidebar's Settings overrides that provider's default
-        // credential chain (Claude: OAuth → credential store; others: the Vault key named
-        // below). Resolvers run live per call, so saving a key needs no restart.
-        static Func<string?> KeyResolver(
-            AutomataSettingsStore store, Func<AutomataSettings, string?> byo, Func<string?> fallback) =>
+        // BYO-key: every MindAttic app gets its OWN Vault-backed override — entering a key in
+        // Automata's Settings writes to this app's own scoped id ("automata-<provider>"), never
+        // to the shared id another app resolves — falling back to that shared
+        // %APPDATA%\MindAttic\LLM\ key (Claude: OAuth session first, then the shared key) only
+        // when this app has none of its own. Both tiers are read live per call, so saving a key
+        // needs no restart.
+        var ownKeys = new AppScopedCredentialStore("automata", LlmCredentialStore.Default);
+        Func<string?> KeyResolver(string providerId, Func<string?> fallback) =>
             () =>
             {
-                var key = byo(store.Load());
+                var key = ownKeys.GetKey(providerId);
                 return !string.IsNullOrWhiteSpace(key) ? key : fallback();
             };
 
         services.AddSingleton(sp => new AnthropicToolCallingLlm(
             sp.GetRequiredService<AnthropicToolClient>(),
-            KeyResolver(sp.GetRequiredService<AutomataSettingsStore>(),
-                s => s.AnthropicApiKey, AnthropicToolCallingLlm.DefaultResolveApiKey)));
+            KeyResolver("claude", AnthropicToolCallingLlm.DefaultResolveApiKey)));
 
         // Multi-LLM Master Switch-Over: the roster orders the user's selected provider first
         // (live, per run) with the rest as fallbacks — first provider with credentials wins.
@@ -55,13 +57,13 @@ public static class ServiceCollectionExtensions
             var openAiLog = sp.GetRequiredService<ILogger<OpenAiToolCallingLlm>>();
 
             var openAi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyResolver(settings, s => s.OpenAiApiKey, () => MindAtticCredentialStore.GetKey("openai")));
+                KeyResolver("openai", () => LlmCredentialStore.Default.GetKey("openai")));
             var kimi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyResolver(settings, s => s.KimiApiKey, () => MindAtticCredentialStore.GetKey("kimi")),
+                KeyResolver("kimi", () => LlmCredentialStore.Default.GetKey("kimi")),
                 model: "kimi-latest", name: "Kimi", endpoint: "https://api.moonshot.ai/v1/chat/completions");
             var gemini = new GeminiToolCallingLlm(httpFactory.CreateClient("llm"),
                 sp.GetRequiredService<ILogger<GeminiToolCallingLlm>>(),
-                KeyResolver(settings, s => s.GeminiApiKey, () => MindAtticCredentialStore.GetKey("gemini")));
+                KeyResolver("gemini", () => LlmCredentialStore.Default.GetKey("gemini")));
 
             return new ProviderRoster(
             [

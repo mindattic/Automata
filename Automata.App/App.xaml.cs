@@ -19,12 +19,20 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-#if DEBUG
-        // Log any unhandled exception anywhere in the app (WPF dispatcher + AppDomain-wide).
+        // Log any unhandled exception anywhere in the app (WPF dispatcher + AppDomain-wide) in
+        // every build, not just DEBUG — a Release build with no handler at all means a real
+        // user's crash leaves nothing behind for them to report and nothing to debug from. The
+        // dispatcher case additionally recovers rather than terminating: a published build has no
+        // debugger attached to catch the default WPF crash, so someone hitting one unexpected
+        // exception loses the whole session and everything unsaved in it for no reason a plain
+        // message box and a log line couldn't have prevented.
         var logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "automata-error.log");
         DispatcherUnhandledException += (_, ex) =>
         {
             System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] DISPATCHER: {ex.Exception}\n\n");
+            MessageBox.Show(
+                $"Automata hit an unexpected error and logged details to:\n{logPath}\n\nYou can keep working.",
+                "Automata", MessageBoxButton.OK, MessageBoxImage.Warning);
             ex.Handled = true;
         };
         AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
@@ -34,7 +42,6 @@ public partial class App : Application
             System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] TASK: {ex.Exception}\n\n");
             ex.SetObserved();
         };
-#endif
 
         var host = Host.CreateDefaultBuilder()
             .ConfigureAppConfiguration((_, cfg) => cfg.AddMindAtticVaultFiles())

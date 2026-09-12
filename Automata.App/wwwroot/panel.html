@@ -93,27 +93,27 @@
         <button id="settings-modal-close" class="mini" aria-label="Close settings">✕</button>
       </div>
       <fieldset class="llm-group">
-        <legend>LLM provider &amp; BYO keys (blank key = Vault/default credentials)</legend>
+        <legend>LLM provider &amp; BYO keys (blank key = a shared default, if one is configured)</legend>
         <div class="llm-row">
-          <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — default: Claude Code OAuth session, then Vault 'claude-api'" />
+          <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-claude">Claude</label>
           <input type="password" id="key-claude" aria-label="Claude API key" />
           <button class="mini" data-clear="claude" aria-label="Clear the saved Claude key" data-tooltip="Clear the saved Claude key">✕</button>
         </div>
         <div class="llm-row">
-          <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — falls back to Vault 'openai'" />
+          <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-openai">OpenAI</label>
           <input type="password" id="key-openai" aria-label="OpenAI API key" />
           <button class="mini" data-clear="openai" aria-label="Clear the saved OpenAI key" data-tooltip="Clear the saved OpenAI key">✕</button>
         </div>
         <div class="llm-row">
-          <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — falls back to Vault 'gemini'" />
+          <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-gemini">Gemini</label>
           <input type="password" id="key-gemini" aria-label="Gemini API key" />
           <button class="mini" data-clear="gemini" aria-label="Clear the saved Gemini key" data-tooltip="Clear the saved Gemini key">✕</button>
         </div>
         <div class="llm-row">
-          <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — falls back to Vault 'kimi'" />
+          <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-kimi">Kimi</label>
           <input type="password" id="key-kimi" aria-label="Kimi API key" />
           <button class="mini" data-clear="kimi" aria-label="Clear the saved Kimi key" data-tooltip="Clear the saved Kimi key">✕</button>

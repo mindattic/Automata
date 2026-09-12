@@ -17,6 +17,7 @@ using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
+using MindAttic.Vault.Credentials;
 
 namespace Automata.App;
 
@@ -37,6 +38,12 @@ public sealed class AutomationController
     private readonly ParkedRunStore parkedRuns;
     private readonly DemoSeeder demos;
     private readonly IClock clock;
+    private readonly IReadOnlyList<IToolCallingLlm> providers;
+
+    // This app's own Vault-backed key override, namespaced under "automata-<provider>" — never
+    // the shared %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves.
+    private static readonly ICredentialStore ownKeys =
+        new AppScopedCredentialStore("automata", LlmCredentialStore.Default);
 
     /// <summary>
     /// The run a collection is currently working through, so its tasks land under ONE run record
@@ -86,6 +93,7 @@ public sealed class AutomationController
         DemoSeeder demos,
         IClock clock,
         FlowAuthoringService authoring,
+        IReadOnlyList<IToolCallingLlm> providers,
         Func<IBrowserSurface?> targetSurface,
         Func<CoreWebView2?> targetCore,
         Func<string, Task> execPanelScript,
@@ -102,6 +110,7 @@ public sealed class AutomationController
         this.demos = demos;
         this.clock = clock;
         this.authoring = authoring;
+        this.providers = providers;
         this.targetSurface = targetSurface;
         this.targetCore = targetCore;
         this.execPanelScript = execPanelScript;
@@ -356,26 +365,21 @@ public sealed class AutomationController
                     await logAsync($"LLM provider set to {provider} — used for the next AI run.");
                 }
 
-                foreach (var (field, apply) in KeyFields())
+                // BYO keys bypass AutomataSettings entirely — they live in Vault, under this
+                // app's own scoped id (see ownKeys), so entering one here never touches what
+                // another MindAttic app resolves.
+                foreach (var (field, providerName) in KeyFields())
                 {
                     if (Str(msg, field) is { Length: > 0 } key)
                     {
-                        apply(settings, key);
+                        ownKeys.SetKey(providerName, key);
                         await logAsync($"{field} saved (BYO-key) — used for the next AI run.");
                     }
                 }
-                if (Str(msg, "clearKey") is { } clear)
+                if (Str(msg, "clearKey") is { } clear && clear is "claude" or "openai" or "gemini" or "kimi")
                 {
-                    var cleared = clear switch
-                    {
-                        "claude" => (Action)(() => settings.AnthropicApiKey = null),
-                        "openai" => () => settings.OpenAiApiKey = null,
-                        "gemini" => () => settings.GeminiApiKey = null,
-                        "kimi" => () => settings.KimiApiKey = null,
-                        _ => () => { },
-                    };
-                    cleared();
-                    await logAsync($"{clear} key override cleared — falling back to Vault/default credentials.");
+                    ownKeys.SetKey(clear, "");
+                    await logAsync($"{clear} key override cleared — falling back to the shared default.");
                 }
 
                 if (msg["borderRadius"] != null)
@@ -1162,28 +1166,65 @@ public sealed class AutomationController
         return parsed is null || parsed.IsEmpty ? null : parsed;
     }
 
-    private static IEnumerable<(string Field, Action<AutomataSettings, string> Apply)> KeyFields() =>
+    private static IEnumerable<(string Field, string ProviderName)> KeyFields() =>
     [
-        ("claudeKey", (s, v) => s.AnthropicApiKey = v),
-        ("openaiKey", (s, v) => s.OpenAiApiKey = v),
-        ("geminiKey", (s, v) => s.GeminiApiKey = v),
-        ("kimiKey", (s, v) => s.KimiApiKey = v),
+        ("claudeKey", "claude"),
+        ("openaiKey", "openai"),
+        ("geminiKey", "gemini"),
+        ("kimiKey", "kimi"),
     ];
 
+    /// <summary>True if the roster's provider named <paramref name="name"/> can actually
+    /// authenticate right now — checked live rather than assumed, so the hint in
+    /// <see cref="PushSettingsAsync"/> never claims a fallback works when nothing backs it. Since
+    /// this app's own Vault-backed key is checked FIRST inside the resolver itself, this is only
+    /// meaningful for a provider whose own scoped key (<see cref="ownKeys"/>) is empty — exactly
+    /// how the caller uses it.</summary>
+    private async Task<bool> FallbackConfiguredAsync(string name)
+    {
+        var provider = providers.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        return provider != null && await provider.IsConfiguredAsync();
+    }
+
     /// <summary>Settings for the panel — keys themselves never cross the bridge, only hints.</summary>
-    public Task PushSettingsAsync()
+    public async Task PushSettingsAsync()
     {
         var settings = settingsStore.Load();
-        static object Hint(string? key, string fallbackLabel) => new
+
+        // This app's own Vault-backed override, per provider — never the shared
+        // %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves.
+        var claudeKey = ownKeys.GetKey("claude");
+        var openAiKey = ownKeys.GetKey("openai");
+        var geminiKey = ownKeys.GetKey("gemini");
+        var kimiKey = ownKeys.GetKey("kimi");
+
+        var claudeFallback = await FallbackConfiguredAsync("Claude");
+        var openAiFallback = await FallbackConfiguredAsync("OpenAI");
+        var geminiFallback = await FallbackConfiguredAsync("Gemini");
+        var kimiFallback = await FallbackConfiguredAsync("Kimi");
+
+        static object Hint(string? key, bool fallbackConfigured) => new
         {
             set = !string.IsNullOrEmpty(key),
             // A key too short to safely show a masked suffix still IS a BYO override — showing
-            // the "Vault/default" fallback label for it would contradict `set: true` and read as
-            // if no override were active.
-            hint = string.IsNullOrEmpty(key) ? fallbackLabel
+            // the fallback hint for it would contradict `set: true` and read as if no override
+            // were active. The fallback hint itself is never assumed: it only says a default is
+            // available when that default was just checked and actually resolved.
+            hint = string.IsNullOrEmpty(key)
+                ? (fallbackConfigured ? "Using a shared default" : "Not configured — add a key above")
                 : key.Length >= 4 ? "BYO …" + key[^4..]
                 : "BYO key set",
         };
+
+        // Whether AI-backed features (free-text authoring, self-heal repair) can do anything at
+        // all right now — the same question PushSettingsAsync just answered per provider, reduced
+        // to one bit the panel can act on (prompting for a key) without re-deriving the logic.
+        var anyConfigured =
+            !string.IsNullOrEmpty(claudeKey) || claudeFallback ||
+            !string.IsNullOrEmpty(openAiKey) || openAiFallback ||
+            !string.IsNullOrEmpty(geminiKey) || geminiFallback ||
+            !string.IsNullOrEmpty(kimiKey) || kimiFallback;
+
         var json = JsonSerializer.Serialize(new
         {
             provider = settings.Provider,
@@ -1198,15 +1239,16 @@ public sealed class AutomationController
             // sent rather than mirrored in JS so there is exactly one definition of it.
             engineDefaults = settings.EngineDefaults,
             engineFloor = EngineSettingsResolver.Floor(),
+            anyConfigured,
             keys = new
             {
-                claude = Hint(settings.AnthropicApiKey, "OAuth/Vault default"),
-                openai = Hint(settings.OpenAiApiKey, "Vault 'openai'"),
-                gemini = Hint(settings.GeminiApiKey, "Vault 'gemini'"),
-                kimi = Hint(settings.KimiApiKey, "Vault 'kimi'"),
+                claude = Hint(claudeKey, claudeFallback),
+                openai = Hint(openAiKey, openAiFallback),
+                gemini = Hint(geminiKey, geminiFallback),
+                kimi = Hint(kimiKey, kimiFallback),
             },
         }, AutomataJson.Options);
-        return execPanelScript($"window.ssPanel.onSettings({json})");
+        await execPanelScript($"window.ssPanel.onSettings({json})");
     }
 
     /// <summary>

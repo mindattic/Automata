@@ -15,6 +15,7 @@ import { renderDemosDialog } from './demos.js';
 import { showDraft, showFeatureView } from './flow.js';
 import { maybeStartTutorial, advanceTutorial } from './tutorial.js';
 import { advanceTour, onTourRunFinished } from './tour.js';
+import { maybeAskForKey } from './keysetup.js';
 import { showBuildTab } from './tabs.js';
 import { LLM_PROVIDERS } from './settings.js';
 
@@ -231,5 +232,7 @@ window.ssPanel = {
             // The key never crosses the bridge — the input's placeholder shows the status.
             $('key-' + p).placeholder = info ? info.hint : '';
         });
+
+        maybeAskForKey(s);
     },
 };

@@ -24,21 +24,10 @@ public sealed class AutomataSettings
     /// selected one has no usable credentials.</summary>
     public string Provider { get; set; } = "claude";
 
-    /// <summary>
-    /// BYO-key: an Anthropic API key that OVERRIDES the default credential chain (Claude Code
-    /// OAuth session → shared MindAttic credential store) — the escape hatch when the OAuth
-    /// session is rate-limited or out of quota. Null/empty = use the default chain.
-    /// </summary>
-    public string? AnthropicApiKey { get; set; }
-
-    /// <summary>BYO OpenAI key; null/empty falls back to the Vault's "openai" key.</summary>
-    public string? OpenAiApiKey { get; set; }
-
-    /// <summary>BYO Gemini key; null/empty falls back to the Vault's "gemini" key.</summary>
-    public string? GeminiApiKey { get; set; }
-
-    /// <summary>BYO Kimi (Moonshot) key; null/empty falls back to the Vault's "kimi" key.</summary>
-    public string? KimiApiKey { get; set; }
+    // BYO keys themselves live in MindAttic.Vault, not here — see AutomationController's
+    // ownKeys field and key handling. Each app gets its own Vault-backed override (so
+    // testing a key in Automata never touches what another MindAttic app resolves), falling
+    // back to the shared %APPDATA%\MindAttic\LLM\ keys.
 
     /// <summary>Corner rounding (px, 0–10) applied to the sidebar's buttons and inputs.</summary>
     public int BorderRadius { get; set; } = 5;
