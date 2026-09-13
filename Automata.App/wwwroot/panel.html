@@ -93,34 +93,36 @@
         <button id="settings-modal-close" class="mini" aria-label="Close settings">✕</button>
       </div>
       <fieldset class="llm-group">
-        <legend>LLM provider &amp; BYO keys (blank key = a shared default, if one is configured)</legend>
+        <legend>LLM provider &amp; BYO keys — one per line to rotate/fail over between several
+          (blank = a shared default, if one is configured)</legend>
         <div class="llm-row">
           <input type="radio" name="llm" id="llm-claude" value="claude" data-tooltip="Anthropic Claude — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-claude">Claude</label>
-          <input type="password" id="key-claude" aria-label="Claude API key" />
-          <button class="mini" data-clear="claude" aria-label="Clear the saved Claude key" data-tooltip="Clear the saved Claude key">✕</button>
+          <textarea id="key-claude" rows="2" aria-label="Claude API keys, one per line"></textarea>
+          <button class="mini" data-clear="claude" aria-label="Clear the saved Claude key(s)" data-tooltip="Clear the saved Claude key(s)">✕</button>
         </div>
         <div class="llm-row">
           <input type="radio" name="llm" id="llm-openai" value="openai" data-tooltip="OpenAI Chat Completions — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-openai">OpenAI</label>
-          <input type="password" id="key-openai" aria-label="OpenAI API key" />
-          <button class="mini" data-clear="openai" aria-label="Clear the saved OpenAI key" data-tooltip="Clear the saved OpenAI key">✕</button>
+          <textarea id="key-openai" rows="2" aria-label="OpenAI API keys, one per line"></textarea>
+          <button class="mini" data-clear="openai" aria-label="Clear the saved OpenAI key(s)" data-tooltip="Clear the saved OpenAI key(s)">✕</button>
         </div>
         <div class="llm-row">
           <input type="radio" name="llm" id="llm-gemini" value="gemini" data-tooltip="Google Gemini — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-gemini">Gemini</label>
-          <input type="password" id="key-gemini" aria-label="Gemini API key" />
-          <button class="mini" data-clear="gemini" aria-label="Clear the saved Gemini key" data-tooltip="Clear the saved Gemini key">✕</button>
+          <textarea id="key-gemini" rows="2" aria-label="Gemini API keys, one per line"></textarea>
+          <button class="mini" data-clear="gemini" aria-label="Clear the saved Gemini key(s)" data-tooltip="Clear the saved Gemini key(s)">✕</button>
         </div>
         <div class="llm-row">
           <input type="radio" name="llm" id="llm-kimi" value="kimi" data-tooltip="Kimi (Moonshot, OpenAI-compatible) — add a key below, or use a shared default if one is configured" />
           <label class="llm-name" for="llm-kimi">Kimi</label>
-          <input type="password" id="key-kimi" aria-label="Kimi API key" />
-          <button class="mini" data-clear="kimi" aria-label="Clear the saved Kimi key" data-tooltip="Clear the saved Kimi key">✕</button>
+          <textarea id="key-kimi" rows="2" aria-label="Kimi API keys, one per line"></textarea>
+          <button class="mini" data-clear="kimi" aria-label="Clear the saved Kimi key(s)" data-tooltip="Clear the saved Kimi key(s)">✕</button>
         </div>
       </fieldset>
       <div class="row settings-row">
-        <span class="key-status">Selected provider runs first; others are fallbacks</span>
+        <span class="key-status">Selected provider runs first; others are fallbacks. Several keys for one
+          provider are tried in order, failing over on error.</span>
         <button id="set-key-save" class="mini" data-tooltip="Save the keys typed above (blank fields unchanged)">Save keys</button>
       </div>
       <div class="row settings-row">

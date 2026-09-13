@@ -1017,8 +1017,14 @@ button.mini.binding-toggle { display: none; }
   margin: 0;
 }
 
-.llm-row input[type=password] { flex: 1; font-size: var(--text-xs); }
-.llm-row button { flex: none; }
+.llm-row textarea {
+  flex: 1;
+  font-size: var(--text-xs);
+  font-family: inherit;
+  resize: vertical;
+  min-height: var(--target-min);
+}
+.llm-row button { flex: none; align-self: flex-start; }
 
 .settings-row { align-items: center; margin-bottom: var(--space-2); }
 

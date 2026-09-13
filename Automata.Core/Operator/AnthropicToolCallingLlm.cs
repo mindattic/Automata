@@ -13,24 +13,40 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
 {
     private readonly AnthropicToolClient client;
     private readonly string model;
-    private readonly Func<string?> resolveApiKey;
+    private readonly Func<IReadOnlyList<string>> resolveApiKeys;
 
     public string Name => "Claude";
 
     public AnthropicToolCallingLlm(AnthropicToolClient client, string model = "claude-opus-4-7")
         : this(client, ResolveApiKey, model) { }
 
-    /// <summary>Test-friendly constructor — injects the API-key resolver instead of reading the
+    /// <summary>Test-friendly constructor — injects a single-key resolver instead of reading the
     /// real Claude Code OAuth session / shared credential store.</summary>
     public AnthropicToolCallingLlm(AnthropicToolClient client, Func<string?> resolveApiKey, string model = "claude-opus-4-7")
+        : this(client, AsPool(resolveApiKey), model) { }
+
+    /// <summary>
+    /// Key-pool constructor: when more than one key is configured, a key that fails with an
+    /// auth/rate-limit/server error causes the NEXT key to be tried ("sticky failover" — the
+    /// first working key keeps being used across calls; only an actual failure advances to the
+    /// next one). Each key still gets <see cref="AnthropicToolClient"/>'s own 429/529 retry
+    /// budget before being considered "failed".
+    /// </summary>
+    public AnthropicToolCallingLlm(AnthropicToolClient client, Func<IReadOnlyList<string>> resolveApiKeys, string model = "claude-opus-4-7")
     {
         this.client = client;
-        this.resolveApiKey = resolveApiKey;
+        this.resolveApiKeys = resolveApiKeys;
         this.model = model;
     }
 
+    private static Func<IReadOnlyList<string>> AsPool(Func<string?> resolveApiKey) => () =>
+    {
+        var key = resolveApiKey();
+        return string.IsNullOrWhiteSpace(key) ? Array.Empty<string>() : new[] { key };
+    };
+
     public Task<bool> IsConfiguredAsync() =>
-        Task.FromResult(!string.IsNullOrWhiteSpace(resolveApiKey()));
+        Task.FromResult(resolveApiKeys().Count > 0);
 
     public async Task<ToolTurnResult> CreateTurnAsync(
         string systemPrompt,
@@ -39,16 +55,20 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
         int maxTokens,
         CancellationToken ct)
     {
-        var apiKey = resolveApiKey()
-            ?? throw new InvalidOperationException(
+        var keys = resolveApiKeys();
+        if (keys.Count == 0)
+            throw new InvalidOperationException(
                 "No Anthropic API key configured — set one in Settings, or add a 'claude' " +
                 "provider key to the shared credential store.");
 
         var messages = ToAnthropicMessages(history);
         var toolsArray = ToAnthropicTools(tools);
 
-        var turn = await client.CreateAsync(apiKey, model, systemPrompt, messages, toolsArray, maxTokens, ct);
-        return new ToolTurnResult(FromAnthropicContent(turn.Content));
+        return await KeyPoolFailover.ExecuteAsync(keys, ct, async key =>
+        {
+            var turn = await client.CreateAsync(key, model, systemPrompt, messages, toolsArray, maxTokens, ct);
+            return new ToolTurnResult(FromAnthropicContent(turn.Content));
+        });
     }
 
     /// <summary>
@@ -66,7 +86,12 @@ public class AnthropicToolCallingLlm : IToolCallingLlm
     public static string? DefaultResolveApiKey() =>
         MindAtticCredentialStore.GetKey("claude");
 
-    private static string? ResolveApiKey() => DefaultResolveApiKey();
+    /// <summary>Pool-aware sibling of <see cref="DefaultResolveApiKey"/> — every key currently
+    /// configured under the shared "claude" id, in priority order.</summary>
+    public static IReadOnlyList<string> DefaultResolveApiKeys() =>
+        MindAtticCredentialStore.GetKeys("claude").Select(k => k.Key).ToList();
+
+    private static IReadOnlyList<string> ResolveApiKey() => DefaultResolveApiKeys();
 
     private static JsonArray ToAnthropicTools(IReadOnlyList<ToolDefinition> tools)
     {

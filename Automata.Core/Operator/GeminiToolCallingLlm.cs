@@ -19,27 +19,45 @@ public class GeminiToolCallingLlm : IToolCallingLlm
     private readonly HttpClient http;
     private readonly ILogger<GeminiToolCallingLlm> log;
     private readonly string model;
-    private readonly Func<string?> resolveApiKey;
+    private readonly Func<IReadOnlyList<string>> resolveApiKeys;
     private const int MaxRetries = 5;
     private static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(60);
 
     public string Name => "Gemini";
 
+    /// <summary>Single-key constructor, kept for callers/tests that only know one key.</summary>
     public GeminiToolCallingLlm(
         HttpClient http,
         ILogger<GeminiToolCallingLlm> log,
         Func<string?>? resolveApiKey = null,
         string model = "gemini-2.5-flash")
+        : this(http, log, AsPool(resolveApiKey ?? (() => MindAtticCredentialStore.GetKey("gemini"))), model) { }
+
+    /// <summary>
+    /// Key-pool constructor: when more than one key is configured, a key that fails with an
+    /// auth/rate-limit/server/network error causes the NEXT key to be tried ("sticky failover").
+    /// </summary>
+    public GeminiToolCallingLlm(
+        HttpClient http,
+        ILogger<GeminiToolCallingLlm> log,
+        Func<IReadOnlyList<string>> resolveApiKeys,
+        string model = "gemini-2.5-flash")
     {
         this.http = http;
         this.log = log;
-        this.resolveApiKey = resolveApiKey ?? (() => MindAtticCredentialStore.GetKey("gemini"));
+        this.resolveApiKeys = resolveApiKeys;
         this.model = model;
     }
 
+    private static Func<IReadOnlyList<string>> AsPool(Func<string?> resolveApiKey) => () =>
+    {
+        var key = resolveApiKey();
+        return string.IsNullOrWhiteSpace(key) ? Array.Empty<string>() : new[] { key };
+    };
+
     public Task<bool> IsConfiguredAsync() =>
-        Task.FromResult(!string.IsNullOrWhiteSpace(resolveApiKey()));
+        Task.FromResult(resolveApiKeys().Count > 0);
 
     public async Task<ToolTurnResult> CreateTurnAsync(
         string systemPrompt,
@@ -48,8 +66,8 @@ public class GeminiToolCallingLlm : IToolCallingLlm
         int maxTokens,
         CancellationToken ct)
     {
-        var apiKey = resolveApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var keys = resolveApiKeys();
+        if (keys.Count == 0)
             throw new InvalidOperationException("No Gemini API key configured — set one in Settings or the credential store.");
 
         var body = new JsonObject
@@ -69,6 +87,11 @@ public class GeminiToolCallingLlm : IToolCallingLlm
             };
         }
 
+        return await KeyPoolFailover.ExecuteAsync(keys, ct, apiKey => CallOnceAsync(apiKey, body, ct));
+    }
+
+    private async Task<ToolTurnResult> CallOnceAsync(string apiKey, JsonObject body, CancellationToken ct)
+    {
         var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
         for (int attempt = 0; ; attempt++)
         {
@@ -94,7 +117,7 @@ public class GeminiToolCallingLlm : IToolCallingLlm
                     continue;
                 }
                 log.LogWarning("Gemini {Status}: {Body}", (int)resp.StatusCode, Truncate(raw, 500));
-                throw new InvalidOperationException($"Gemini API {(int)resp.StatusCode}: {Truncate(raw, 500)}");
+                throw new HttpRequestException($"Gemini API {(int)resp.StatusCode}: {Truncate(raw, 500)}", inner: null, statusCode: resp.StatusCode);
             }
 
             var doc = JsonNode.Parse(raw) ?? throw new InvalidOperationException("Gemini response was null JSON");

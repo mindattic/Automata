@@ -21,7 +21,7 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
     private readonly HttpClient http;
     private readonly ILogger<OpenAiToolCallingLlm> log;
     private readonly string model;
-    private readonly Func<string?> resolveApiKey;
+    private readonly Func<IReadOnlyList<string>> resolveApiKeys;
     private readonly string endpoint;
     private const int MaxRetries = 5;
     private static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(5);
@@ -37,8 +37,8 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
     public OpenAiToolCallingLlm(HttpClient http, ILogger<OpenAiToolCallingLlm> log)
         : this(http, log, () => MindAtticCredentialStore.GetKey("openai")) { }
 
-    /// <summary>Full-control constructor: injected key resolver, and optional name/endpoint so
-    /// OpenAI-compatible providers (Kimi/Moonshot) reuse the exact same wire logic.</summary>
+    /// <summary>Full-control constructor: injected single-key resolver, and optional name/endpoint
+    /// so OpenAI-compatible providers (Kimi/Moonshot) reuse the exact same wire logic.</summary>
     public OpenAiToolCallingLlm(
         HttpClient http,
         ILogger<OpenAiToolCallingLlm> log,
@@ -46,17 +46,36 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
         string model = "gpt-4.1",
         string name = "OpenAI",
         string endpoint = OpenAiEndpoint)
+        : this(http, log, AsPool(resolveApiKey), model, name, endpoint) { }
+
+    /// <summary>
+    /// Key-pool constructor: when more than one key is configured, a key that fails with an
+    /// auth/rate-limit/server/network error causes the NEXT key to be tried ("sticky failover").
+    /// </summary>
+    public OpenAiToolCallingLlm(
+        HttpClient http,
+        ILogger<OpenAiToolCallingLlm> log,
+        Func<IReadOnlyList<string>> resolveApiKeys,
+        string model = "gpt-4.1",
+        string name = "OpenAI",
+        string endpoint = OpenAiEndpoint)
     {
         this.http = http;
         this.log = log;
-        this.resolveApiKey = resolveApiKey;
+        this.resolveApiKeys = resolveApiKeys;
         this.model = model;
         Name = name;
         this.endpoint = endpoint;
     }
 
+    private static Func<IReadOnlyList<string>> AsPool(Func<string?> resolveApiKey) => () =>
+    {
+        var key = resolveApiKey();
+        return string.IsNullOrWhiteSpace(key) ? Array.Empty<string>() : new[] { key };
+    };
+
     public Task<bool> IsConfiguredAsync() =>
-        Task.FromResult(!string.IsNullOrWhiteSpace(resolveApiKey()));
+        Task.FromResult(resolveApiKeys().Count > 0);
 
     public async Task<ToolTurnResult> CreateTurnAsync(
         string systemPrompt,
@@ -65,8 +84,8 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
         int maxTokens,
         CancellationToken ct)
     {
-        var apiKey = resolveApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var keys = resolveApiKeys();
+        if (keys.Count == 0)
             throw new InvalidOperationException($"No {Name} API key configured — set one in Settings or the credential store.");
 
         var messages = ToOpenAiMessages(systemPrompt, history);
@@ -80,6 +99,11 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
         };
         if (toolsArray.Count > 0) body["tools"] = toolsArray;
 
+        return await KeyPoolFailover.ExecuteAsync(keys, ct, apiKey => CallOnceAsync(apiKey, body, ct));
+    }
+
+    private async Task<ToolTurnResult> CallOnceAsync(string apiKey, JsonObject body, CancellationToken ct)
+    {
         for (int attempt = 0; ; attempt++)
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
@@ -103,7 +127,7 @@ public class OpenAiToolCallingLlm : IToolCallingLlm
                     continue;
                 }
                 log.LogWarning("{Provider} {Status}: {Body}", Name, (int)resp.StatusCode, Truncate(raw, 500));
-                throw new InvalidOperationException($"{Name} API {(int)resp.StatusCode}: {Truncate(raw, 500)}");
+                throw new HttpRequestException($"{Name} API {(int)resp.StatusCode}: {Truncate(raw, 500)}", inner: null, statusCode: resp.StatusCode);
             }
 
             var doc = JsonNode.Parse(raw) ?? throw new InvalidOperationException($"{Name} response was null JSON");

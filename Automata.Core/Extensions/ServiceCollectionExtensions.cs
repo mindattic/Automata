@@ -35,16 +35,20 @@ public static class ServiceCollectionExtensions
         // when this app has none of its own. Both tiers are read live per call, so saving a key
         // needs no restart.
         var ownKeys = new AppScopedCredentialStore("automata", LlmCredentialStore.Default);
-        Func<string?> KeyResolver(string providerId, Func<string?> fallback) =>
+
+        // Every provider's Settings UI stores a LIST of keys (one per line) so a user with
+        // several accounts can rotate/fail over between them — this app's own key pool wins
+        // outright over the shared fallback pool when it has any keys at all.
+        Func<IReadOnlyList<string>> KeyPoolResolver(string providerId, Func<IReadOnlyList<string>> fallback) =>
             () =>
             {
-                var key = ownKeys.GetKey(providerId);
-                return !string.IsNullOrWhiteSpace(key) ? key : fallback();
+                var ownPool = ownKeys.GetKeys(providerId).Select(k => k.Key).ToList();
+                return ownPool.Count > 0 ? ownPool : fallback();
             };
 
         services.AddSingleton(sp => new AnthropicToolCallingLlm(
             sp.GetRequiredService<AnthropicToolClient>(),
-            KeyResolver("claude", AnthropicToolCallingLlm.DefaultResolveApiKey)));
+            KeyPoolResolver("claude", AnthropicToolCallingLlm.DefaultResolveApiKeys)));
 
         // Multi-LLM Master Switch-Over: the roster orders the user's selected provider first
         // (live, per run) with the rest as fallbacks — first provider with credentials wins.
@@ -57,13 +61,13 @@ public static class ServiceCollectionExtensions
             var openAiLog = sp.GetRequiredService<ILogger<OpenAiToolCallingLlm>>();
 
             var openAi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyResolver("openai", () => LlmCredentialStore.Default.GetKey("openai")));
+                KeyPoolResolver("openai", () => LlmCredentialStore.Default.GetKeys("openai").Select(k => k.Key).ToList()));
             var kimi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyResolver("kimi", () => LlmCredentialStore.Default.GetKey("kimi")),
+                KeyPoolResolver("kimi", () => LlmCredentialStore.Default.GetKeys("kimi").Select(k => k.Key).ToList()),
                 model: "kimi-latest", name: "Kimi", endpoint: "https://api.moonshot.ai/v1/chat/completions");
             var gemini = new GeminiToolCallingLlm(httpFactory.CreateClient("llm"),
                 sp.GetRequiredService<ILogger<GeminiToolCallingLlm>>(),
-                KeyResolver("gemini", () => LlmCredentialStore.Default.GetKey("gemini")));
+                KeyPoolResolver("gemini", () => LlmCredentialStore.Default.GetKeys("gemini").Select(k => k.Key).ToList()));
 
             return new ProviderRoster(
             [

@@ -41,9 +41,11 @@ public sealed class AutomationController
     private readonly IReadOnlyList<IToolCallingLlm> providers;
 
     // This app's own Vault-backed key override, namespaced under "automata-<provider>" — never
-    // the shared %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves.
-    private static readonly ICredentialStore ownKeys =
-        new AppScopedCredentialStore("automata", LlmCredentialStore.Default);
+    // the shared %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves. Each provider can
+    // hold MORE THAN ONE key (a rotation/failover pool), hence AppScopedCredentialStore rather
+    // than the plain ICredentialStore interface — GetKeys/SetKeys are the pool-aware surface.
+    private static readonly AppScopedCredentialStore ownKeys =
+        new("automata", LlmCredentialStore.Default);
 
     /// <summary>
     /// The run a collection is currently working through, so its tasks land under ONE run record
@@ -367,18 +369,28 @@ public sealed class AutomationController
 
                 // BYO keys bypass AutomataSettings entirely — they live in Vault, under this
                 // app's own scoped id (see ownKeys), so entering one here never touches what
-                // another MindAttic app resolves.
+                // another MindAttic app resolves. The textarea sends one key per line — a blank
+                // field means "leave unchanged" (matches the single-key behaviour this replaces);
+                // a non-blank field REPLACES the whole pool with whatever lines it contains.
                 foreach (var (field, providerName) in KeyFields())
                 {
-                    if (Str(msg, field) is { Length: > 0 } key)
+                    if (Str(msg, field) is { Length: > 0 } raw)
                     {
-                        ownKeys.SetKey(providerName, key);
-                        await logAsync($"{field} saved (BYO-key) — used for the next AI run.");
+                        var keys = raw
+                            .Split('\n')
+                            .Select(line => line.Trim())
+                            .Where(line => line.Length > 0)
+                            .Select(line => new CredentialPoolEntry(line))
+                            .ToList();
+                        ownKeys.SetKeys(providerName, keys);
+                        await logAsync(keys.Count == 1
+                            ? $"{field} saved (BYO-key) — used for the next AI run."
+                            : $"{field} saved ({keys.Count} keys, BYO-key pool) — used for the next AI run.");
                     }
                 }
                 if (Str(msg, "clearKey") is { } clear && clear is "claude" or "openai" or "gemini" or "kimi")
                 {
-                    ownKeys.SetKey(clear, "");
+                    ownKeys.SetKeys(clear, Array.Empty<CredentialPoolEntry>());
                     await logAsync($"{clear} key override cleared — falling back to the shared default.");
                 }
 
@@ -1192,38 +1204,42 @@ public sealed class AutomationController
         var settings = settingsStore.Load();
 
         // This app's own Vault-backed override, per provider — never the shared
-        // %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves.
-        var claudeKey = ownKeys.GetKey("claude");
-        var openAiKey = ownKeys.GetKey("openai");
-        var geminiKey = ownKeys.GetKey("gemini");
-        var kimiKey = ownKeys.GetKey("kimi");
+        // %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves. Each provider can hold a
+        // whole rotation/failover pool, not just one key.
+        var claudeKeys = ownKeys.GetKeys("claude");
+        var openAiKeys = ownKeys.GetKeys("openai");
+        var geminiKeys = ownKeys.GetKeys("gemini");
+        var kimiKeys = ownKeys.GetKeys("kimi");
 
         var claudeFallback = await FallbackConfiguredAsync("Claude");
         var openAiFallback = await FallbackConfiguredAsync("OpenAI");
         var geminiFallback = await FallbackConfiguredAsync("Gemini");
         var kimiFallback = await FallbackConfiguredAsync("Kimi");
 
-        static object Hint(string? key, bool fallbackConfigured) => new
+        static object Hint(IReadOnlyList<CredentialPoolEntry> keys, bool fallbackConfigured) => new
         {
-            set = !string.IsNullOrEmpty(key),
-            // A key too short to safely show a masked suffix still IS a BYO override — showing
-            // the fallback hint for it would contradict `set: true` and read as if no override
-            // were active. The fallback hint itself is never assumed: it only says a default is
-            // available when that default was just checked and actually resolved.
-            hint = string.IsNullOrEmpty(key)
-                ? (fallbackConfigured ? "Using a shared default" : "Not configured — add a key above")
-                : key.Length >= 4 ? "BYO …" + key[^4..]
-                : "BYO key set",
+            set = keys.Count > 0,
+            // The fallback hint is never assumed: it only says a default is available when that
+            // default was just checked and actually resolved.
+            hint = keys.Count switch
+            {
+                0 => fallbackConfigured ? "Using a shared default" : "Not configured — add a key above",
+                // A key too short to safely show a masked suffix still IS a BYO override — showing
+                // the fallback hint for it would contradict `set: true` and read as if no override
+                // were active.
+                1 => keys[0].Key.Length >= 4 ? "BYO …" + keys[0].Key[^4..] : "BYO key set",
+                _ => $"BYO {keys.Count} keys set (rotates on failure)",
+            },
         };
 
         // Whether AI-backed features (free-text authoring, self-heal repair) can do anything at
         // all right now — the same question PushSettingsAsync just answered per provider, reduced
         // to one bit the panel can act on (prompting for a key) without re-deriving the logic.
         var anyConfigured =
-            !string.IsNullOrEmpty(claudeKey) || claudeFallback ||
-            !string.IsNullOrEmpty(openAiKey) || openAiFallback ||
-            !string.IsNullOrEmpty(geminiKey) || geminiFallback ||
-            !string.IsNullOrEmpty(kimiKey) || kimiFallback;
+            claudeKeys.Count > 0 || claudeFallback ||
+            openAiKeys.Count > 0 || openAiFallback ||
+            geminiKeys.Count > 0 || geminiFallback ||
+            kimiKeys.Count > 0 || kimiFallback;
 
         var json = JsonSerializer.Serialize(new
         {
@@ -1242,10 +1258,10 @@ public sealed class AutomationController
             anyConfigured,
             keys = new
             {
-                claude = Hint(claudeKey, claudeFallback),
-                openai = Hint(openAiKey, openAiFallback),
-                gemini = Hint(geminiKey, geminiFallback),
-                kimi = Hint(kimiKey, kimiFallback),
+                claude = Hint(claudeKeys, claudeFallback),
+                openai = Hint(openAiKeys, openAiFallback),
+                gemini = Hint(geminiKeys, geminiFallback),
+                kimi = Hint(kimiKeys, kimiFallback),
             },
         }, AutomataJson.Options);
         await execPanelScript($"window.ssPanel.onSettings({json})");

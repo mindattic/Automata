@@ -54,7 +54,7 @@ public class ToolCallingLlmTests
     public async Task AnthropicToolCallingLlm_IsConfiguredAsync_FalseWhenResolverReturnsNull()
     {
         var client = new AnthropicToolClient(new HttpClient(), NullLogger<AnthropicToolClient>.Instance);
-        var llm = new AnthropicToolCallingLlm(client, () => null);
+        var llm = new AnthropicToolCallingLlm(client, (Func<string?>)(() => null));
 
         Assert.That(await llm.IsConfiguredAsync(), Is.False);
     }
@@ -71,7 +71,7 @@ public class ToolCallingLlmTests
     [Test]
     public async Task OpenAiToolCallingLlm_IsConfiguredAsync_FalseWhenResolverReturnsNull()
     {
-        var llm = new OpenAiToolCallingLlm(new HttpClient(), NullLogger<OpenAiToolCallingLlm>.Instance, () => null);
+        var llm = new OpenAiToolCallingLlm(new HttpClient(), NullLogger<OpenAiToolCallingLlm>.Instance, (Func<string?>)(() => null));
 
         Assert.That(await llm.IsConfiguredAsync(), Is.False);
     }

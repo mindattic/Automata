@@ -95,8 +95,10 @@ public class AnthropicToolClient
                     continue;
                 }
                 log.LogWarning("Anthropic {Status}: {Body}", (int)resp.StatusCode, raw);
-                throw new InvalidOperationException(
-                    $"Anthropic API {(int)resp.StatusCode}: {Truncate(raw, 500)}");
+                throw new HttpRequestException(
+                    $"Anthropic API {(int)resp.StatusCode}: {Truncate(raw, 500)}",
+                    inner: null,
+                    statusCode: resp.StatusCode);
             }
 
             var doc = JsonNode.Parse(raw)

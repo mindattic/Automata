@@ -12,8 +12,8 @@
 
   <ItemGroup>
     <PackageReference Include="Gherkin" Version="42.0.1" />
-    <PackageReference Include="MindAttic.Legion" Version="25.0.0" />
-    <PackageReference Include="MindAttic.Vault" Version="4.0.0" />
+    <PackageReference Include="MindAttic.Legion" Version="26.0.0" />
+    <PackageReference Include="MindAttic.Vault" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>

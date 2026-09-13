@@ -65,7 +65,7 @@ public class GeminiToolCallingLlmTests
         var log = Microsoft.Extensions.Logging.Abstractions.NullLogger<GeminiToolCallingLlm>.Instance;
 
         Assert.That(await new GeminiToolCallingLlm(http, log, () => "AIza-test").IsConfiguredAsync(), Is.True);
-        Assert.That(await new GeminiToolCallingLlm(http, log, () => null).IsConfiguredAsync(), Is.False);
+        Assert.That(await new GeminiToolCallingLlm(http, log, (Func<string?>)(() => null)).IsConfiguredAsync(), Is.False);
     }
 
     [Test]
