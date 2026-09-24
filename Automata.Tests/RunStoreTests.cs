@@ -1,4 +1,3 @@
-using System.IO;
 using Automata.Core.Automation.Storage;
 using NUnit.Framework;
 
@@ -7,34 +6,25 @@ namespace Automata.Tests;
 [TestFixture]
 public class RunStoreTests
 {
-    private string root = null!;
+    private TestDb db = null!;
 
     [SetUp]
-    public void SetUp() => root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
+    public void SetUp() => db = new TestDb();
 
     [TearDown]
-    public void TearDown()
-    {
-        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-    }
+    public void TearDown() => db.Dispose();
 
-    /// <summary>
-    /// Nothing exists until a run actually starts — a fresh install must not grow a Runs tree just
-    /// by opening the app.
-    /// </summary>
+    /// <summary>A fresh install has no run history, and asking for it must not invent any.</summary>
     [Test]
-    public void ConstructingTheStoreCreatesNothingOnDisk()
+    public void AFreshDatabaseHasNoRuns()
     {
-        _ = new RunStore(root);
-
-        Assert.That(Directory.Exists(root), Is.False);
-        Assert.That(new RunStore(root).ListRuns(), Is.Empty);
+        Assert.That(db.Runs().ListRuns(), Is.Empty);
     }
 
     [Test]
-    public void CreateRun_WritesAManifestAndIsFindableById()
+    public void CreateRun_RecordsAManifestFindableById()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
 
         var run = store.CreateRun(RunTargetKind.Task, "t1", "Wolf Tshirts");
 
@@ -43,14 +33,15 @@ public class RunStoreTests
             Assert.That(run.RunId, Is.Not.Empty);
             Assert.That(run.Success, Is.Null, "an in-flight run has no outcome yet");
             Assert.That(store.GetRun(run.RunId)!.TargetName, Is.EqualTo("Wolf Tshirts"));
-            Assert.That(File.Exists(Path.Combine(store.DirectoryFor(run.RunId)!, RunStore.ManifestFileName)), Is.True);
+            Assert.That(db.Runs().GetRun(run.RunId)!.Target, Is.EqualTo(RunTargetKind.Task),
+                "another store instance — another process — sees it too");
         });
     }
 
     [Test]
     public void CompleteRun_RecordsTheOutcome()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var run = store.CreateRun(RunTargetKind.Collection, "c1", "Google Searches");
 
         store.CompleteRun(run.RunId, success: false, summary: "1/2 task(s) passed.");
@@ -61,6 +52,7 @@ public class RunStoreTests
             Assert.That(back.Success, Is.False);
             Assert.That(back.Summary, Is.EqualTo("1/2 task(s) passed."));
             Assert.That(back.EndedUtc, Is.Not.Null);
+            Assert.That(back.Target, Is.EqualTo(RunTargetKind.Collection));
         });
     }
 
@@ -71,7 +63,7 @@ public class RunStoreTests
     [Test]
     public void Outputs_RoundTripPerTask()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
 
         store.SaveOutputs(run.RunId, "t1", new Dictionary<string, Dictionary<string, string>>
@@ -89,29 +81,48 @@ public class RunStoreTests
     }
 
     [Test]
+    public void SaveOutputs_ReplacesRatherThanAccumulates()
+    {
+        var store = db.Runs();
+        var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
+
+        store.SaveOutputs(run.RunId, "t1", new Dictionary<string, Dictionary<string, string>>
+        {
+            ["step-a"] = new() { ["price"] = "1" },
+        });
+        store.SaveOutputs(run.RunId, "t1", new Dictionary<string, Dictionary<string, string>>
+        {
+            ["step-a"] = new() { ["price"] = "2" },
+        });
+
+        Assert.That(store.LoadOutputs(run.RunId, "t1")["step-a"]["price"], Is.EqualTo("2"));
+    }
+
+    [Test]
     public void LoadOutputs_ForATaskThatNeverRanIsEmpty()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
 
         Assert.That(store.LoadOutputs(run.RunId, "never-ran"), Is.Empty);
     }
 
     [Test]
-    public void AppendEvent_WritesOneJsonLinePerEvent()
+    public void AppendEvent_RecordsOneJsonLinePerEvent_InOrder()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
 
         store.AppendEvent(run.RunId, "t1", new { kind = "stepStarted", stepId = "s1" });
         store.AppendEvent(run.RunId, "t1", new { kind = "stepCompleted", stepId = "s1", status = "passed" });
 
-        var lines = File.ReadAllLines(Path.Combine(store.DirectoryFor(run.RunId)!, "tasks", "t1", "events.jsonl"));
+        var lines = store.LoadEvents(run.RunId, "t1");
         Assert.Multiple(() =>
         {
-            Assert.That(lines, Has.Length.EqualTo(2));
+            Assert.That(lines, Has.Count.EqualTo(2));
             Assert.That(lines[0], Does.Contain("stepStarted"));
             Assert.That(lines[1], Does.Contain("passed"));
+            Assert.That(store.TaskIds(run.RunId), Is.EqualTo(new[] { "t1" }));
         });
     }
 
@@ -119,21 +130,22 @@ public class RunStoreTests
     [Test]
     public void AppendEvent_KeepsAMultiLineValueOnASingleLine()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
 
         store.AppendEvent(run.RunId, "t1", new { message = "line one\nline two" });
 
-        var lines = File.ReadAllLines(Path.Combine(store.DirectoryFor(run.RunId)!, "tasks", "t1", "events.jsonl"));
-        Assert.That(lines, Has.Length.EqualTo(1));
+        var lines = store.LoadEvents(run.RunId, "t1");
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0], Does.Not.Contain("\n"));
     }
 
     [Test]
     public void ListRuns_ReturnsNewestFirst()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         var first = store.CreateRun(RunTargetKind.Task, "t1", "First");
-        Thread.Sleep(1100);   // the directory name is timestamped to the second
+        Thread.Sleep(20);
         var second = store.CreateRun(RunTargetKind.Task, "t2", "Second");
 
         var runs = store.ListRuns();
@@ -144,46 +156,53 @@ public class RunStoreTests
     [Test]
     public void ListRuns_HonoursTheLimit()
     {
-        var store = new RunStore(root);
+        var store = db.Runs();
         for (var i = 0; i < 3; i++) store.CreateRun(RunTargetKind.Task, "t" + i, "Run " + i);
 
         Assert.That(store.ListRuns(limit: 2), Has.Count.EqualTo(2));
     }
 
     [Test]
-    public void DatasetPath_LandsInsideTheRunAndKeepsItsExtension()
+    public void UnknownRunIdsAreReportedRatherThanGuessed()
     {
-        var store = new RunStore(root);
-        var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
+        var store = db.Runs();
+        store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
 
-        var path = store.DatasetPath(run.RunId, "bought.csv");
+        // Writes against a run that does not exist are dropped, not attached to something else.
+        store.AppendEvent("nope", "t1", new { kind = "x" });
+        store.SaveOutputs("nope", "t1", new Dictionary<string, Dictionary<string, string>> { ["s"] = new() { ["v"] = "1" } });
+        store.CompleteRun("nope", true, "done");
 
         Assert.Multiple(() =>
         {
-            Assert.That(Path.GetFileName(path), Is.EqualTo("bought.csv"));
-            Assert.That(path, Does.StartWith(store.DirectoryFor(run.RunId)!));
+            Assert.That(store.GetRun("nope"), Is.Null);
+            Assert.That(store.LoadEvents("nope", "t1"), Is.Empty);
+            Assert.That(store.LoadOutputs("nope", "t1"), Is.Empty);
         });
     }
 
     [Test]
-    public void DatasetPath_SanitisesANameThatWouldEscapeTheRunDirectory()
+    public void ImportRun_KeepsItsIdentityAndNeverOverwritesHistory()
     {
-        var store = new RunStore(root);
-        var run = store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
+        var store = db.Runs();
+        var manifest = new RunManifest
+        {
+            RunId = "r1", Target = RunTargetKind.Task, TargetId = "t1", TargetName = "Old",
+            StartedUtc = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero), Success = true,
+        };
+        var task = new ImportedRunTask("t1", ["{\"kind\":\"a\"}"],
+            new Dictionary<string, Dictionary<string, string>> { ["s"] = new() { ["v"] = "1" } });
 
-        var path = store.DatasetPath(run.RunId, @"..\..\escape.csv");
+        Assert.That(store.ImportRun(manifest, [task]), Is.True);
+        Assert.That(store.ImportRun(new RunManifest { RunId = "r1", TargetName = "Other" }, []), Is.False);
 
-        Assert.That(Path.GetFullPath(path), Does.StartWith(Path.GetFullPath(store.DirectoryFor(run.RunId)!)));
-    }
-
-    [Test]
-    public void UnknownRunIdsAreReportedRatherThanGuessed()
-    {
-        var store = new RunStore(root);
-        store.CreateRun(RunTargetKind.Task, "t1", "Scrape");
-
-        Assert.That(store.GetRun("nope"), Is.Null);
-        Assert.That(store.DirectoryFor("nope"), Is.Null);
-        Assert.Throws<InvalidOperationException>(() => store.DatasetPath("nope", "x.csv"));
+        var back = store.GetRun("r1")!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(back.TargetName, Is.EqualTo("Old"));
+            Assert.That(back.StartedUtc, Is.EqualTo(manifest.StartedUtc));
+            Assert.That(store.LoadEvents("r1", "t1"), Is.EqualTo(new[] { "{\"kind\":\"a\"}" }));
+            Assert.That(store.LoadOutputs("r1", "t1")["s"]["v"], Is.EqualTo("1"));
+        });
     }
 }

@@ -16,21 +16,18 @@ namespace Automata.Tests;
 [TestFixture]
 public class DatasetConcurrencyTests
 {
-    private string root = null!;
+    private TestDb db = null!;
     private DatasetStore datasets = null!;
 
     [SetUp]
     public void SetUp()
     {
-        root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
-        datasets = new DatasetStore(root);
+        db = new TestDb();
+        datasets = db.Datasets();
     }
 
     [TearDown]
-    public void TearDown()
-    {
-        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-    }
+    public void TearDown() => db.Dispose();
 
     private static Dictionary<string, string> Row(int i) => new(StringComparer.Ordinal)
     {
@@ -143,30 +140,44 @@ public class DatasetConcurrencyTests
     }
 
     /// <summary>
-    /// The lock has to be per file, or every dataset in the workspace would queue behind whichever
-    /// one is busiest — and a parallel run writing two datasets would serialise for no reason.
+    /// The lock has to be per dataset, or every dataset in the workspace would queue behind
+    /// whichever one is busiest — and a parallel run writing two datasets would serialise for no
+    /// reason.
     /// </summary>
     [Test]
     public void TwoDifferentDatasetsDoNotBlockEachOther()
     {
-        using var first = ExclusiveFileLock.Acquire(datasets.PathFor("a.csv"));
+        using var first = ExclusiveFileLock.Acquire(datasets.LockKeyFor("a.csv"));
 
         Assert.DoesNotThrow(() =>
         {
             using var second = ExclusiveFileLock.Acquire(
-                datasets.PathFor("b.csv"), TimeSpan.FromMilliseconds(500));
+                datasets.LockKeyFor("b.csv"), TimeSpan.FromMilliseconds(500));
+        });
+    }
+
+    /// <summary>Names are case-insensitive, as file names were: "A.csv" and "a.csv" are one
+    /// dataset, so they must be one lock too.</summary>
+    [Test]
+    public void TheSameDatasetSpelledDifferentlyIsTheSameLock()
+    {
+        using var held = ExclusiveFileLock.Acquire(datasets.LockKeyFor("a.csv"));
+
+        Assert.Throws<IOException>(() =>
+        {
+            using var _ = ExclusiveFileLock.Acquire(datasets.LockKeyFor("A.CSV"), TimeSpan.FromMilliseconds(100));
         });
     }
 
     [Test]
-    public void WaitingTooLongForTheSameFileSaysSoRatherThanWritingAnyway()
+    public void WaitingTooLongForTheSameDatasetSaysSoRatherThanWritingAnyway()
     {
-        using var held = ExclusiveFileLock.Acquire(datasets.PathFor("a.csv"));
+        using var held = ExclusiveFileLock.Acquire(datasets.LockKeyFor("a.csv"));
 
         var thrown = Assert.Throws<IOException>(() =>
         {
             using var _ = ExclusiveFileLock.Acquire(
-                datasets.PathFor("a.csv"), TimeSpan.FromMilliseconds(200));
+                datasets.LockKeyFor("a.csv"), TimeSpan.FromMilliseconds(200));
         });
         Assert.That(thrown!.Message, Does.Contain("a.csv"));
     }

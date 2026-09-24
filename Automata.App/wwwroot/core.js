@@ -34,12 +34,10 @@ export const state = {
 
     // Datasets available to for-each and write-dataset steps, pushed by the host.
     datasets: [],
-    datasetRoot: '',
 
     // Recent runs, read from the run store rather than remembered here - so runs this window
     // never saw still show up.
     runs: [],
-    runRoot: '',
 
 
     // The schedule. Every derived value on an entry - when it is next due, why, and what its

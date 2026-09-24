@@ -5,10 +5,11 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using Automata.Browser;
 using Automata.Core.Operator;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
+using AutoWebNav;
+using AutoWebNav.WebView2;
 
 namespace Automata.App;
 

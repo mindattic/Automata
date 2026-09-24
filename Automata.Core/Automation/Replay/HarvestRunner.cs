@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Automata.Core.Automation.Model;
 using Automata.Core.Operator;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Replay;
 
@@ -52,12 +53,12 @@ public static class HarvestRunner
         // there. frames.js follows it for the frames neither can read into.
         var script = $$"""
         (function() {
-        {{AutomationScripts.ClosedRootsJs}}
-        {{AutomationScripts.StabilityJs}}
-        {{AutomationScripts.FingerprintJs}}
-        {{AutomationScripts.ResolverJs}}
-        {{AutomationScripts.FramesJs}}
-        {{AutomationScripts.HarvestJs}}
+        {{ToolkitScripts.ClosedRootsJs}}
+        {{ToolkitScripts.StabilityJs}}
+        {{ToolkitScripts.FingerprintJs}}
+        {{ToolkitScripts.ResolverJs}}
+        {{ToolkitScripts.FramesJs}}
+        {{ToolkitScripts.HarvestJs}}
         return window.__automataHarvestDeep({{specJson}});
         })()
         """;

@@ -1,8 +1,8 @@
 namespace Automata.Core.Automation.Model;
 
 /// <summary>
-/// A named group of tasks. On disk: one folder per collection
-/// (<c>collections\&lt;id&gt;\collection.json</c> + <c>tasks\&lt;taskId&gt;.json</c>).
+/// A named group of tasks — a row of the database's <c>Collections</c> table, and in an export the
+/// <c>collection.json</c> entry beside its tasks.
 /// </summary>
 public sealed class Collection
 {

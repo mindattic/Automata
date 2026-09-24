@@ -184,7 +184,6 @@ window.ssPanel = {
     },
     onRuns: function (payload) {
         state.runs = (payload && payload.runs) || [];
-        state.runRoot = (payload && payload.root) || '';
         renderRuns();
     },
     onSchedule: function (payload) {
@@ -201,7 +200,6 @@ window.ssPanel = {
     },
     onDatasets: function (payload) {
         state.datasets = (payload && payload.datasets) || [];
-        state.datasetRoot = (payload && payload.root) || '';
         renderDatasets();
         // The step editor asks for this when it needs a loop's columns, so the answer has to reach
         // it. Safe from looping: the editor only asks for what is missing, and this is the arrival

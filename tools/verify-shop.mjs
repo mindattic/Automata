@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, 
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { dbBeside, tasksIn, datasetRows } from './automata-db.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const exe = join(repo, 'Automata.Runner', 'bin', 'Debug', 'net10.0-windows', 'automata-runner.exe');
@@ -45,6 +46,8 @@ const roots = {
   AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
+// Everything the app and runner store is in one database, beside the scratch settings path.
+const dbPath = dbBeside(roots.AUTOMATA_SETTINGS_PATH);
 
 function runner(...args) {
   const result = spawnSync(exe, args, { env, encoding: 'utf8', timeout: 10 * 60 * 1000 });
@@ -111,9 +114,7 @@ try {
 
   // ---- find the demo task ------------------------------------------------------------------
   const tasksByKey = {};
-  const demosDir = join(roots.AUTOMATA_COLLECTIONS_ROOT, 'Demos');
-  for (const file of readdirSync(demosDir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
-    const task = JSON.parse(readFileSync(join(demosDir, file), 'utf8'));
+  for (const task of tasksIn(dbPath, 'Demos')) {
     if (task.demo?.key) tasksByKey[task.demo.key] = task;
   }
   check(
@@ -128,7 +129,7 @@ try {
   check('the run passes', first.code === 0, tail(first.out));
 
   // ---- the harvest itself ------------------------------------------------------------------
-  const products = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-products.csv'));
+  const products = csv('shop-products.csv');
   check(
     `the harvest wrote one row per product (${itemPages.length})`,
     products.length === itemPages.length,
@@ -146,7 +147,7 @@ try {
   );
 
   // ---- the run against the oracle ----------------------------------------------------------
-  const rows = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices.csv'));
+  const rows = csv('shop-prices.csv');
   check(
     'collected a price for every product, with no row twice',
     rows.length === itemPages.length && new Set(rows.map((r) => r.sku)).size === itemPages.length,
@@ -165,7 +166,7 @@ try {
   const second = runner('run', '--task', tasksByKey['shop-prices'].id);
   check('a second run passes too', second.code === 0, tail(second.out));
 
-  const after = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'shop-prices.csv'));
+  const after = csv('shop-prices.csv');
   check(
     'running it again replaces the results rather than doubling them',
     after.length === itemPages.length && sumCents(after) === expectedCents,
@@ -181,34 +182,9 @@ try {
 
 // ---- helpers ---------------------------------------------------------------------------------
 
-/// A reader for the datasets this project writes, which quote a field only when it needs it.
-function csv(path) {
-  if (!existsSync(path)) return [];
-  const lines = readFileSync(path, 'utf8').split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length < 2) return [];
-  const header = splitRow(lines[0]);
-  return lines.slice(1).map((line) => {
-    const cells = splitRow(line);
-    return Object.fromEntries(header.map((name, i) => [name, cells[i] ?? '']));
-  });
-}
-
-function splitRow(line) {
-  const cells = [];
-  let cell = '';
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++; }
-      else if (ch === '"') quoted = false;
-      else cell += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ',') { cells.push(cell); cell = ''; }
-    else cell += ch;
-  }
-  cells.push(cell);
-  return cells;
+/// A dataset's rows, as the CSV file used to give them: an object of string columns per row.
+function csv(dataset) {
+  return datasetRows(dbPath, dataset) ?? [];
 }
 
 /// Prices come back as the page displayed them ("$12.99"), so the currency and separators are

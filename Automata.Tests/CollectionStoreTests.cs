@@ -1,7 +1,7 @@
-using System.IO;
 using System.Text.Json;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Storage;
+using AutoWebNav;
 using NUnit.Framework;
 
 namespace Automata.Tests;
@@ -9,21 +9,18 @@ namespace Automata.Tests;
 [TestFixture]
 public class CollectionStoreTests
 {
-    private string root = null!;
+    private TestDb db = null!;
     private CollectionStore store = null!;
 
     [SetUp]
     public void SetUp()
     {
-        root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
-        store = new CollectionStore(root);
+        db = new TestDb();
+        store = db.Collections();
     }
 
     [TearDown]
-    public void TearDown()
-    {
-        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-    }
+    public void TearDown() => db.Dispose();
 
     private TaskDefinition NewTask(string collectionId, string name = "My task") => new()
     {
@@ -32,60 +29,118 @@ public class CollectionStoreTests
         Steps = [new Step { Action = StepAction.Navigate, Label = "Go", Url = "https://x.example" }],
     };
 
-    private static TaskDefinition ReadTaskFile(string path) =>
-        JsonSerializer.Deserialize<TaskDefinition>(File.ReadAllText(path), AutomataJson.Options)!;
+    // ---- a task survives the database exactly ----------------------------------------------------
 
-    // ---- finding a thing by its id ---------------------------------------------------------------
-    //
-    // The store remembers where an id lives so a save does not re-read the whole workspace to find
-    // one file. These pin the part that matters: the memory is never believed over the disk. This
-    // is a folder people are invited to rearrange in Explorer, and a remembered path to a file that
-    // has since moved would have the next save quietly write a second copy beside it.
+    /// <summary>
+    /// The step tree is stored as one JSON document in the shape a task file always had, so a task
+    /// read back must serialize to exactly what went in — nested children, element fingerprints,
+    /// bindings, scoped settings, the lot. This is what keeps export, import and the old files
+    /// interchangeable.
+    /// </summary>
+    [Test]
+    public void ATaskRoundTripsExactly_NestedStepsFingerprintsAndAll()
+    {
+        var collection = store.CreateCollection("Round trip");
+        var task = new TaskDefinition
+        {
+            CollectionId = collection.Id,
+            Name = "Search Google for cats",
+            Description = "Demo end-to-end proof point",
+            StartUrl = "https://www.google.com",
+            Inputs = [new TaskInput { Name = "query", Default = "cats" }],
+            Settings = new EngineSettingsOverride { SelfHeal = true, Retry = new RetryPolicy { MaxAttempts = 2 } },
+            Demo = new DemoOrigin { Key = "demo-key", FactoryHash = "abc123" },
+            Steps =
+            [
+                new Step { Id = "s1", Action = StepAction.Navigate, Label = "Go", Url = "https://www.google.com" },
+                new Step
+                {
+                    Id = "s2", Action = StepAction.TypeText, Label = "Type", Value = "cats",
+                    Target = new ElementFingerprint
+                    {
+                        Tag = "textarea", NameAttr = "q", AriaRole = "combobox", AriaLabel = "Search",
+                        CssSelector = "textarea[name=\"q\"]", XPath = "/html/body/div[1]/form//textarea",
+                        ClassList = ["gLFyf"], NearbyLabelText = "Search",
+                    },
+                    Bindings = new Dictionary<string, BindingRef>
+                    {
+                        ["Value"] = new() { Kind = BindingKind.TaskInput, ParameterName = "query" },
+                    },
+                },
+                new Step
+                {
+                    Id = "s3", Action = StepAction.Group, Label = "Verify",
+                    Settings = new EngineSettingsOverride { DefaultStepTimeoutMs = 5000 },
+                    Children =
+                    [
+                        new Step
+                        {
+                            Id = "s3a", Action = StepAction.WaitForElement, Label = "Results", TimeoutMs = 15000,
+                            Target = new ElementFingerprint { Tag = "div", Id = "search", CssSelector = "#search" },
+                            Children =
+                            [
+                                new Step
+                                {
+                                    Id = "s3a1", Action = StepAction.ExtractText, Label = "Title",
+                                    Target = new ElementFingerprint { Tag = "h3", CssSelector = "#search h3", ClassList = ["LC20lb"] },
+                                    Outputs = [new OutputField { Name = "title" }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            Outputs = [new TaskOutput { Name = "title", SourceStepId = "s3a1", SourceOutputField = "text" }],
+        };
+        store.SaveTask(task);
+
+        var back = db.Collections().GetTask(task.Id)!;
+
+        Assert.That(JsonSerializer.Serialize(back, AutomataJson.Options),
+            Is.EqualTo(JsonSerializer.Serialize(task, AutomataJson.Options)));
+        Assert.That(back.Steps[2].Children[0].Children[0].Target!.ClassList, Is.EqualTo(new[] { "LC20lb" }));
+    }
+
+    // ---- identity, renames and deletes -----------------------------------------------------------
 
     [Test]
-    public void ATaskWhoseFileWasRenamedByHandIsStillTheSameTask()
+    public void ARenamedTaskIsStillTheSameTask()
     {
         var collection = store.CreateCollection("C");
         var task = NewTask(collection.Id, "One");
         store.SaveTask(task);
-        Assert.That(store.GetTask(task.Id), Is.Not.Null, "and now the store knows where it lives");
 
-        var dir = Path.Combine(root, "C");
-        File.Move(Path.Combine(dir, "One.json"), Path.Combine(dir, "Renamed.json"));
+        task.Name = "Renamed";
+        task.Description = "edited after the rename";
+        store.SaveTask(task);
 
-        // The file name wins on load, so this is the same task under a new name.
-        var healed = store.LoadTasks(collection.Id).Single();
-        healed.Description = "edited after the rename";
-        store.SaveTask(healed);
-
-        var files = Directory.GetFiles(dir, "*.json").Select(Path.GetFileName).Order().ToList();
+        var tasks = store.LoadTasks(collection.Id);
         Assert.Multiple(() =>
         {
-            Assert.That(healed.Name, Is.EqualTo("Renamed"));
-            Assert.That(files, Is.EqualTo(new[] { "collection.json", "Renamed.json" }),
-                "a remembered path must not leave a copy behind at the old one");
+            Assert.That(tasks, Has.Count.EqualTo(1), "a rename must not leave a copy behind");
+            Assert.That(tasks[0].Id, Is.EqualTo(task.Id));
+            Assert.That(tasks[0].Name, Is.EqualTo("Renamed"));
+            Assert.That(tasks[0].Description, Is.EqualTo("edited after the rename"));
         });
     }
 
     [Test]
-    public void ACollectionWhoseFolderWasRenamedByHandIsStillTheSameCollection()
+    public void ARenamedCollectionKeepsItsTasks()
     {
-        var collection = store.CreateCollection("C");
-        store.SaveTask(NewTask(collection.Id));
-        Assert.That(store.GetCollection(collection.Id), Is.Not.Null);
+        var collection = store.CreateCollection("Before");
+        store.SaveTask(NewTask(collection.Id, "T1"));
 
-        Directory.Move(Path.Combine(root, "C"), Path.Combine(root, "Renamed"));
+        collection.Name = "After";
+        store.SaveCollection(collection);
 
-        var found = store.GetCollection(collection.Id);
         Assert.Multiple(() =>
         {
-            Assert.That(found, Is.Not.Null, "the collection is where its folder now is");
-            Assert.That(found!.Name, Is.EqualTo("Renamed"));
-            Assert.That(Directory.GetDirectories(root).Length, Is.EqualTo(1));
+            Assert.That(store.LoadCollections().Select(c => c.Name), Is.EqualTo(new[] { "After" }));
+            Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("T1"));
         });
     }
 
-    /// <summary>A deleted id must stop resolving, not keep answering from memory.</summary>
+    /// <summary>A deleted id must stop resolving.</summary>
     [Test]
     public void ADeletedTaskIsNotStillFoundByItsId()
     {
@@ -99,190 +154,136 @@ public class CollectionStoreTests
         Assert.That(store.GetTask(task.Id), Is.Null);
     }
 
-    // ---- name-based layout ---------------------------------------------------------------------
-
+    /// <summary>
+    /// Deleting only hides (HOUSE-LAW-2): the row stays, still owns its id — so an import cannot
+    /// land a different task on it — and saving that id again brings it back, which is how the
+    /// demo generator restores an example somebody deleted.
+    /// </summary>
     [Test]
-    public void CreateCollection_UsesHumanReadableFolderName()
+    public void DeletingOnlyHides_AndSavingTheSameIdBringsItBack()
     {
-        var created = store.CreateCollection("Email checks");
+        var collection = store.CreateCollection("C");
+        var task = NewTask(collection.Id, "Kept");
+        store.SaveTask(task);
 
-        Assert.That(File.Exists(Path.Combine(root, "Email checks", "collection.json")), Is.True);
-        Assert.That(store.LoadCollections().Single().Id, Is.EqualTo(created.Id));
+        store.DeleteTask(task.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.LoadTasks(collection.Id), Is.Empty);
+            Assert.That(store.TaskIdTaken(task.Id), Is.True, "the hidden row still owns its id");
+        });
+
+        store.SaveTask(task);
+        Assert.That(store.LoadTasks(collection.Id).Single().Id, Is.EqualTo(task.Id));
     }
 
     [Test]
-    public void SaveTask_UsesHumanReadableFileName_AndAppendsToTaskOrder()
+    public void DeletingACollectionHidesItAndEveryTaskInIt()
+    {
+        var collection = store.CreateCollection("Doomed");
+        var task = NewTask(collection.Id);
+        store.SaveTask(task);
+
+        store.DeleteCollection(collection.Id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.LoadCollections(), Is.Empty);
+            Assert.That(store.GetTask(task.Id), Is.Null);
+            Assert.That(store.LoadAllTasks(), Is.Empty);
+            Assert.That(store.CollectionIdTaken(collection.Id), Is.True);
+            Assert.Throws<InvalidOperationException>(() => store.SaveTask(NewTask(collection.Id)),
+                "a hidden collection takes no new tasks");
+        });
+    }
+
+    // ---- names -----------------------------------------------------------------------------------
+
+    /// <summary>A name is just a name now — nothing is projected onto a file system, so characters,
+    /// device names and lengths that used to need sanitizing on disk round-trip untouched.</summary>
+    [Test]
+    public void NamesThatWereAwkwardOnDiskRoundTripExactly()
+    {
+        var longName = new string('a', 150) + " end";
+        var collection = store.CreateCollection("Search: Engines?");
+        store.SaveTask(NewTask(collection.Id, "Wolf: Tshirts * <cheap>"));
+        store.SaveTask(NewTask(collection.Id, "NUL"));
+        store.SaveTask(NewTask(collection.Id, "collection"));
+        store.SaveTask(NewTask(collection.Id, longName));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.LoadCollections().Single().Name, Is.EqualTo("Search: Engines?"));
+            Assert.That(store.LoadTasks(collection.Id).Select(t => t.Name),
+                Is.EquivalentTo(new[] { "Wolf: Tshirts * <cheap>", "NUL", "collection", longName }));
+        });
+    }
+
+    [Test]
+    public void CreateCollection_WithTakenName_GetsNumericSuffix()
+    {
+        store.CreateCollection("Work");
+        var second = store.CreateCollection("work");
+
+        Assert.That(second.Name, Is.EqualTo("work (2)"), "names compare case-insensitively");
+        Assert.That(store.LoadCollections(), Has.Count.EqualTo(2));
+    }
+
+    [Test]
+    public void RenamingACollectionOntoAnothersName_SuffixesInsteadOfMerging()
+    {
+        store.CreateCollection("Alpha");
+        var beta = store.CreateCollection("Beta");
+
+        beta.Name = "Alpha";
+        store.SaveCollection(beta);
+
+        Assert.That(beta.Name, Is.EqualTo("Alpha (2)"));
+        Assert.That(store.GetCollection(beta.Id)!.Name, Is.EqualTo("Alpha (2)"));
+    }
+
+    [Test]
+    public void RenameOntoASiblingTasksName_SuffixesInsteadOfClobbering()
+    {
+        var collection = store.CreateCollection("C");
+        var a = NewTask(collection.Id, "Alpha");
+        var b = NewTask(collection.Id, "Beta");
+        store.SaveTask(a);
+        store.SaveTask(b);
+
+        b.Name = "Alpha";
+        store.SaveTask(b);
+
+        Assert.That(b.Name, Is.EqualTo("Alpha (2)"));
+        var tasks = store.LoadTasks(collection.Id);
+        Assert.That(tasks, Has.Count.EqualTo(2));
+        Assert.That(tasks.Single(t => t.Id == a.Id).Name, Is.EqualTo("Alpha")); // untouched
+    }
+
+    [Test]
+    public void TheSameTaskNameInTwoCollectionsIsFine()
+    {
+        var first = store.CreateCollection("One");
+        var second = store.CreateCollection("Two");
+        store.SaveTask(NewTask(first.Id, "Same"));
+        var other = NewTask(second.Id, "Same");
+        store.SaveTask(other);
+
+        Assert.That(other.Name, Is.EqualTo("Same"));
+    }
+
+    // ---- CRUD / move / duplicate ------------------------------------------------------------------
+
+    [Test]
+    public void SaveTask_AppendsToTaskOrder()
     {
         var collection = store.CreateCollection("Google Searches");
         var task = NewTask(collection.Id, "Wolf Tshirts");
 
         store.SaveTask(task);
 
-        Assert.That(File.Exists(Path.Combine(root, "Google Searches", "Wolf Tshirts.json")), Is.True);
-        var tasks = store.LoadTasks(collection.Id);
-        Assert.That(tasks.Single().Id, Is.EqualTo(task.Id));
+        Assert.That(store.LoadTasks(collection.Id).Single().Id, Is.EqualTo(task.Id));
         Assert.That(store.GetCollection(collection.Id)!.TaskOrder, Is.EqualTo(new[] { task.Id }));
-    }
-
-    [Test]
-    public void RenamingATask_MovesItsFile()
-    {
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, "Old name");
-        store.SaveTask(task);
-
-        task.Name = "New name";
-        store.SaveTask(task);
-
-        Assert.That(File.Exists(Path.Combine(root, "C", "New name.json")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "C", "Old name.json")), Is.False);
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("New name"));
-    }
-
-    [Test]
-    public void RenamingACollection_MovesItsFolder_WithTasksIntact()
-    {
-        var collection = store.CreateCollection("Before");
-        store.SaveTask(NewTask(collection.Id, "T1"));
-
-        collection.Name = "After";
-        store.SaveCollection(collection);
-
-        Assert.That(Directory.Exists(Path.Combine(root, "After")), Is.True);
-        Assert.That(Directory.Exists(Path.Combine(root, "Before")), Is.False);
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("T1"));
-    }
-
-    // ---- illegal characters: lossless round-trip -------------------------------------------------
-
-    [Test]
-    public void IllegalCharacters_SanitizedOnDisk_ButOriginalNameRoundTrips()
-    {
-        var collection = store.CreateCollection("Search: Engines?");
-        var task = NewTask(collection.Id, "Wolf: Tshirts * <cheap>");
-        store.SaveTask(task);
-
-        // Disk names are sanitized projections…
-        Assert.That(Directory.Exists(Path.Combine(root, "Search_ Engines_")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "Search_ Engines_", "Wolf_ Tshirts _ _cheap_.json")), Is.True);
-
-        // …but the originals — illegal characters intact — parse back from the JSON.
-        var reloadedCollection = store.LoadCollections().Single();
-        Assert.That(reloadedCollection.Name, Is.EqualTo("Search: Engines?"));
-        var reloadedTask = store.LoadTasks(collection.Id).Single();
-        Assert.That(reloadedTask.Name, Is.EqualTo("Wolf: Tshirts * <cheap>"));
-
-        // A second load must not "heal" the sanitization difference into a rename.
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("Wolf: Tshirts * <cheap>"));
-    }
-
-    [Test]
-    public void ReservedWindowsNames_GetPrefixed_ButOriginalNameRoundTrips()
-    {
-        var collection = store.CreateCollection("CON");
-        var task = NewTask(collection.Id, "NUL");
-        store.SaveTask(task);
-
-        Assert.That(Directory.Exists(Path.Combine(root, "_CON")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "_CON", "_NUL.json")), Is.True);
-        Assert.That(store.LoadCollections().Single().Name, Is.EqualTo("CON"));
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("NUL"));
-    }
-
-    [Test]
-    public void TaskNamedCollection_CannotClobberTheManifest()
-    {
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, "collection");
-        store.SaveTask(task);
-
-        Assert.That(File.Exists(Path.Combine(root, "C", "_collection.json")), Is.True);
-        Assert.That(store.GetCollection(collection.Id), Is.Not.Null); // manifest survived
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo("collection"));
-    }
-
-    [Test]
-    public void VeryLongNames_AreTruncatedOnDisk_ButRoundTrip()
-    {
-        var longName = new string('a', 150) + " end";
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, longName);
-        store.SaveTask(task);
-
-        var file = Directory.EnumerateFiles(Path.Combine(root, "C"))
-            .Single(f => Path.GetFileName(f) != "collection.json");
-        Assert.That(Path.GetFileNameWithoutExtension(file).Length, Is.LessThanOrEqualTo(100));
-        Assert.That(store.LoadTasks(collection.Id).Single().Name, Is.EqualTo(longName));
-    }
-
-    // ---- explorer-edit healing -------------------------------------------------------------------
-
-    [Test]
-    public void FileRenamedInExplorer_IsAdoptedAsTheTaskName()
-    {
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, "Original");
-        store.SaveTask(task);
-
-        File.Move(Path.Combine(root, "C", "Original.json"), Path.Combine(root, "C", "Hand renamed.json"));
-
-        var reloaded = store.LoadTasks(collection.Id).Single();
-        Assert.That(reloaded.Name, Is.EqualTo("Hand renamed"));
-        Assert.That(ReadTaskFile(Path.Combine(root, "C", "Hand renamed.json")).Name,
-            Is.EqualTo("Hand renamed")); // healed on disk too
-    }
-
-    [Test]
-    public void FolderRenamedInExplorer_IsAdoptedAsTheCollectionName()
-    {
-        var collection = store.CreateCollection("Original");
-
-        Directory.Move(Path.Combine(root, "Original"), Path.Combine(root, "Hand renamed"));
-
-        Assert.That(store.LoadCollections().Single().Name, Is.EqualTo("Hand renamed"));
-        Assert.That(store.GetCollection(collection.Id)!.Name, Is.EqualTo("Hand renamed")); // id stable
-    }
-
-    [Test]
-    public void TaskFileCopyPastedInExplorer_GetsAFreshId()
-    {
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, "T");
-        store.SaveTask(task);
-
-        File.Copy(Path.Combine(root, "C", "T.json"), Path.Combine(root, "C", "T - Copy.json"));
-
-        var tasks = store.LoadTasks(collection.Id);
-        Assert.That(tasks, Has.Count.EqualTo(2));
-        Assert.That(tasks.Select(t => t.Id).Distinct().Count(), Is.EqualTo(2));
-    }
-
-    [Test]
-    public void TaskFolderMissingManifest_IsRecoveredWithTheFolderName()
-    {
-        var stray = new TaskDefinition { Id = "t1", CollectionId = "whatever", Name = "Orphaned" };
-        Directory.CreateDirectory(Path.Combine(root, "Hand-made folder"));
-        File.WriteAllText(Path.Combine(root, "Hand-made folder", "Orphaned.json"),
-            JsonSerializer.Serialize(stray, AutomataJson.Options));
-
-        var collections = store.LoadCollections();
-
-        Assert.That(collections, Has.Count.EqualTo(1));
-        Assert.That(collections[0].Name, Is.EqualTo("Hand-made folder"));
-        var tasks = store.LoadTasks(collections[0].Id);
-        Assert.That(tasks.Single().CollectionId, Is.EqualTo(collections[0].Id)); // re-parented
-    }
-
-    // ---- CRUD / move / duplicate ------------------------------------------------------------------
-
-    [Test]
-    public void CreateCollection_WithTakenName_GetsNumericSuffix()
-    {
-        store.CreateCollection("Work");
-        var second = store.CreateCollection("Work");
-
-        Assert.That(second.Name, Is.EqualTo("Work (2)"));
-        Assert.That(Directory.Exists(Path.Combine(root, "Work (2)")), Is.True);
     }
 
     [Test]
@@ -298,7 +299,13 @@ public class CollectionStoreTests
     }
 
     [Test]
-    public void DeleteTask_RemovesFileAndTaskOrderEntry()
+    public void SaveTask_IntoACollectionThatDoesNotExist_Refuses()
+    {
+        Assert.Throws<InvalidOperationException>(() => store.SaveTask(NewTask("no-such-collection")));
+    }
+
+    [Test]
+    public void DeleteTask_HidesItAndRemovesTheTaskOrderEntry()
     {
         var collection = store.CreateCollection("C");
         var task = NewTask(collection.Id);
@@ -311,7 +318,7 @@ public class CollectionStoreTests
     }
 
     [Test]
-    public void MoveTask_RelocatesFileBetweenCollectionFolders()
+    public void MoveTask_ReparentsItAndBothOrdersFollow()
     {
         var from = store.CreateCollection("From");
         var to = store.CreateCollection("To");
@@ -321,8 +328,8 @@ public class CollectionStoreTests
         var moved = store.MoveTask(task.Id, to.Id);
 
         Assert.That(moved.CollectionId, Is.EqualTo(to.Id));
-        Assert.That(File.Exists(Path.Combine(root, "To", "Mover.json")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "From", "Mover.json")), Is.False);
+        Assert.That(store.LoadTasks(to.Id).Single().Id, Is.EqualTo(task.Id));
+        Assert.That(store.LoadTasks(from.Id), Is.Empty);
         Assert.That(store.GetCollection(from.Id)!.TaskOrder, Is.Empty);
         Assert.That(store.GetCollection(to.Id)!.TaskOrder, Is.EqualTo(new[] { task.Id }));
     }
@@ -339,7 +346,7 @@ public class CollectionStoreTests
 
         Assert.That(copy.Id, Is.Not.EqualTo(task.Id));
         Assert.That(copy.Name, Is.EqualTo("Login flow (2)"));
-        Assert.That(File.Exists(Path.Combine(root, "C", "Login flow (2).json")), Is.True);
+        Assert.That(store.LoadTasks(collection.Id), Has.Count.EqualTo(2));
         Assert.That(copy.Steps[0].Id, Is.Not.EqualTo(task.Steps[0].Id));
         Assert.That(copy.Steps[0].Children[0].Id, Is.Not.EqualTo(task.Steps[0].Children[0].Id));
     }
@@ -356,6 +363,7 @@ public class CollectionStoreTests
         Assert.That(copy.Name, Is.EqualTo("Source (2)"));
         var copiedTasks = store.LoadTasks(copy.Id);
         Assert.That(copiedTasks.Single().Id, Is.Not.EqualTo(task.Id));
+        Assert.That(copy.TaskOrder, Is.EqualTo(new[] { copiedTasks.Single().Id }));
         Assert.That(store.LoadTasks(source.Id), Has.Count.EqualTo(1)); // source untouched
     }
 
@@ -556,56 +564,20 @@ public class CollectionStoreTests
     }
 
     [Test]
-    public void RenameOntoAnUnreadableFile_SuffixesInsteadOfClobbering()
-    {
-        var collection = store.CreateCollection("C");
-        var task = NewTask(collection.Id, "Mine");
-        store.SaveTask(task);
-        // A corrupt sibling occupies the name this task is being renamed to.
-        File.WriteAllText(Path.Combine(root, "C", "Broken.json"), "{ not json at all");
-
-        task.Name = "Broken";
-        store.SaveTask(task);
-
-        Assert.That(task.Name, Is.EqualTo("Broken (2)"));
-        Assert.That(File.ReadAllText(Path.Combine(root, "C", "Broken.json")),
-            Is.EqualTo("{ not json at all")); // the corrupt file survives untouched
-        Assert.That(File.Exists(Path.Combine(root, "C", "Broken (2).json")), Is.True);
-    }
-
-    [Test]
-    public void RenameOntoASiblingTasksName_SuffixesInsteadOfClobbering()
-    {
-        var collection = store.CreateCollection("C");
-        var a = NewTask(collection.Id, "Alpha");
-        var b = NewTask(collection.Id, "Beta");
-        store.SaveTask(a);
-        store.SaveTask(b);
-
-        b.Name = "Alpha";
-        store.SaveTask(b);
-
-        Assert.That(b.Name, Is.EqualTo("Alpha (2)"));
-        var tasks = store.LoadTasks(collection.Id);
-        Assert.That(tasks, Has.Count.EqualTo(2));
-        Assert.That(tasks.Single(t => t.Id == a.Id).Name, Is.EqualTo("Alpha")); // untouched
-    }
-
-    [Test]
     public void LoadTasks_OrdersByTaskOrder_UnlistedSortLastByName()
     {
         var collection = store.CreateCollection("C");
         var a = NewTask(collection.Id, "Alpha");
         var b = NewTask(collection.Id, "Beta");
+        var stray = NewTask(collection.Id, "AAA stray");
         store.SaveTask(a);
         store.SaveTask(b);
+        store.SaveTask(stray);
 
+        // An order that does not list every task — the stray one sorts last, by name.
         var reordered = store.GetCollection(collection.Id)!;
         reordered.TaskOrder = [b.Id, a.Id];
         store.SaveCollection(reordered);
-        var stray = new TaskDefinition { Id = "stray1", CollectionId = collection.Id, Name = "AAA stray" };
-        File.WriteAllText(Path.Combine(root, "C", "AAA stray.json"),
-            JsonSerializer.Serialize(stray, AutomataJson.Options));
 
         var tasks = store.LoadTasks(collection.Id);
 
@@ -613,10 +585,9 @@ public class CollectionStoreTests
     }
 
     /// <summary>
-    /// Deleting a task tidies the order of the collection it was actually IN. The remembered
-    /// path was believed regardless of which folder was being asked about, so a delete could
-    /// match on the first collection it walked, remove the right file and then clean the wrong
-    /// manifest — leaving the real collection ordering a task that no longer existed.
+    /// Deleting a task tidies the order of the collection it was actually IN — and only that one.
+    /// (The file store once cleaned the wrong collection's order, leaving the real one listing a
+    /// task that no longer existed.)
     /// </summary>
     [Test]
     public void DeleteTask_TidiesTheOrderOfTheCollectionTheTaskWasActuallyIn()
@@ -630,10 +601,7 @@ public class CollectionStoreTests
         var doomed = NewTask(second.Id, "Doomed");
         store.SaveTask(doomed);
 
-        // The second save is what puts the doomed task's path into the store's memory — the first
-        // one wrote a file that was not there to be found yet. Editing a task twice is the ordinary
-        // case, and it is the case the delete below used to get wrong. Its NAME stays put, because
-        // a rename moves the file and the memory of the old path falls away with it.
+        // Edited twice first — the ordinary case, and the one the file store used to get wrong.
         doomed.StartUrl = "https://edited.example";
         store.SaveTask(doomed);
 
@@ -649,8 +617,8 @@ public class CollectionStoreTests
         });
     }
 
-    /// <summary>The same confusion the other way round: a save must not find "its" file in
-    /// somebody else's folder just because that is where it last saw it.</summary>
+    /// <summary>The same confusion the other way round: after a move, a save must not leave a
+    /// copy behind in the collection the task came from.</summary>
     [Test]
     public void SavingATaskAfterItMoved_LeavesNoCopyBehindInTheOldCollection()
     {

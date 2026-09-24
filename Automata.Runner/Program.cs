@@ -1,10 +1,11 @@
-using Automata.Browser;
 using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Extensions;
 using Microsoft.Extensions.DependencyInjection;
+using AutoWebNav;
+using AutoWebNav.WebView2;
 
 namespace Automata.Runner;
 
@@ -28,6 +29,11 @@ public static class Program
         var services = new ServiceCollection();
         services.AddAutomataCore();
         using var provider = services.BuildServiceProvider();
+
+        // Schema first, and on a brand-new database the one-time move off the old JSON files —
+        // whichever of the app and the runner starts first does it, and only once.
+        var imported = provider.MigrateAutomataDatabase();
+        if (imported.Ran) Console.Error.WriteLine(imported.Describe());
 
         var profileRoot = Environment.GetEnvironmentVariable("AUTOMATA_BROWSER_PROFILE_ROOT")
             ?? Path.Combine(

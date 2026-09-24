@@ -14,6 +14,17 @@ internal static class StoreUtil
     public static string NewId() => Guid.NewGuid().ToString("n");
 
     /// <summary>
+    /// Now, to the millisecond. The database keeps a DateTimeOffset to a tenth of a millisecond, so
+    /// stamping at full precision would leave the object a caller holds after a save differing
+    /// from the one it reads back; at millisecond precision the two are equal.
+    /// </summary>
+    public static DateTimeOffset UtcNow()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMillisecond));
+    }
+
+    /// <summary>
     /// Fresh ids for a whole task's step tree, AND every reference to those ids rewritten to match.
     /// <para>
     /// Step ids are only unique within a task, so a copy has to be re-keyed: two tasks answering to

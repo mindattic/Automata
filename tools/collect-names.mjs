@@ -31,7 +31,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const scriptsDir = path.join(repoRoot, 'Automata.Core', 'Automation', 'Scripts');
+// The page toolkit lives in the shared AutoWebNav repo, checked out beside this one.
+const scriptsDir = path.join(repoRoot, '..', 'AutoWebNav', 'AutoWebNav', 'Scripts');
 const keep = process.argv.includes('--keep');
 
 // Its own ports: verify-ui holds 9333-9336 and verify-js 9337-9338.

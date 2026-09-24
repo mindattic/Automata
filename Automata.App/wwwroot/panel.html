@@ -137,14 +137,21 @@
       </div>
       <div class="row settings-row">
         <span class="key-status">Move a collection or task in or out of this workspace</span>
-        <button id="btn-import" class="mini" data-tooltip="Import a collection or task from a zip">⇪ Import</button>
+        <button id="btn-import" class="mini" data-tooltip="Import a collection or task (.automata.zip, .automata.json, an old task .json, or a Recorder flow)">⇪ Import</button>
         <button id="btn-export" class="mini" disabled
-                data-tooltip="Export the selected collection or task as a zip">⇩ Export</button>
+                data-tooltip="Export the selected collection or task as a zip or JSON">⇩ Export</button>
       </div>
       <div class="row settings-row">
-        <span class="key-status">Where collections are stored on disk</span>
+        <span class="key-status">The whole workspace — collections, datasets, schedule, runs, settings</span>
+        <button id="btn-import-workspace" class="mini"
+                data-tooltip="Merge a workspace backup in (nothing here is overwritten)">⇪ Import</button>
+        <button id="btn-export-workspace" class="mini"
+                data-tooltip="Back up everything to one .automata.json file">⇩ Export</button>
+      </div>
+      <div class="row settings-row">
+        <span class="key-status">Everything is stored in one database file</span>
         <button id="btn-folder" class="mini"
-                data-tooltip="Open the Collections folder in File Explorer">📁 Files</button>
+                data-tooltip="Show automata.db in File Explorer">Open data folder</button>
       </div>
       <div class="field">
         <span id="lbl-layout">Layout</span>

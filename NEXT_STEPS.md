@@ -1906,6 +1906,52 @@ Green at the end of it: **555 NUnit tests**, `verify-ui` 84/84, `verify-js` 13/1
 all pass, `verify-shop` all pass. `verify-live --live` was not run (it needs the network and real
 sites).
 
+### Phase 36 - one database, and files only for sharing (2026-09-23)
+
+Storage moved from JSON files to SQLite (EF Core 10), the decision taken for every MindAttic app on
+the shared AutoWebNav library (Automata, KdpPublish, JobHunt): **the database is the only store,
+and files are how work travels.** `%LocalAppData%\MindAttic\Automata\automata.db` holds
+collections, tasks, datasets (rows in `DatasetRows`), runs with their events and outputs, the
+schedule, parked runs, settings and a `Meta` table. Engine-settings overrides are EF complex types
+(columns on their rows, with a shadow discriminator because every member is optional); a task's
+recursive step tree is one JSON column in exactly the shape the task files had, so export, import
+and the old files stay interchangeable. The initial migration applies at startup in the app and
+the runner (`MigrateAutomataDatabase`), and lazily on any first use, so no path can reach an
+unmigrated file.
+
+- The stores keep their public shape (`CollectionStore`, `DatasetStore`, `RunStore`,
+  `ScheduleStore`, `ParkedRunStore`, `AutomataSettingsStore`) and take an `AutomataDatabase`
+  instead of a folder. Paths are gone from them: no `RootPath`, `DirectoryFor`, `DatasetPath`.
+- Deleting a collection or task hides it (HOUSE-LAW-2); a hidden row still owns its id, so an
+  import cannot land a different task on it, and saving the id again brings it back.
+- Export/import: the `*.automata.zip` is unchanged; `*.automata.json` adds a single task, a
+  collection, or the whole workspace (collections, datasets, schedule, settings, runs, parked
+  runs). An old per-task `.json` file imports as a task. The no-overwrite rules apply throughout,
+  and a workspace merge remaps schedule targets and chains, run history and parked runs along with
+  the task ids.
+- The one-time `LegacyWorkspaceImporter` reads the old `Documents\Automata` folders and
+  `settings.json` into an empty database, applying the old store's hand-edit rules on the way in,
+  touching no file, and recording its outcome in `Meta` so it never runs twice. The name
+  sanitizing and healing that used to rewrite files live on only there.
+- The Explorer buttons went with the folders: Settings' **📁 Files** is **Open data folder** (shows
+  `automata.db`), the Data tab's is **⇪ Import** plus a per-dataset **⇩** export, and the Runs tab's
+  📁 opens the run logs, which are still plain text files.
+- `AUTOMATA_DB_PATH` names the database; a harness that sets `AUTOMATA_SETTINGS_PATH` gets one
+  beside it. Tests run the real migrations into a template once and copy it per test.
+
+The harnesses read the scratch database through `tools/automata-db.mjs` (node:sqlite) instead of
+the old folders. `verify-ui` still writes its fixtures as old-layout files, so every run also
+exercises the one-time import. Hovered mini buttons in the light theme were white on light grey
+(1.42:1); the taller Settings dialog happened to leave the pointer on one during the axe pass, so
+they have their own per-theme hover colour now.
+
+Known gaps: there is no way to delete a dataset from the UI yet. `verify-demos` has three failures
+that predate this phase - the `park` example became a 5-second wait that no longer parks, and
+`wolf-tshirts` is not in its accounted-for list.
+
+Green at the end of it: **589 NUnit tests**, `verify-js` 13/13, `verify-ui` 84/84, `verify-shop`
+all pass; `verify-demos` passes everything but those three.
+
 ### Still to do in v3
 
 Nothing. All eight planned phases plus 8b-8e and phase 9 are done; what remains is in **Not done

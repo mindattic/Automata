@@ -1,3 +1,5 @@
+using AutoWebNav;
+
 namespace Automata.Core.Automation.Model;
 
 public enum StepAction

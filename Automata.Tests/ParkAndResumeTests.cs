@@ -5,6 +5,7 @@ using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 
@@ -20,6 +21,7 @@ namespace Automata.Tests;
 [TestFixture]
 public class ParkAndResumeTests
 {
+    private TestDb db = null!;
     private string root = null!;
     private CollectionStore collections = null!;
     private DatasetStore datasets = null!;
@@ -30,14 +32,16 @@ public class ParkAndResumeTests
     [SetUp]
     public void SetUp()
     {
+        db = new TestDb();
         root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
-        collections = new CollectionStore(Path.Combine(root, "collections"));
-        datasets = new DatasetStore(Path.Combine(root, "datasets"));
+        collections = db.Collections();
+        datasets = db.Datasets();
     }
 
     [TearDown]
     public void TearDown()
     {
+        db.Dispose();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 
@@ -574,7 +578,7 @@ public class ParkAndResumeTests
     [Test]
     public void ParkedRunStore_RoundTripsAndReportsOnlyWhatIsDue()
     {
-        var store = new ParkedRunStore(Path.Combine(root, "parked"));
+        var store = db.Parked();
         var soon = Park("soon", Midnight.AddMinutes(-1));
         var later = Park("later", Midnight.AddHours(3));
         store.Save(soon);
@@ -593,10 +597,10 @@ public class ParkAndResumeTests
     [Test]
     public void ParkedRunStore_ListingIsEmptyBeforeAnythingParks()
     {
-        // A fresh install has no Parked folder at all, and listing must not create one.
-        var store = new ParkedRunStore(Path.Combine(root, "never-used"));
+        // A fresh install has nothing parked, and listing must neither fail nor invent anything.
+        var store = db.Parked();
         Assert.That(store.List(), Is.Empty);
-        Assert.That(Directory.Exists(Path.Combine(root, "never-used")), Is.False);
+        Assert.That(store.Due(Midnight), Is.Empty);
     }
 
     private static ParkedRun Park(string runId, DateTimeOffset resumeAt) => new()

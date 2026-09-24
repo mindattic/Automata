@@ -4,6 +4,7 @@ using Automata.Core.Automation.Model;
 using Automata.Core.Operator;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Replay;
 

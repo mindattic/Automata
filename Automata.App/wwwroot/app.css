@@ -139,7 +139,7 @@ button.mini {
   flex: none;
 }
 
-button.mini:hover { background: var(--color-mini-bg-hover); color: #fff; }
+button.mini:hover { background: var(--color-mini-bg-hover); color: var(--color-mini-fg-hover); }
 
 /* ---- header ---- */
 

@@ -1,4 +1,5 @@
 using Automata.Core.Operator;
+using AutoWebNav;
 
 namespace Automata.Tests.Fakes;
 

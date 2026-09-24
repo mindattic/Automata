@@ -144,38 +144,57 @@ saved back into the task (**self-heal**) — the tree shows `✓♻`.
 As an opt-in last resort (checkbox under *AI task (advanced)*), an unresolvable step's intent can
 be handed to the LLM tool-calling loop to complete just that one step (Run mode only).
 
-## Storage — human-readable, Explorer-friendly
+## Storage — one database, files for sharing
 
-Everything lives under your Documents folder, named the way you named it:
+Everything — collections, tasks, datasets, run history, the schedule, parked runs and settings —
+lives in one SQLite database:
 
 ```
-Documents\Automata\
-  Collections\
-    Google Searches\
-      collection.json          ← collection metadata + task order
-      Wolf Tshirts.json        ← one task per file: metadata + full step tree
-  Logs\
-    20260825-141005-wolf-tshirts.log
+%LocalAppData%\MindAttic\Automata\automata.db
 ```
 
-The **📁 Files** button in Settings opens the Collections folder in File Explorer.
+The only store is the database; files are how work travels. **Open data folder** in Settings shows
+`automata.db` in File Explorer (copy it while the app is closed for a raw backup). Run logs stay
+plain text, one file per run, in `Documents\Automata\Logs\` — the 📁 button on the Runs tab opens
+that folder.
 
-- **A task is one file** — copy `Wolf Tshirts.json` to share that task; copy a collection folder
-  to share the set.
-- **Names round-trip losslessly.** Folder/file names are sanitized projections of the display
-  name (illegal characters → `_`, Windows-reserved names like `CON` prefixed, overlong names
-  truncated); the JSON inside keeps the original name **with illegal characters intact**, so a
-  task called `Wolf: Tshirts?` shows exactly that in the app while living in
-  `Wolf_ Tshirts_.json` on disk.
-- **Hand-edits heal, not break.** Rename a file/folder in Explorer → the app adopts the new
-  name. Copy-paste a task file → the duplicate gets a fresh identity. Drop task files into a
-  folder with no `collection.json` → a collection is recovered from the folder name. A task
-  saved without a parent lands in an auto-created **Default** collection.
-
-**⇩ Export** writes the selected collection (or single task) as a `*.automata.zip`;
-**⇪ Import** reads one back. Imports never overwrite: colliding ids are regenerated, colliding
-names get ` (2)` suffixes, and a task imported without its collection lands in an auto-created
-**Imported** collection.
+- **Export and import** (Settings → *Move a collection or task…*) takes the selected collection or
+  task out as a `*.automata.zip` (the long-standing share format), a single readable
+  `*.automata.json`, or a Chrome DevTools Recorder flow. **⇪ Import** takes any of those back — and
+  also an old per-task `.json` file from the file-based versions.
+- **The whole workspace** (Settings → *The whole workspace…*) exports everything to one
+  `*.automata.json` — collections with their tasks, datasets, the schedule, settings, run history
+  and parked runs — and imports one back. Into an empty database that is a restore: every id, name
+  and timestamp arrives as it left. Into a populated one it merges.
+- **Imports never overwrite.** Colliding ids are regenerated (and every reference follows — task
+  order, `runTask` steps and input wiring, schedule targets and chains, run history), colliding
+  names get ` (2)` suffixes, a task imported without its collection lands in an auto-created
+  **Imported** collection, and a dataset, run or settings that already exist here are kept, with a
+  warning in the log.
+- **Datasets** keep their file-style names (`skus.csv`, `roster.json`) — the extension still picks
+  the shape. **⇪ Import** on the Data tab brings CSV/JSON files in (one with the same name is
+  replaced, which is how a dataset is refreshed from a new spreadsheet export); each dataset's
+  **⇩** writes it back out as a file. A JSON dataset keeps nested objects as objects.
+- **Deleting hides** (HOUSE-LAW-2): a deleted collection or task keeps its row, marked deleted, and
+  stops appearing anywhere. A task saved without a parent lands in an auto-created **Default**
+  collection.
+- **Upgrading from the file-based versions.** On the first launch against an empty database,
+  Automata imports the old `Documents\Automata\{Collections,Datasets,Runs,Schedule,Parked}` and
+  `%APPDATA%\MindAttic\Automata\settings.json` into it, applying the old store's hand-edit rules on
+  the way in (a folder or file renamed in Explorer names its collection or task; a copy-pasted file
+  gets a fresh id; a folder of tasks without `collection.json` is recovered under its name). **The
+  files are left exactly as they were**, as a backup. The import runs once per database — the
+  outcome is recorded in it, so nothing comes back from the old files after you delete it — and
+  what came in is reported in the sidebar log.
+- **Scratch databases for tests and tools**: `AUTOMATA_DB_PATH` names the database file. A harness
+  that sets `AUTOMATA_SETTINGS_PATH` (every one in `tools/` does) gets `automata.db` beside that
+  path instead, so it can never touch the real one; the old `AUTOMATA_COLLECTIONS_ROOT`,
+  `AUTOMATA_DATASETS_ROOT`, `AUTOMATA_RUNS_ROOT`, `AUTOMATA_SCHEDULE_PATH`, `AUTOMATA_PARKED_ROOT`
+  and `AUTOMATA_SETTINGS_PATH` now say where the one-time import looks. The harnesses read the
+  scratch database with `tools/automata-db.mjs`.
+- **Schema changes** ship as EF Core migrations in `Automata.Core/Automation/Data/Migrations`,
+  applied automatically at startup by the app and the runner. To add one:
+  `dotnet ef migrations add <Name> --project Automata.Core --output-dir Automation/Data/Migrations`.
 
 ## Settings
 
@@ -195,8 +214,10 @@ The **⚙ Settings** fold-out in the sidebar holds:
   inherits unless something further down overrides it.
 - **Examples…** — review the generated Demos collection, reset it to the version this build ships,
   or take a guided tour through every example, one at a time.
-- **Import / Export** — move a collection or task in or out of this workspace as a `*.automata.zip`.
-- **📁 Files** — opens the Collections folder in File Explorer.
+- **Import / Export** — move a collection or task in or out of this workspace as a
+  `*.automata.zip` or `*.automata.json`, or back up / merge the **whole workspace** as one
+  `*.automata.json` (see [Storage](#storage--one-database-files-for-sharing)).
+- **Open data folder** — shows the database file, `automata.db`, in File Explorer.
 - **Layout** — **Detach the sidebar** moves the build panel into its own window: put it on another
   monitor, or take a third of the screen for building and give the browser the rest. Closing that
   window docks it again, and where it was is remembered across launches. It is the same panel
@@ -251,10 +272,15 @@ someone and it runs as-is; there is no separate installer.
 
 ```
 Automata.App    WPF host: two WebView2 panes, postMessage bridge, AutomationController
-Automata.Core   engine: model, name-based store, zip archive, fingerprint/resolver JS (embedded),
-                replay engine, recorder coalescer, LLM tool loop — WebView2-free (IBrowserSurface)
-Automata.Tests  NUnit 4 over model, store (incl. name round-trip and healing), archive,
-                resolver, replay, workflow, recorder, settings, logs, demos
+Automata.Runner headless CLI runner over offscreen WebView2 lanes
+Automata.Core   engine: model, SQLite store (EF Core 10), zip/JSON export-import, one-time legacy
+                import, replay engine, recorder coalescer, LLM tool loop — WebView2-free
+AutoWebNav      (NuGet, github.com/mindattic/AutoWebNav) the shared browser layer: IBrowserSurface,
+                fingerprint/resolver + page toolkit JS, BrowserActions, and AutoWebNav.WebView2's
+                WebView2BrowserSurface / DomFileInjector / OffscreenWebView2Factory. Shared with
+                KdpPublish and JobHunt; change browser mechanics there, not here.
+Automata.Tests  NUnit 4 over model, database (real migrations on scratch SQLite files), stores,
+                export/import, legacy import, replay, workflow, recorder, settings, logs, demos
 ```
 
 Beyond the unit tests, four acceptance harnesses drive the real app and the real runner:

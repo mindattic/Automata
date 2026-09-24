@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AutoWebNav;
 
 namespace Automata.Core.Operator.Tools;
 
@@ -47,7 +48,7 @@ public class SetFieldTool : IBrowserTool
 
         var script = $$"""
         (function() {
-            {{Automation.Replay.BrowserActions.NativeSetterJsFunction(valueJs)}}
+            {{BrowserActions.NativeSetterJsFunction(valueJs)}}
             var apply = __automataApplyValue;
 
             var byId = document.getElementById({{idJs}});

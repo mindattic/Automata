@@ -6,6 +6,7 @@ using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Settings;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Execution;
 
@@ -61,10 +62,10 @@ public sealed class RunnerCliDispatcher
         this.settings = settings;
         this.browsers = browsers;
         this.output = output;
-        this.schedule = schedule ?? new ScheduleStore();
+        this.schedule = schedule ?? new ScheduleStore(collections.Database);
         this.clock = clock ?? new SystemClock();
         this.registrar = registrar;
-        this.parked = parked ?? new ParkedRunStore();
+        this.parked = parked ?? new ParkedRunStore(collections.Database);
         this.demos = demos;
     }
 
@@ -381,8 +382,8 @@ public sealed class RunnerCliDispatcher
         var run = runs.GetRun(entry.RunId);
         if (run == null)
         {
-            // Its run directory is gone — deleted, or an older Runs folder cleared out. There is
-            // nothing left to continue, and keeping the checkpoint would retry it every tick.
+            // Its run record is gone. There is nothing left to continue, and keeping the
+            // checkpoint would retry it every tick.
             parked.Remove(entry.RunId);
             output.WriteLine($"Dropping parked run {Short(entry.RunId)}: its run record no longer exists.");
             return RunnerExitCode.Success;

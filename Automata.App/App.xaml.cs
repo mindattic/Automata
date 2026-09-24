@@ -15,6 +15,9 @@ public partial class App : Application
 {
     public static IServiceProvider Services { get; private set; } = null!;
 
+    /// <summary>What the one-time legacy import did on this launch (Ran is false when nothing happened).</summary>
+    public static Automata.Core.Automation.Storage.LegacyImportReport? StartupImport { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -51,6 +54,11 @@ public partial class App : Application
             .Build();
 
         Services = host.Services;
+
+        // Bring the database to the current schema, and on its first launch import the old
+        // Documents\Automata JSON files (left in place as a backup). The outcome is shown in the
+        // sidebar log once the panel is up — see AutomationController.
+        StartupImport = Services.MigrateAutomataDatabase();
 
         new MainWindow().Show();
     }

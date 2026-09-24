@@ -7,6 +7,7 @@ using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Execution;
 
@@ -504,7 +505,7 @@ public sealed partial class WorkflowEngine
                     if (!datasets.Exists(name))
                     {
                         await foreach (var e in FailAsync(step, scope, state,
-                            $"dataset '{name}' not found in {datasets.RootPath}")) yield return e;
+                            $"dataset '{name}' not found — import it on the Data tab")) yield return e;
                         yield break;
                     }
                     rows = datasets.Read(name);
@@ -696,7 +697,7 @@ public sealed partial class WorkflowEngine
                 if (!datasets.Exists(spec.DatasetName))
                 {
                     await foreach (var e in FailAsync(step, scope, state,
-                        $"dataset '{spec.DatasetName}' not found in {datasets.RootPath}")) yield return e;
+                        $"dataset '{spec.DatasetName}' not found — import it on the Data tab")) yield return e;
                     yield break;
                 }
 

@@ -5,8 +5,8 @@ namespace Automata.Core.Automation.Execution;
 /// <summary>One value a step published, flattened for storage.</summary>
 /// <remarks>
 /// A list of these rather than the engine's own dictionary, whose keys join a step id and a field
-/// name with a NUL. That key shape is right in memory and wrong on disk: it would serialise as
-/// <c>"abc\0text"</c> and turn a file someone may well open into a puzzle.
+/// name with a NUL. That key shape is right in memory and wrong in storage: it would serialise as
+/// <c>"abc\0text"</c> and turn an export someone may well open into a puzzle.
 /// </remarks>
 public sealed record OutputValue(string StepId, string Field, string Value);
 
@@ -69,9 +69,9 @@ public sealed record ParkCheckpoint(
 /// A run waiting out a long pause with no browser held: its checkpoint plus the identity of the
 /// run it belongs to.
 /// <para>
-/// Kept in its own store rather than inside the run directory, because the question asked of it is
-/// "what is due to resume now?" — asked on every scheduler tick, and best answered by listing a
-/// small folder instead of stat-ing every run that has ever happened.
+/// Kept in its own table rather than on the run record, because the question asked of it is
+/// "what is due to resume now?" — asked on every scheduler tick, and best answered by a small table
+/// instead of a scan of every run that has ever happened.
 /// </para>
 /// </summary>
 public sealed class ParkedRun

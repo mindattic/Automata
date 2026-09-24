@@ -6,7 +6,8 @@ namespace Automata.Core.Automation.Logging;
 /// <summary>
 /// Per-run log file at
 /// <c>%USERPROFILE%\Documents\Automata\Logs\&lt;yyyyMMdd-HHmmss&gt;-&lt;task-slug&gt;.log</c> —
-/// beside the Collections folder, one fixed easy-to-find place, one file per run.
+/// one fixed easy-to-find place, one plain-text file per run. (Everything else Automata keeps is in
+/// its database; the logs stay files so they can be read, searched and attached as they are.)
 /// </summary>
 public sealed class RunLogWriter
 {

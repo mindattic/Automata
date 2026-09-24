@@ -1,3 +1,4 @@
+using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Flow;
@@ -6,9 +7,11 @@ using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Automata.Core.Operator.Tools;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MindAttic.Vault.Credentials;
+using AutoWebNav;
 
 namespace Automata.Core.Extensions;
 
@@ -20,10 +23,12 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAutomataCore(this IServiceCollection services)
     {
-        // Every store here takes its root from an AUTOMATA_* variable so a test or the UI
-        // harness can run against a scratch workspace instead of the developer's real one.
-        services.AddSingleton(_ => new AutomataSettingsStore(
-            filePath: Environment.GetEnvironmentVariable("AUTOMATA_SETTINGS_PATH")));
+        // One SQLite database holds everything. Its path comes from AUTOMATA_DB_PATH (or sits
+        // beside a harness's AUTOMATA_SETTINGS_PATH) so a test or the UI harness runs against a
+        // scratch database instead of the developer's real one — see AutomataDatabase.
+        services.AddSingleton(_ => new AutomataDatabase());
+        services.AddSingleton<IDbContextFactory<AutomataDb>>(sp => sp.GetRequiredService<AutomataDatabase>());
+        services.AddSingleton(sp => new AutomataSettingsStore(sp.GetRequiredService<AutomataDatabase>()));
 
         services.AddHttpClient();                    // generic factory for the LLM adapters
         services.AddHttpClient<AnthropicToolClient>();
@@ -90,12 +95,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BrowserToolRegistry>();
         services.AddSingleton<BrowserOperatorService>();
 
-        services.AddSingleton(sp =>
-            new CollectionStore(
-                rootPath: Environment.GetEnvironmentVariable("AUTOMATA_COLLECTIONS_ROOT"),
-                sp.GetRequiredService<ILogger<CollectionStore>>()));
+        services.AddSingleton(sp => new CollectionStore(
+            sp.GetRequiredService<AutomataDatabase>(), sp.GetRequiredService<ILogger<CollectionStore>>()));
         services.AddSingleton(sp => new ArchiveService(
-            sp.GetRequiredService<CollectionStore>(), sp.GetRequiredService<ILogger<ArchiveService>>()));
+            sp.GetRequiredService<CollectionStore>(),
+            sp.GetRequiredService<ILogger<ArchiveService>>(),
+            sp.GetRequiredService<DatasetStore>(),
+            sp.GetRequiredService<RunStore>(),
+            sp.GetRequiredService<ScheduleStore>(),
+            sp.GetRequiredService<ParkedRunStore>(),
+            sp.GetRequiredService<AutomataSettingsStore>()));
         services.AddSingleton(sp =>
             new FingerprintResolver(sp.GetRequiredService<ILogger<FingerprintResolver>>()));
         services.AddSingleton(sp => new ReplayEngine(
@@ -104,14 +113,10 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ILogger<ReplayEngine>>()));
 
         services.AddSingleton<IClock, SystemClock>();
-        services.AddSingleton(_ => new ScheduleStore(
-            filePath: Environment.GetEnvironmentVariable("AUTOMATA_SCHEDULE_PATH")));
-        services.AddSingleton(_ => new DatasetStore(
-            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_DATASETS_ROOT")));
-        services.AddSingleton(_ => new RunStore(
-            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_RUNS_ROOT")));
-        services.AddSingleton(_ => new ParkedRunStore(
-            rootPath: Environment.GetEnvironmentVariable("AUTOMATA_PARKED_ROOT")));
+        services.AddSingleton(sp => new ScheduleStore(sp.GetRequiredService<AutomataDatabase>()));
+        services.AddSingleton(sp => new DatasetStore(sp.GetRequiredService<AutomataDatabase>()));
+        services.AddSingleton(sp => new RunStore(sp.GetRequiredService<AutomataDatabase>()));
+        services.AddSingleton(sp => new ParkedRunStore(sp.GetRequiredService<AutomataDatabase>()));
         services.AddSingleton(sp => new DemoSeeder(
             sp.GetRequiredService<CollectionStore>(),
             demoRoot: Environment.GetEnvironmentVariable("AUTOMATA_DEMOS_ROOT"),
@@ -130,5 +135,18 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ILogger<WorkflowEngine>>()));
 
         return services;
+    }
+
+    /// <summary>
+    /// Creates the database or brings it up to the current schema, then — once per database, on
+    /// its first launch — imports the old <c>Documents\Automata</c> JSON files (which are left
+    /// in place). Call once at startup, from every front door, before anything reads a store.
+    /// </summary>
+    public static LegacyImportReport MigrateAutomataDatabase(this IServiceProvider services)
+    {
+        var database = services.GetRequiredService<AutomataDatabase>();
+        database.EnsureMigrated();
+        var log = services.GetService<ILoggerFactory>()?.CreateLogger("Automata.Storage");
+        return new LegacyWorkspaceImporter(database, LegacyLocations.FromEnvironment(), log).ImportOnce();
     }
 }

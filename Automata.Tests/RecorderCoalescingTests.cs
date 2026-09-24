@@ -1,6 +1,7 @@
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Recording;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 

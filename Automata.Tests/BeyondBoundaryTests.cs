@@ -3,6 +3,7 @@ using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Replay;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 
@@ -32,10 +33,10 @@ public class BeyondBoundaryTests
     {
         Assert.Multiple(() =>
         {
-            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("__automataClosedRoots"));
-            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("attachShadow"));
-            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("__automataFrames"));
-            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("__automataResolveLocal"),
+            Assert.That(ToolkitScripts.DocumentStartJs, Does.Contain("__automataClosedRoots"));
+            Assert.That(ToolkitScripts.DocumentStartJs, Does.Contain("attachShadow"));
+            Assert.That(ToolkitScripts.DocumentStartJs, Does.Contain("__automataFrames"));
+            Assert.That(ToolkitScripts.DocumentStartJs, Does.Contain("__automataResolveLocal"),
                 "a frame that cannot resolve for itself has nothing to answer with");
         });
     }
@@ -48,7 +49,7 @@ public class BeyondBoundaryTests
     [Test]
     public void TheDocumentStartBundleIsInDependencyOrder()
     {
-        var js = AutomationScripts.DocumentStartJs;
+        var js = ToolkitScripts.DocumentStartJs;
         Assert.Multiple(() =>
         {
             Assert.That(js.IndexOf("__automataStability", StringComparison.Ordinal),
@@ -73,12 +74,12 @@ public class BeyondBoundaryTests
     {
         var scripts = new (string Name, string Js)[]
         {
-            ("stability.js", AutomationScripts.StabilityJs),
-            ("fingerprint.js", AutomationScripts.FingerprintJs),
-            ("resolver.js", AutomationScripts.ResolverJs),
-            ("harvest.js", AutomationScripts.HarvestJs),
-            ("closed.js", AutomationScripts.ClosedRootsJs),
-            ("frames.js", AutomationScripts.FramesJs),
+            ("stability.js", ToolkitScripts.StabilityJs),
+            ("fingerprint.js", ToolkitScripts.FingerprintJs),
+            ("resolver.js", ToolkitScripts.ResolverJs),
+            ("harvest.js", ToolkitScripts.HarvestJs),
+            ("closed.js", ToolkitScripts.ClosedRootsJs),
+            ("frames.js", ToolkitScripts.FramesJs),
         };
 
         foreach (var (name, js) in scripts)
@@ -185,8 +186,8 @@ public class BeyondBoundaryTests
     {
         Assert.Multiple(() =>
         {
-            Assert.That(AutomationScripts.DocumentStartJs, Does.Contain("__automataHarvest"));
-            Assert.That(AutomationScripts.FramesJs, Does.Contain("askCall"),
+            Assert.That(ToolkitScripts.DocumentStartJs, Does.Contain("__automataHarvest"));
+            Assert.That(ToolkitScripts.FramesJs, Does.Contain("askCall"),
                 "without a call-by-name op there is no way to run it in there");
         });
     }

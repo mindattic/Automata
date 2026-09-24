@@ -2,6 +2,7 @@ using System.Text.Json;
 using Automata.Core.Automation.Flow;
 using Automata.Core.Automation.Model;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 

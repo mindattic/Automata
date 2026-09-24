@@ -6,6 +6,7 @@ using Automata.Core.Automation.Scheduling;
 using Automata.Core.Automation.Storage;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 
@@ -21,6 +22,7 @@ namespace Automata.Tests;
 [TestFixture]
 public class TaskPipelineTests
 {
+    private TestDb db = null!;
     private string root = null!;
     private CollectionStore collections = null!;
     private DatasetStore datasets = null!;
@@ -33,19 +35,21 @@ public class TaskPipelineTests
     [SetUp]
     public void SetUp()
     {
+        db = new TestDb();
         root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
-        collections = new CollectionStore(Path.Combine(root, "collections"));
-        datasets = new DatasetStore(Path.Combine(root, "datasets"));
-        runs = new RunStore(Path.Combine(root, "runs"));
-        settings = new AutomataSettingsStore(Path.Combine(root, "settings.json"));
+        collections = db.Collections();
+        datasets = db.Datasets();
+        runs = db.Runs();
+        settings = db.Settings();
         factory = new FakeBrowserSurfaceFactory();
         output = new StringWriter();
-        parked = new ParkedRunStore(Path.Combine(root, "parked"));
+        parked = db.Parked();
     }
 
     [TearDown]
     public void TearDown()
     {
+        db.Dispose();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 

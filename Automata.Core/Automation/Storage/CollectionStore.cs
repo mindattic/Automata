@@ -1,79 +1,70 @@
-using System.Collections.Concurrent;
-using System.IO;
-using System.Text.Json;
+using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Automata.Core.Automation.Storage;
 
 /// <summary>
-/// File-backed store for collections and tasks, laid out for humans browsing it in Explorer:
-/// <code>
-/// %USERPROFILE%\Documents\Automata\Collections\&lt;Collection Name&gt;\collection.json
-/// %USERPROFILE%\Documents\Automata\Collections\&lt;Collection Name&gt;\&lt;Task Name&gt;.json
-/// </code>
-/// Folder and file names mirror the display names (sanitized for the filesystem); the ids inside
-/// the JSON remain the stable identity, so renames are just folder/file moves. The store heals
-/// hand-edits on load: a folder or file renamed in Explorer wins (the JSON name is updated to
-/// match), a copy-pasted folder/file with a duplicate id gets a fresh id, a task folder missing
-/// collection.json gets one recovered from the folder name — files never silently vanish.
+/// Collections and their tasks, in the <c>Collections</c> and <c>Tasks</c> tables of the Automata
+/// database (see <see cref="AutomataDatabase"/>).
+/// <para>
+/// Ids are the identity; names are for people, and are kept unique where a person or the runner's
+/// <c>--task &lt;name&gt;</c> would otherwise be left guessing: collection names across the
+/// workspace, task names within their collection. A rename onto a taken name keeps both, suffixing
+/// the one being saved " (2)".
+/// </para>
+/// <para>
+/// <b>Deleting only hides</b> (HOUSE-LAW-2): a deleted collection or task keeps its row with
+/// <c>DeletedUtc</c> set and stops appearing anywhere. Saving a task under a hidden id brings it
+/// back — which is how the demo generator restores an example somebody deleted.
+/// </para>
 /// </summary>
 public sealed class CollectionStore
 {
     public const string DefaultCollectionName = "Default";
-    private const string ManifestFileName = "collection.json";
 
     private readonly ILogger<CollectionStore> log;
 
     /// <summary>
-    /// Serialises writes of one task. A save is a read-modify-write across sibling files - find
-    /// this task's file, check whether a rename would land on another one, move it, write it - and
-    /// two of those interleaving would leave a half-written file behind. Nothing needed it until a
-    /// run could save on its own: the app and the headless runner can both be saving a healed
-    /// task, and a scheduled run does not wait for the window to be closed.
+    /// Serialises writes in this process. A save is a read-modify-write across two rows — the task
+    /// and its collection's TaskOrder — and the app can be saving an edit while a run on another
+    /// thread saves a healed task. Across processes each save is one database transaction.
     /// </summary>
     private readonly Lock saveGate = new();
 
-    public static string DefaultRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Collections");
-
-    public string RootPath { get; }
-
-    public CollectionStore(string? rootPath = null, ILogger<CollectionStore>? log = null)
+    public CollectionStore(AutomataDatabase database, ILogger<CollectionStore>? log = null)
     {
-        RootPath = rootPath ?? DefaultRoot;
+        Database = database;
         this.log = log ?? NullLogger<CollectionStore>.Instance;
     }
+
+    public AutomataDatabase Database { get; }
 
     // ---- collections -------------------------------------------------------------------------
 
     public IReadOnlyList<Collection> LoadCollections()
     {
-        if (!Directory.Exists(RootPath)) return [];
-
-        var seenIds = new HashSet<string>(StringComparer.Ordinal);
-        var collections = new List<Collection>();
-        foreach (var dir in Directory.EnumerateDirectories(RootPath))
-        {
-            var collection = LoadCollectionFromDir(dir, seenIds);
-            if (collection == null) continue;
-            seenIds.Add(collection.Id);
-            collections.Add(collection);
-        }
-        return collections.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        using var db = Database.CreateDbContext();
+        return db.Collections.AsNoTracking().ToList()
+            .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
-    public Collection? GetCollection(string id) =>
-        LoadCollections().FirstOrDefault(c => c.Id == id);
+    public Collection? GetCollection(string id)
+    {
+        using var db = Database.CreateDbContext();
+        return db.Collections.AsNoTracking().FirstOrDefault(c => c.Id == id);
+    }
 
     public Collection CreateCollection(string name)
     {
         var collection = new Collection
         {
             Name = StoreUtil.UniqueName(name, LoadCollections().Select(c => c.Name)),
-            CreatedUtc = DateTimeOffset.UtcNow,
-            ModifiedUtc = DateTimeOffset.UtcNow,
+            CreatedUtc = StoreUtil.UtcNow(),
+            ModifiedUtc = StoreUtil.UtcNow(),
         };
         SaveCollection(collection);
         return collection;
@@ -81,35 +72,46 @@ public sealed class CollectionStore
 
     public void SaveCollection(Collection collection)
     {
-        collection.ModifiedUtc = DateTimeOffset.UtcNow;
-
-        var existingDir = FindCollectionDirById(collection.Id);
-        var targetDir = Path.Combine(RootPath, SafeName(collection.Name));
-
-        // Renaming onto an occupied folder: keep both, suffix this one. An occupant whose
-        // manifest is missing or unreadable is treated as foreign too — the read path recovers
-        // corrupt files with a warning, so the write path must never silently clobber them.
-        if (Directory.Exists(targetDir) && !PathsEqual(existingDir, targetDir))
+        lock (saveGate)
         {
-            var occupant = ReadJson<Collection>(Path.Combine(targetDir, ManifestFileName));
-            if (occupant == null || occupant.Id != collection.Id)
-            {
-                collection.Name = UniqueBySafeName(collection.Name,
-                    Directory.EnumerateDirectories(RootPath).Select(Path.GetFileName));
-                targetDir = Path.Combine(RootPath, SafeName(collection.Name));
-            }
+            using var db = Database.CreateDbContext();
+            using var tx = db.Database.BeginTransaction();
+            SaveCollectionCore(db, collection);
+            db.SaveChanges();
+            tx.Commit();
         }
-
-        if (existingDir != null && !PathsEqual(existingDir, targetDir))
-            Directory.Move(existingDir, targetDir);
-        Directory.CreateDirectory(targetDir);
-        WriteJson(Path.Combine(targetDir, ManifestFileName), collection);
     }
 
+    private static void SaveCollectionCore(AutomataDb db, Collection collection)
+    {
+        collection.ModifiedUtc = StoreUtil.UtcNow();
+        if (collection.CreatedUtc == default) collection.CreatedUtc = collection.ModifiedUtc;
+
+        // Renaming onto another collection's name: keep both, suffix this one.
+        var otherNames = db.Collections.AsNoTracking()
+            .Where(c => c.Id != collection.Id)
+            .Select(c => c.Name)
+            .ToList();
+        collection.Name = StoreUtil.UniqueName(collection.Name, otherNames);
+
+        SchemaMigration.StampCurrentVersion(collection);
+        Upsert(db, collection, collection.Id);
+    }
+
+    /// <summary>Hides the collection and every task in it. Nothing is erased.</summary>
     public void DeleteCollection(string id)
     {
-        var dir = FindCollectionDirById(id);
-        if (dir != null) Directory.Delete(dir, recursive: true);
+        lock (saveGate)
+        {
+            using var db = Database.CreateDbContext();
+            var collection = db.Collections.FirstOrDefault(c => c.Id == id);
+            if (collection == null) return;
+            var now = StoreUtil.UtcNow();
+            db.Entry(collection).Property(AutomataDb.DeletedUtc).CurrentValue = now;
+            foreach (var task in db.Tasks.Where(t => t.CollectionId == id))
+                db.Entry(task).Property(AutomataDb.DeletedUtc).CurrentValue = now;
+            db.SaveChanges();
+        }
     }
 
     public Collection DuplicateCollection(string id)
@@ -121,7 +123,7 @@ public sealed class CollectionStore
         var copy = StoreUtil.Clone(source);
         copy.Id = StoreUtil.NewId();
         copy.Name = StoreUtil.UniqueName(source.Name, LoadCollections().Select(c => c.Name));
-        copy.CreatedUtc = DateTimeOffset.UtcNow;
+        copy.CreatedUtc = StoreUtil.UtcNow();
         copy.TaskOrder = [];
         SaveCollection(copy);
 
@@ -145,7 +147,7 @@ public sealed class CollectionStore
             StoreUtil.RemapTaskIds(taskCopy, taskIds);
             SaveTask(taskCopy);
         }
-        return copy;
+        return GetCollection(copy.Id)!;
     }
 
     /// <summary>The collection tasks land in when saved without a parent (created on demand).</summary>
@@ -161,8 +163,8 @@ public sealed class CollectionStore
         var collection = new Collection
         {
             Name = name,
-            CreatedUtc = DateTimeOffset.UtcNow,
-            ModifiedUtc = DateTimeOffset.UtcNow,
+            CreatedUtc = StoreUtil.UtcNow(),
+            ModifiedUtc = StoreUtil.UtcNow(),
         };
         SaveCollection(collection);
         return collection;
@@ -173,124 +175,109 @@ public sealed class CollectionStore
     /// <summary>Tasks of one collection, ordered by its TaskOrder; unlisted tasks sort last by name.</summary>
     public IReadOnlyList<TaskDefinition> LoadTasks(string collectionId)
     {
-        var dir = FindCollectionDirById(collectionId);
-        if (dir == null) return [];
-        var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName));
+        using var db = Database.CreateDbContext();
+        var collection = db.Collections.AsNoTracking().FirstOrDefault(c => c.Id == collectionId);
         if (collection == null) return [];
+        var tasks = db.Tasks.AsNoTracking().Where(t => t.CollectionId == collectionId).ToList();
+        return Ordered(tasks, collection.TaskOrder);
+    }
 
-        var seenIds = new HashSet<string>(StringComparer.Ordinal);
-        var tasks = new List<TaskDefinition>();
-        foreach (var file in TaskFiles(dir))
-        {
-            var task = ReadJson<TaskDefinition>(file);
-            if (task == null)
-            {
-                log.LogWarning("Skipping unreadable task file {File}", file);
-                continue;
-            }
-            SchemaMigration.Migrate(task);
-
-            var changed = false;
-            if (!seenIds.Add(task.Id))
-            {
-                task.Id = StoreUtil.NewId(); // Explorer copy-paste duplicate — give it its own identity
-                seenIds.Add(task.Id);
-                changed = true;
-            }
-            var fileName = Path.GetFileNameWithoutExtension(file);
-            if (!string.Equals(SafeName(task.Name), fileName, StringComparison.OrdinalIgnoreCase))
-            {
-                task.Name = fileName; // renamed in Explorer — the file name wins
-                changed = true;
-            }
-            if (task.CollectionId != collection.Id)
-            {
-                task.CollectionId = collection.Id; // moved between folders by hand — the folder wins
-                changed = true;
-            }
-            if (changed) WriteJson(file, task);
-            tasks.Add(task);
-        }
-
-        var order = collection.TaskOrder;
-        return tasks
-            .OrderBy(t => { var i = order.IndexOf(t.Id); return i < 0 ? int.MaxValue : i; })
-            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    /// <summary>Every visible task in the workspace, in no particular order.</summary>
+    public IReadOnlyList<TaskDefinition> LoadAllTasks()
+    {
+        using var db = Database.CreateDbContext();
+        return db.Tasks.AsNoTracking().ToList();
     }
 
     public TaskDefinition? GetTask(string taskId)
     {
-        foreach (var collection in LoadCollections())
-        {
-            var task = LoadTasks(collection.Id).FirstOrDefault(t => t.Id == taskId);
-            if (task != null) return task;
-        }
-        return null;
+        using var db = Database.CreateDbContext();
+        return db.Tasks.AsNoTracking().FirstOrDefault(t => t.Id == taskId);
+    }
+
+    /// <summary>Whether any row — visible or deleted — already holds this task id. Imports ask
+    /// this, because a hidden row still owns its key.</summary>
+    public bool TaskIdTaken(string taskId)
+    {
+        using var db = Database.CreateDbContext();
+        return db.Tasks.IgnoreQueryFilters().Any(t => t.Id == taskId);
+    }
+
+    /// <summary>Whether any row — visible or deleted — already holds this collection id.</summary>
+    public bool CollectionIdTaken(string collectionId)
+    {
+        using var db = Database.CreateDbContext();
+        return db.Collections.IgnoreQueryFilters().Any(c => c.Id == collectionId);
     }
 
     /// <summary>
     /// Persist a task. An empty CollectionId gets the default collection assigned — a task never
-    /// exists without a parent collection. A renamed task's file moves with it.
+    /// exists without a parent collection. A task whose CollectionId changed leaves its old
+    /// collection's order and joins the new one's.
     /// </summary>
     public void SaveTask(TaskDefinition task)
-    {
-        lock (saveGate) SaveTaskCore(task);
-    }
-
-    private void SaveTaskCore(TaskDefinition task)
     {
         if (string.IsNullOrWhiteSpace(task.CollectionId))
             task.CollectionId = EnsureDefaultCollection().Id;
 
-        var dir = FindCollectionDirById(task.CollectionId)
-            ?? throw new InvalidOperationException($"Collection '{task.CollectionId}' not found.");
-        var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName))!;
-
-        if (task.CreatedUtc == default) task.CreatedUtc = DateTimeOffset.UtcNow;
-        task.ModifiedUtc = DateTimeOffset.UtcNow;
-
-        var existingFile = FindTaskFileById(dir, task.Id);
-        var target = Path.Combine(dir, SafeName(task.Name) + ".json");
-
-        // Renaming onto a sibling task's file: keep both, suffix this one. An UNREADABLE
-        // occupant is foreign by definition — never silently overwrite a file that might still
-        // be recoverable by hand.
-        if (File.Exists(target) && !PathsEqual(existingFile, target))
+        lock (saveGate)
         {
-            var occupant = ReadJson<TaskDefinition>(target);
-            if (occupant == null || occupant.Id != task.Id)
+            using var db = Database.CreateDbContext();
+            using var tx = db.Database.BeginTransaction();
+
+            var collection = db.Collections.FirstOrDefault(c => c.Id == task.CollectionId)
+                ?? throw new InvalidOperationException($"Collection '{task.CollectionId}' not found.");
+
+            if (task.CreatedUtc == default) task.CreatedUtc = StoreUtil.UtcNow();
+            task.ModifiedUtc = StoreUtil.UtcNow();
+
+            // Renaming onto a sibling task's name: keep both, suffix this one.
+            var siblingNames = db.Tasks.AsNoTracking()
+                .Where(t => t.CollectionId == task.CollectionId && t.Id != task.Id)
+                .Select(t => t.Name)
+                .ToList();
+            task.Name = StoreUtil.UniqueName(task.Name, siblingNames);
+
+            var previousCollectionId = db.Tasks.IgnoreQueryFilters().AsNoTracking()
+                .Where(t => t.Id == task.Id)
+                .Select(t => t.CollectionId)
+                .FirstOrDefault();
+            if (previousCollectionId != null && previousCollectionId != task.CollectionId)
             {
-                task.Name = UniqueBySafeName(task.Name, TaskFiles(dir)
-                    .Where(f => !PathsEqual(f, existingFile))
-                    .Select(Path.GetFileNameWithoutExtension));
-                target = Path.Combine(dir, SafeName(task.Name) + ".json");
+                var previous = db.Collections.IgnoreQueryFilters().FirstOrDefault(c => c.Id == previousCollectionId);
+                if (previous != null && previous.TaskOrder.Remove(task.Id))
+                    db.Entry(previous).Property(c => c.TaskOrder).IsModified = true;
             }
-        }
 
-        if (existingFile != null && !PathsEqual(existingFile, target))
-            File.Move(existingFile, target);
-        WriteJson(target, task);
+            SchemaMigration.StampCurrentVersion(task);
+            Upsert(db, task, task.Id);
 
-        if (!collection.TaskOrder.Contains(task.Id))
-        {
-            collection.TaskOrder.Add(task.Id);
-            SaveCollection(collection);
+            if (!collection.TaskOrder.Contains(task.Id))
+            {
+                collection.TaskOrder.Add(task.Id);
+                collection.ModifiedUtc = StoreUtil.UtcNow();
+                db.Entry(collection).Property(c => c.TaskOrder).IsModified = true;
+            }
+
+            db.SaveChanges();
+            tx.Commit();
         }
     }
 
+    /// <summary>Hides a task and takes it out of its collection's order. Nothing is erased.</summary>
     public void DeleteTask(string taskId)
     {
-        foreach (var dir in CollectionDirs())
+        lock (saveGate)
         {
-            var file = FindTaskFileById(dir, taskId);
-            if (file == null) continue;
+            using var db = Database.CreateDbContext();
+            var task = db.Tasks.FirstOrDefault(t => t.Id == taskId);
+            if (task == null) return;
+            db.Entry(task).Property(AutomataDb.DeletedUtc).CurrentValue = StoreUtil.UtcNow();
 
-            File.Delete(file);
-            var collection = ReadJson<Collection>(Path.Combine(dir, ManifestFileName));
+            var collection = db.Collections.IgnoreQueryFilters().FirstOrDefault(c => c.Id == task.CollectionId);
             if (collection != null && collection.TaskOrder.Remove(taskId))
-                SaveCollection(collection);
-            return;
+                db.Entry(collection).Property(c => c.TaskOrder).IsModified = true;
+            db.SaveChanges();
         }
     }
 
@@ -312,13 +299,13 @@ public sealed class CollectionStore
         _ = GetCollection(toCollectionId)
             ?? throw new InvalidOperationException($"Collection '{toCollectionId}' not found.");
 
-        DeleteTask(taskId);
-        task.CollectionId = toCollectionId;
         if (task.Demo != null)
         {
+            DeleteTask(taskId);
             task.Demo = null;
             task.Id = StoreUtil.NewId();
         }
+        task.CollectionId = toCollectionId;
         task.Name = StoreUtil.UniqueName(task.Name, LoadTasks(toCollectionId).Select(t => t.Name));
         SaveTask(task);
         return task;
@@ -332,7 +319,7 @@ public sealed class CollectionStore
         var copy = StoreUtil.Clone(source);
         copy.Id = StoreUtil.NewId();
         copy.Name = StoreUtil.UniqueName(source.Name, LoadTasks(source.CollectionId).Select(t => t.Name));
-        copy.CreatedUtc = DateTimeOffset.UtcNow;
+        copy.CreatedUtc = StoreUtil.UtcNow();
         // A copy of an example is not the example. Two tasks answering to one demo key would leave
         // the generator restoring whichever it found first and silently leaving the other behind.
         copy.Demo = null;
@@ -347,179 +334,62 @@ public sealed class CollectionStore
         return copy;
     }
 
-    // ---- plumbing ----------------------------------------------------------------------------
-
-    private IEnumerable<string> CollectionDirs() =>
-        Directory.Exists(RootPath) ? Directory.EnumerateDirectories(RootPath) : [];
-
-    private static IEnumerable<string> TaskFiles(string dir) =>
-        Directory.Exists(dir)
-            ? Directory.EnumerateFiles(dir, "*.json").Where(f =>
-                !string.Equals(Path.GetFileName(f), ManifestFileName, StringComparison.OrdinalIgnoreCase))
-            : [];
-
-    // ---- finding a thing by its id ------------------------------------------------------------
-    //
-    // Both of these used to answer by reading EVERY file: a save walked every collection manifest
-    // to find its folder, then every task file in that folder to find its own. That is fine at ten
-    // tasks and quadratic-feeling at a few hundred — and it happens on every keystroke the step
-    // editor commits.
-    //
-    // So the answers are remembered. What they are NOT is trusted: this store is a folder a person
-    // is invited to rearrange in Explorer, and a cache that believed itself would hand back a path
-    // to a file somebody has since renamed, moved or replaced. Every hit is confirmed by reading
-    // the id back out of the file it points at — one small read instead of a whole directory —
-    // and a confirmation that fails simply falls through to the scan that populated it.
-
-    private readonly ConcurrentDictionary<string, string> collectionDirById = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> taskFileById = new(StringComparer.Ordinal);
-
-    private string? FindCollectionDirById(string id)
-    {
-        if (collectionDirById.TryGetValue(id, out var remembered)
-            && ReadJson<Collection>(Path.Combine(remembered, ManifestFileName))?.Id == id)
-        {
-            return remembered;
-        }
-
-        foreach (var dir in CollectionDirs())
-        {
-            var found = ReadJson<Collection>(Path.Combine(dir, ManifestFileName))?.Id;
-            if (found == null) continue;
-            collectionDirById[found] = dir;
-            if (found == id) return dir;
-        }
-
-        collectionDirById.TryRemove(id, out _);
-        return null;
-    }
-
-    private string? FindTaskFileById(string dir, string taskId)
-    {
-        // The remembered path has to be in THIS directory, not merely still hold this task. The
-        // question is "where is this task's file inside `dir`", and answering with a file in
-        // another collection is how DeleteTask came to delete the right file and then tidy the
-        // wrong collection's TaskOrder, leaving an id behind that pointed at nothing.
-        if (taskFileById.TryGetValue(taskId, out var remembered)
-            && PathsEqual(Path.GetDirectoryName(remembered), dir)
-            && ReadJson<TaskDefinition>(remembered)?.Id == taskId)
-        {
-            return remembered;
-        }
-
-        foreach (var file in TaskFiles(dir))
-        {
-            var found = ReadJson<TaskDefinition>(file)?.Id;
-            if (found == null) continue;
-            taskFileById[found] = file;
-            if (found == taskId) return file;
-        }
-
-        // Not in THIS collection — which is not the same as gone, since the caller may be asking
-        // about a task that lives somewhere else. Only a remembered path that pointed into this
-        // directory has been disproved.
-        if (remembered != null && PathsEqual(Path.GetDirectoryName(remembered), dir))
-            taskFileById.TryRemove(taskId, out _);
-        return null;
-    }
-
-    private Collection? LoadCollectionFromDir(string dir, HashSet<string> seenIds)
-    {
-        var folderName = Path.GetFileName(dir);
-        var file = Path.Combine(dir, ManifestFileName);
-
-        if (!File.Exists(file))
-        {
-            // A folder of task files someone hand-copied in: give it a manifest so they surface.
-            if (!TaskFiles(dir).Any()) return null;
-            log.LogWarning("Collection folder {Dir} has no collection.json — recovering", dir);
-            var recovered = new Collection
-            {
-                Name = folderName,
-                CreatedUtc = DateTimeOffset.UtcNow,
-                ModifiedUtc = DateTimeOffset.UtcNow,
-            };
-            WriteJson(file, recovered);
-            return recovered;
-        }
-
-        var collection = ReadJson<Collection>(file);
-        if (collection == null)
-        {
-            log.LogWarning("Skipping unreadable collection file {File}", file);
-            return null;
-        }
-        SchemaMigration.Migrate(collection);
-
-        var changed = false;
-        if (seenIds.Contains(collection.Id))
-        {
-            collection.Id = StoreUtil.NewId(); // Explorer copy-paste duplicate
-            changed = true;
-        }
-        if (!string.Equals(SafeName(collection.Name), folderName, StringComparison.OrdinalIgnoreCase))
-        {
-            collection.Name = folderName; // renamed in Explorer — the folder wins
-            changed = true;
-        }
-        if (changed) WriteJson(file, collection);
-        return collection;
-    }
-
-    // Names Windows refuses (device names) plus "collection", which would collide with the
-    // manifest file if a task were named that.
-    private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-        "collection",
-    };
+    // ---- bulk import -------------------------------------------------------------------------
 
     /// <summary>
-    /// Display name → Windows-safe folder/file name, kept human-readable. LOSSLESS by design:
-    /// the JSON keeps the original name verbatim (illegal characters intact), the disk name is
-    /// only a sanitized projection of it — parsing back means reading the JSON. The disk-name-
-    /// wins healing in LoadTasks/LoadCollectionFromDir therefore compares against SafeName(json
-    /// name), so a sanitization difference never counts as a rename and never clobbers the
-    /// original.
+    /// Writes a collection and its tasks exactly as given — ids, names, timestamps and order — in
+    /// one transaction. For the one-time import of the old JSON files, where the caller has
+    /// already made ids unique and the history (created/modified) is worth keeping.
     /// </summary>
-    private static string SafeName(string name)
+    internal void InsertVerbatim(Collection collection, IReadOnlyList<TaskDefinition> tasks)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray())
-            .Trim().TrimEnd('.', ' ');
-        if (cleaned.Length == 0) cleaned = "Unnamed";
-        if (cleaned.Length > 100) cleaned = cleaned[..100].TrimEnd('.', ' ');
-        if (ReservedNames.Contains(cleaned)) cleaned = "_" + cleaned;
-        return cleaned;
+        lock (saveGate)
+        {
+            using var db = Database.CreateDbContext();
+            using var tx = db.Database.BeginTransaction();
+            SchemaMigration.StampCurrentVersion(collection);
+            db.Collections.Add(collection);
+            foreach (var task in tasks)
+            {
+                task.CollectionId = collection.Id;
+                SchemaMigration.StampCurrentVersion(task);
+                db.Tasks.Add(task);
+            }
+            db.SaveChanges();
+            tx.Commit();
+        }
+        log.LogInformation("Imported collection '{Name}' with {Count} task(s)", collection.Name, tasks.Count);
     }
 
-    /// <summary>"Name (2)", "Name (3)", … until the SANITIZED form is free — disk collisions
-    /// happen on safe names, so that's the form that must be unique.</summary>
-    private static string UniqueBySafeName(string desired, IEnumerable<string?> takenSafeNames)
-    {
-        var taken = new HashSet<string>(takenSafeNames.Where(n => n != null)!, StringComparer.OrdinalIgnoreCase);
-        var name = desired;
-        for (var n = 2; taken.Contains(SafeName(name)); n++) name = $"{desired} ({n})";
-        return name;
-    }
+    // ---- plumbing ----------------------------------------------------------------------------
 
-    private static bool PathsEqual(string? a, string? b) =>
-        a != null && b != null &&
-        string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+    internal static IReadOnlyList<TaskDefinition> Ordered(IEnumerable<TaskDefinition> tasks, List<string> order) =>
+        tasks
+            .OrderBy(t => { var i = order.IndexOf(t.Id); return i < 0 ? int.MaxValue : i; })
+            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-    /// <summary>The store's ONE write path, so version stamping and normalization cannot be
-    /// bypassed by any caller — including the hand-edit healing rewrites above.</summary>
-    private static void WriteJson<T>(string path, T value)
+    /// <summary>
+    /// Insert or overwrite by id, whether the row is visible or hidden — a save of a hidden id
+    /// brings it back. The entity is attached whole, so every column (complex and JSON ones
+    /// included) is written from it.
+    /// </summary>
+    private static void Upsert<T>(AutomataDb db, T entity, string id) where T : class
     {
-        SchemaMigration.StampCurrentVersion(value);
-        File.WriteAllText(path, JsonSerializer.Serialize(value, AutomataJson.Options));
-    }
+        var exists = typeof(T) == typeof(TaskDefinition)
+            ? db.Tasks.IgnoreQueryFilters().Any(t => t.Id == id)
+            : db.Collections.IgnoreQueryFilters().Any(c => c.Id == id);
 
-    private static T? ReadJson<T>(string path) where T : class
-    {
-        try { return JsonSerializer.Deserialize<T>(File.ReadAllText(path), AutomataJson.Options); }
-        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+        // A tracked instance with the same key (e.g. the collection loaded to update its order)
+        // would make attaching this one throw; hand its values over instead.
+        var tracked = db.ChangeTracker.Entries<T>()
+            .FirstOrDefault(e => Equals(e.Property("Id").CurrentValue, id));
+        if (tracked != null && !ReferenceEquals(tracked.Entity, entity))
+            tracked.State = EntityState.Detached;
+
+        var entry = db.Entry(entity);
+        entry.State = exists ? EntityState.Modified : EntityState.Added;
+        entry.Property(AutomataDb.DeletedUtc).CurrentValue = null;
+        if (exists) entry.Property(AutomataDb.DeletedUtc).IsModified = true;
     }
 }

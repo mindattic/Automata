@@ -15,10 +15,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Automata.Core\Automata.Core.csproj" />
-    <ProjectReference Include="..\Automata.Browser\Automata.Browser.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="AutoWebNav.WebView2" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
   </ItemGroup>
 

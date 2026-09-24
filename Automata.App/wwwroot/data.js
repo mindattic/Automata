@@ -1,7 +1,7 @@
-// The Data tab: the CSV/JSON files a task fans out over or writes results into.
+// The Data tab: the datasets a task fans out over or writes results into.
 //
-// There is no import step and no upload — a dataset is just a file in a folder the user can open
-// in Explorer, exactly like Collections. Dropping a spreadsheet export in is the whole workflow.
+// Datasets live in the database. A CSV or JSON file comes in with Import (a spreadsheet export is
+// the usual source) and any dataset goes back out as a file with its ⇩ button.
 
 import { $, esc, post, state } from './core.js';
 
@@ -12,15 +12,14 @@ export function renderDatasets() {
     var sets = state.datasets || [];
     var head =
         '<div class="section-head"><h2 class="section-label">Datasets</h2>' +
-        '<button class="mini" id="btn-open-datasets" data-tooltip="Open the Datasets folder in File Explorer">📁 Files</button>' +
+        '<button class="mini" id="btn-import-dataset" data-tooltip="Import CSV or JSON files as datasets (one with the same name is replaced)">⇪ Import</button>' +
         '</div>';
 
     if (!sets.length) {
         view.innerHTML = head +
-            '<p class="empty-state">No datasets yet. Drop a <code>.csv</code> or <code>.json</code> ' +
-            'file into ' + esc(state.datasetRoot || 'the Datasets folder') +
-            ' and it becomes available to every task — a <em>for each</em> step can read its rows, ' +
-            'and a <em>write dataset</em> step can append to it.</p>';
+            '<p class="empty-state">No datasets yet. Import a <code>.csv</code> or <code>.json</code> ' +
+            'file and it becomes available to every task — a <em>for each</em> step can read its rows, ' +
+            'and a <em>write dataset</em> step can append to it (creating it if need be).</p>';
     } else {
         view.innerHTML = head +
             '<div id="dataset-list" role="list" aria-label="Datasets">' +
@@ -30,12 +29,20 @@ export function renderDatasets() {
                     '<span class="name">' + esc(d.name) + '</span>' +
                     '<span class="dataset-meta">' + d.rows + ' row' + (d.rows === 1 ? '' : 's') +
                     ' · ' + (d.columns || []).length + ' column' + ((d.columns || []).length === 1 ? '' : 's') +
-                    '</span></div>' +
+                    '</span>' +
+                    '<button class="mini" data-export-dataset="' + esc(d.name) + '"' +
+                    ' aria-label="Export ' + esc(d.name) + ' to a file" data-tooltip="Export to a file">⇩</button>' +
+                    '</div>' +
                     '<div class="dataset-columns">' + esc((d.columns || []).join(', ')) + '</div>';
             }).join('') +
             '</div>';
     }
 
-    var openBtn = $('btn-open-datasets');
-    if (openBtn) openBtn.addEventListener('click', function () { post('openDatasets'); });
+    var importBtn = $('btn-import-dataset');
+    if (importBtn) importBtn.addEventListener('click', function () { post('importDataset'); });
+    view.querySelectorAll('[data-export-dataset]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            post('exportDataset', { name: btn.getAttribute('data-export-dataset') });
+        });
+    });
 }

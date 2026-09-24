@@ -32,10 +32,10 @@ tabsEl.addEventListener('click', function (e) {
     var tab = e.target.closest ? e.target.closest('[role="tab"]') : null;
     if (!tab) return;
     selectTab(tab);
-    // Datasets are files on disk that change outside the app, so re-read them on arrival rather
+    // Datasets can change outside this window (a run writing one), so re-read them on arrival rather
     // than trusting whatever was cached at startup.
     if (tab.id === 'tab-data') post('getDatasets');
-    // Runs and datasets are files on disk that change outside this window, so re-read them on
+    // Runs and datasets change outside this window (the runner writes both), so re-read them on
     // arrival rather than trusting whatever was cached at startup.
     if (tab.id === 'tab-runs') post('getRuns');
     // Same for the schedule: the runner writes next-due times into it on every tick, so what

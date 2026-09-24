@@ -1,6 +1,6 @@
 // The Runs tab: what has run, and how it went.
 //
-// The list is read from the run store on disk, not from anything this window remembers — which is
+// The list is read from the run history in the database, not from anything this window remembers — which is
 // what lets it show runs it did not start, including ones the headless runner produced while the
 // app was closed.
 
@@ -60,17 +60,17 @@ export function renderRuns() {
     var head =
         '<div class="section-head"><h2 class="section-label">Runs</h2>' +
         '<span class="node-btns">' +
-        '<button class="mini" id="btn-refresh-runs" aria-label="Re-read the run history from disk"' +
-        ' data-tooltip="Re-read from disk">⟳</button>' +
-        '<button class="mini" id="btn-open-runs" aria-label="Open the Runs folder in File Explorer"' +
-        ' data-tooltip="Open the Runs folder">📁</button>' +
+        '<button class="mini" id="btn-refresh-runs" aria-label="Re-read the run history"' +
+        ' data-tooltip="Re-read the run history">⟳</button>' +
+        '<button class="mini" id="btn-open-runs" aria-label="Open the run logs folder in File Explorer"' +
+        ' data-tooltip="Open the run logs folder">📁</button>' +
         '</span></div>';
 
     if (!runs.length) {
         view.innerHTML = head +
             '<p class="empty-state">No runs yet. Every run — from here or from ' +
-            '<code>automata-runner</code> — is recorded in ' + esc(state.runRoot || 'the Runs folder') +
-            ', so finished runs show up here even if this window was closed at the time.</p>';
+            '<code>automata-runner</code> — is recorded in the run history, so finished runs show ' +
+            'up here even if this window was closed at the time.</p>';
     } else {
         view.innerHTML = head +
             '<div id="run-list" role="list" aria-label="Recent runs">' +

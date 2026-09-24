@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Automata.Core.Automation.Model;
 using Automata.Core.Automation.Storage;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Flow;
 

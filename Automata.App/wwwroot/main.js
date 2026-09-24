@@ -44,7 +44,9 @@ $('btn-export').addEventListener('click', function () {
     else if (state.sel.collectionId) post('export', { collectionId: state.sel.collectionId });
 });
 $('btn-new-collection').addEventListener('click', function () { post('createCollection', { name: 'New collection' }); });
-$('btn-folder').addEventListener('click', function () { post('openCollections'); });
+$('btn-folder').addEventListener('click', function () { post('openDataFolder'); });
+$('btn-export-workspace').addEventListener('click', function () { post('exportWorkspace'); });
+$('btn-import-workspace').addEventListener('click', function () { post('importWorkspace'); });
 // Advanced free-text LLM path (unchanged host protocol).
 $('run').addEventListener('click', function () {
     var task = $('task').value.trim();

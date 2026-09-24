@@ -18,6 +18,7 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, 
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { dbBeside, tasksIn, datasetRows } from './automata-db.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const exe = join(repo, 'Automata.Runner', 'bin', 'Debug', 'net10.0-windows', 'automata-runner.exe');
@@ -46,6 +47,8 @@ const roots = {
   AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
+// Everything the app and runner store is in one database, beside the scratch settings path.
+const dbPath = dbBeside(roots.AUTOMATA_SETTINGS_PATH);
 
 function runner(...args) {
   const result = spawnSync(exe, args, { env, encoding: 'utf8', timeout: 10 * 60 * 1000 });
@@ -109,9 +112,7 @@ try {
   check('demos seed writes the pages and the examples', seeded.code === 0, seeded.out.trim());
 
   const tasksByKey = {};
-  const demosDir = join(roots.AUTOMATA_COLLECTIONS_ROOT, 'Demos');
-  for (const file of readdirSync(demosDir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
-    const task = JSON.parse(readFileSync(join(demosDir, file), 'utf8'));
+  for (const task of tasksIn(dbPath, 'Demos')) {
     if (task.demo?.key) tasksByKey[task.demo.key] = task;
   }
 
@@ -144,8 +145,7 @@ try {
   // re-saved", and exited. So the assertion is not "it passed" — it is that the file on disk
   // changed, and that the second run had nothing left to repair.
   const readDemo = (key) => {
-    for (const file of readdirSync(demosDir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
-      const task = JSON.parse(readFileSync(join(demosDir, file), 'utf8'));
+    for (const task of tasksIn(dbPath, 'Demos')) {
       if (task.demo?.key === key) return task;
     }
     return null;
@@ -194,14 +194,14 @@ try {
   // Two files rather than one, because the two lists are reached by two different mechanisms: the
   // frame in shadow.html is same-origin and is WALKED into, the frame in closed.html has its own
   // origin and is ASKED. A single check over both would pass while one of them was broken.
-  const framed = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'framed-rows.csv'));
+  const framed = csv('framed-rows.csv');
   check(
     'a list inside a same-origin frame was harvested (3 rows)',
     framed.length === 3 && framed.map((r) => r.ref).join(',') === 'F-1,F-2,F-3',
     JSON.stringify(framed),
   );
 
-  const opaque = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'opaque-rows.csv'));
+  const opaque = csv('opaque-rows.csv');
   check(
     'a list across an origin boundary was harvested by the copy running inside it (2 rows)',
     opaque.length === 2 && opaque.map((r) => r.ref).join(',') === 'O-1,O-2',
@@ -214,7 +214,7 @@ try {
   // — a wait that re-checked the value already captured could not produce "ready" here at all, it
   // could only time out. This is the check that would have failed before phase 33, and passing it
   // by accident is not available: the two words come from the same element at different moments.
-  const readings = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'slow-readings.csv'));
+  const readings = csv('slow-readings.csv');
   check(
     'the wait watched the page rather than re-checking what had already been read',
     readings.length === 1 && readings[0].captured === 'working' && readings[0].watched === 'ready',
@@ -226,7 +226,7 @@ try {
   // The roster example is the one that reads a JSON blob nobody harvested — a list where not every
   // row carries every field. Its own assertion checks the tally; this checks the asset really was
   // put there, since a missing one would make the loop run zero times and pass.
-  const roster = JSON.parse(readFileSync(join(roots.AUTOMATA_DATASETS_ROOT, 'roster.json'), 'utf8'));
+  const roster = (datasetRows(dbPath, 'roster.json') ?? []);
   const named = roster.filter((r) => r.Name !== undefined).length;
   check(
     `the ragged list was seeded (${roster.length} rows, ${named} with a name)`,
@@ -237,7 +237,7 @@ try {
   // The two things a loop knows that its columns do not. This is the assertion that separates
   // `row.#` from "how many rows have I written": the gap is the SECOND row, so the people added
   // came from positions 1 and 3 — a running count of the writes would say 1 and 2 and look fine.
-  const added = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'roster-added.csv'));
+  const added = csv('roster-added.csv');
   const wanted = roster
     .map((r, at) => ({ at: String(at + 1), row: r }))
     .filter((e) => e.row.Name !== undefined && e.row.Role !== undefined);
@@ -305,7 +305,7 @@ try {
     tail(wholeCollection.out),
   );
 
-  const pipeline = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'pipeline-ticket.csv'));
+  const pipeline = csv('pipeline-ticket.csv');
   check(
     'the last task wrote one row, from values it was handed rather than values it read',
     pipeline.length === 1,
@@ -351,7 +351,7 @@ try {
   // ---- what the conditions example wrote -------------------------------------------------------
   // Nine rows means all nine branches were taken. A condition that quietly did not hold would
   // otherwise be indistinguishable from a task that passed.
-  const checks = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'order-checks.csv'));
+  const checks = csv('order-checks.csv');
   check(
     'every one of the nine order checks held',
     checks.length === 9 && new Set(checks.map((r) => r.check)).size === 9,
@@ -361,7 +361,7 @@ try {
   // A collecting task has to be repeatable, or every example quietly needs a fresh workspace and
   // the first thing a new user does twice looks broken. This is what resetOnFirstWrite buys.
   const again = runner('run', '--task', tasksByKey.order.id);
-  const twice = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'order-checks.csv'));
+  const twice = csv('order-checks.csv');
   check(
     'running it a second time replaces its rows rather than doubling them',
     again.code === 0 && twice.length === 9,
@@ -373,7 +373,7 @@ try {
   // amounts printed on invoices.html. A run agreeing with itself proves nothing.
   const invoiceHtml = readFileSync(join(roots.AUTOMATA_DEMOS_ROOT, 'invoices.html'), 'utf8');
   const amounts = [...invoiceHtml.matchAll(/class="amount">\$([\d.]+)</g)].map((m) => Number(m[1]));
-  const totals = csv(join(roots.AUTOMATA_DATASETS_ROOT, 'invoice-totals.csv'))[0] ?? {};
+  const totals = csv('invoice-totals.csv')[0] ?? {};
   const expected = {
     total: amounts.reduce((a, b) => a + b, 0),
     count: amounts.length,
@@ -417,34 +417,9 @@ try {
 
 // ---- helpers ---------------------------------------------------------------------------------
 
-/// A reader for the datasets this project writes, which quote a field only when it needs it.
-function csv(path) {
-  if (!existsSync(path)) return [];
-  const lines = readFileSync(path, 'utf8').split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length < 2) return [];
-  const header = splitRow(lines[0]);
-  return lines.slice(1).map((line) => {
-    const cells = splitRow(line);
-    return Object.fromEntries(header.map((name, i) => [name, cells[i] ?? '']));
-  });
-}
-
-function splitRow(line) {
-  const cells = [];
-  let cell = '';
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++; }
-      else if (ch === '"') quoted = false;
-      else cell += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ',') { cells.push(cell); cell = ''; }
-    else cell += ch;
-  }
-  cells.push(cell);
-  return cells;
+/// A dataset's rows, as the CSV file used to give them: an object of string columns per row.
+function csv(dataset) {
+  return datasetRows(dbPath, dataset) ?? [];
 }
 
 /// The last few lines of a run's output — enough to see which step failed without pasting a log.

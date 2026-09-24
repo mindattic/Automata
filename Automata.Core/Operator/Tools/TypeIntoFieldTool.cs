@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AutoWebNav;
 
 namespace Automata.Core.Operator.Tools;
 
@@ -80,7 +81,7 @@ public class TypeIntoFieldTool : IBrowserTool
         // A real click both focuses the field AND (via its native text-input behavior) puts the
         // caret in it — then a real select-all + real typing replaces the existing value with
         // exactly what a human typing over it would produce.
-        var value = await Automation.Replay.BrowserActions.TypeViaKeystrokesAsync(
+        var value = await BrowserActions.TypeViaKeystrokesAsync(
             ctx.Browser, centerX, centerY, text, ct);
         return JsonSerializer.Serialize(new { found = true, typed = text, value });
     }

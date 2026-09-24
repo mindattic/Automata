@@ -221,27 +221,26 @@ public sealed class DemoSeeder(
     /// <summary>
     /// Writes the example ASSET — the ragged list the roster example iterates.
     /// <para>
-    /// Unlike a page, this does NOT get rewritten on every launch. A dataset lives in the shared
-    /// Datasets folder among the user's own files, and a generated page is output nobody could
-    /// have edited on purpose while a data file plainly is. So it is written when it is absent, and
-    /// replaced only by an explicit regenerate — the same split as everything else here: the silent
-    /// path may not destroy work, the asked-for one may.
+    /// Unlike a page, this does NOT get rewritten on every launch. A dataset sits among the
+    /// user's own datasets, and a generated page is output nobody could have edited on purpose
+    /// while a dataset plainly is. So it is written when it is absent, and replaced only by an
+    /// explicit regenerate — the same split as everything else here: the silent path may not
+    /// destroy work, the asked-for one may.
     /// </para>
     /// </summary>
     private void WriteExampleData(bool overwrite)
     {
         if (datasets == null) return;
-        var path = datasets.PathFor(DemoPages.RosterDataset);
-        if (!overwrite && File.Exists(path)) return;
-        Directory.CreateDirectory(datasets.RootPath);
-        File.WriteAllText(path, DemoPages.RosterJson, new UTF8Encoding(false));
+        if (!overwrite && datasets.Exists(DemoPages.RosterDataset)) return;
+        datasets.ImportText(DemoPages.RosterDataset, DemoPages.RosterJson);
     }
 
     /// <summary>
     /// The base name if nothing else has it, else the first free "name (n)".
     /// <para>
-    /// Names matter more than they look: a task's file is named after it, so two tasks sharing a
-    /// name in one collection would have one silently overwrite the other on disk.
+    /// Names matter more than they look: the store keeps task names unique within a collection
+    /// (the runner finds a task by name), so a clash here would come back suffixed anyway — better
+    /// to choose the suffix deliberately.
     /// </para>
     /// <param name="self">
     /// The task being rewritten, which does not count as competition for its own name — without

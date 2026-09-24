@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import http from 'node:http';
+import { task as dbTask, taskText, tasksIn, collectionNamed, editTaskSteps, schedule as dbSchedule, seedParkedRun, runs as dbRuns } from './automata-db.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // axe-core ships only in tools/ (a devDependency) and is injected into the already-CDP-attached
@@ -375,6 +376,8 @@ async function floorCheck(exePath, group) {
   const panelProfile = path.join(scratch, 'panel-profile');
   const targetProfile = path.join(scratch, 'target-profile');
   const collectionsRoot = path.join(scratch, 'collections');
+  // Everything the app stores is in one database, beside the scratch settings path below.
+  const dbPath = path.join(scratch, 'automata.db');
   for (const dir of [panelProfile, targetProfile, collectionsRoot]) mkdirSync(dir, { recursive: true });
 
   console.log(`Relaunching against an empty store for the floor check (panel CDP :${FLOOR_PANEL_PORT})...`);
@@ -508,19 +511,18 @@ async function floorCheck(exePath, group) {
     });
 
     await group('floor: the store holds only the collection, with no new fields', async () => {
-      const dir = path.join(collectionsRoot, 'Google Searches');
-      const files = readdirSync(dir).sort();
-      assertEqual(JSON.stringify(files), JSON.stringify(['Wolf Tshirts.json', 'collection.json']),
-        `expected only the collection and its one task on disk, got ${JSON.stringify(files)}`);
-      const task = JSON.parse(readFileSync(path.join(dir, 'Wolf Tshirts.json'), 'utf8'));
+      const names = tasksIn(dbPath, 'Google Searches').map((t) => t.name);
+      assertEqual(JSON.stringify(names), JSON.stringify(['Wolf Tshirts']),
+        `expected only the collection and its one task in the store, got ${JSON.stringify(names)}`);
+      const task = dbTask(dbPath, 'Google Searches', 'Wolf Tshirts');
       assertTrue(!('settings' in task),
         'a task must not carry a settings object until someone overrides something');
       // Freshly written files carry the current schema version; what the floor actually cares
       // about is that no new FIELD appeared, which the checks either side of this assert.
       assertEqual(task.schemaVersion, 2, 'a newly written task should carry the current schema version');
-      const collection = JSON.parse(readFileSync(path.join(dir, 'collection.json'), 'utf8'));
+      const collection = collectionNamed(dbPath, 'Google Searches');
       for (const field of ['settings', 'taskDependencies', 'triggers']) {
-        assertTrue(!(field in collection), `collection.json must not gain "${field}" until it is used`);
+        assertTrue(!(field in collection), `the collection must not gain "${field}" until it is used`);
       }
     });
   } finally {
@@ -557,6 +559,10 @@ async function main() {
   const targetProfile = path.join(scratch, 'target-profile');
   const collectionsRoot = path.join(scratch, 'collections');
   const datasetsRoot = path.join(scratch, 'datasets');
+  // Everything the app stores is in one database, beside the scratch settings path below. The
+  // fixtures are still written as the old per-task files: the app's one-time import of the old
+  // layout brings them into this database at startup, which also exercises that import.
+  const dbPath = path.join(scratch, 'automata.db');
   // The schedule lives in one file, and it must be a scratch one: without this the app under
   // test would read and write the developer's real Documents\Automata\Schedule\schedule.json.
   const schedulePath = path.join(scratch, 'schedule', 'schedule.json');
@@ -1352,8 +1358,8 @@ async function main() {
     });
 
     await group('scoped settings: inherited renders read-only, override then reset round-trips', async () => {
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
-      assertTrue(!readFileSync(taskFile, 'utf8').includes('"settings"'),
+      const taskFile = ['Verify', 'Insert Fixture'];
+      assertTrue(!taskText(dbPath, ...taskFile).includes('"settings"'),
         'the fixture task should start with no settings node');
 
       await clickRowOp(panelPage.locator(`.node.task[data-task="${taskId}"]`), 'task-settings');
@@ -1381,14 +1387,14 @@ async function main() {
         .waitFor({ state: 'visible', timeout: 5000 });
       assertEqual(await panelPage.locator('.settings-field[data-key="selfHeal"] [data-op="reset"]').count(), 1,
         'an overridden row needs a named Reset action, not just an empty field');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"selfHeal"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"selfHeal"'),
         { timeoutMs: 5000, label: 'the override to reach disk' });
 
       // Resetting removes it entirely - an override that overrides nothing must not linger.
       await panelPage.locator('.settings-field[data-key="selfHeal"] [data-op="reset"]').click();
       await panelPage.locator('.settings-field[data-key="selfHeal"] .settings-value.inherited')
         .waitFor({ state: 'visible', timeout: 5000 });
-      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"settings"'),
+      await waitFor(() => !taskText(dbPath, ...taskFile).includes('"settings"'),
         { timeoutMs: 5000, label: 'the settings node to be pruned from disk' });
 
       await panelPage.keyboard.press('Escape');
@@ -1503,7 +1509,7 @@ async function main() {
     });
 
     await group('bindings: capture an output, bind a later step to it, then unbind', async () => {
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
       const editorReady = (sel) => panelPage.locator(sel).waitFor({ state: 'attached', timeout: 5000 });
 
       // 1. Turn the first step into an extractText that publishes a named value.
@@ -1513,7 +1519,7 @@ async function main() {
       await editorReady('#ed-output');
       await panelPage.locator('#ed-output').fill('total');
       await panelPage.locator('#ed-output').dispatchEvent('change');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"total"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"total"'),
         { timeoutMs: 5000, label: 'the declared output to reach disk' });
 
       // 2. Give the second step a value field to bind.
@@ -1536,7 +1542,7 @@ async function main() {
       await panelPage.locator('#modal-list .action-pick').first().click();
 
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"stepOutput"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"stepOutput"'),
         { timeoutMs: 5000, label: 'the binding to reach disk' });
       assertEqual(await panelPage.locator('#ed-value').count(), 0,
         'a bound field renders a chip, not an editable literal');
@@ -1545,7 +1551,7 @@ async function main() {
       await panelPage.locator('.chip.bound').click();
       await panelPage.locator('#modal-list .action-pick').first().waitFor({ state: 'visible', timeout: 5000 });
       await panelPage.locator('#modal-list .action-pick[data-value="clear"]').click();
-      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"bindings"'),
+      await waitFor(() => !taskText(dbPath, ...taskFile).includes('"bindings"'),
         { timeoutMs: 5000, label: 'the binding to be removed from disk' });
       await editorReady('#ed-value');
     });
@@ -1555,7 +1561,7 @@ async function main() {
       // WHOLE workspace back — every collection, every task, every step — for an edit that touched
       // one field. And because that echo re-renders the editor, opening the Target section and
       // editing one of its fields snapped the section shut underneath the person doing it.
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
 
       // Whatever the step already is — this check is about the push, not about the action, and
       // the fixture is shared with every group after this one.
@@ -1586,7 +1592,7 @@ async function main() {
 
       await panelPage.locator('input[data-tgt="ariaLabel"]').fill('Search box');
       await panelPage.locator('input[data-tgt="ariaLabel"]').dispatchEvent('change');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('Search box'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('Search box'),
         { timeoutMs: 5000, label: 'the target edit to reach disk' });
 
       const pushes = await panelPage.evaluate(() => window.__pushes);
@@ -1608,7 +1614,7 @@ async function main() {
       // Put the fixture back.
       await panelPage.locator('input[data-tgt="ariaLabel"]').fill('');
       await panelPage.locator('input[data-tgt="ariaLabel"]').dispatchEvent('change');
-      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('Search box'),
+      await waitFor(() => !taskText(dbPath, ...taskFile).includes('Search box'),
         { timeoutMs: 5000, label: 'the fixture to be restored' });
     });
 
@@ -1633,7 +1639,7 @@ async function main() {
     await group('flow: a collecting write can start its dataset fresh each run', async () => {
       // The footgun this option closes: a loop that appends keeps the last run's rows, so running
       // a task twice doubles its results and says nothing.
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
       await panelPage.locator('#tree .node.step').first().click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('writeDataset');
@@ -1643,7 +1649,7 @@ async function main() {
         'the reset option belongs beside append, where the decision is being made');
 
       await panelPage.locator('#ed-write-reset').check();
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"resetOnFirstWrite": true'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"resetOnFirstWrite": true'),
         { timeoutMs: 5000, label: 'the reset flag to reach disk' });
 
       // It only means anything alongside append, so it goes away with it rather than sitting there
@@ -1651,7 +1657,7 @@ async function main() {
       await panelPage.locator('#ed-write-append').uncheck();
       await waitFor(() => panelPage.locator('#ed-write-reset-row').isHidden(),
         { timeoutMs: 5000, label: 'the reset option to withdraw with append' });
-      await waitFor(() => !readFileSync(taskFile, 'utf8').includes('"resetOnFirstWrite": true'),
+      await waitFor(() => !taskText(dbPath, ...taskFile).includes('"resetOnFirstWrite": true'),
         { timeoutMs: 5000, label: 'the reset flag to be cleared on disk' });
     });
 
@@ -1678,7 +1684,7 @@ async function main() {
     });
 
     await group('flow: a step can zoom the page, chosen from the levels a browser offers', async () => {
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
       await panelPage.locator('#tree .node.step').first().click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('setZoom');
@@ -1697,7 +1703,7 @@ async function main() {
         'a zoom step must not ask for a target element');
 
       await panelPage.locator('#ed-zoom').selectOption('50');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"zoomPercent": 50'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"zoomPercent": 50'),
         { timeoutMs: 5000, label: 'the chosen zoom level to reach disk' });
     });
 
@@ -1709,7 +1715,7 @@ async function main() {
     // way to say the thing through a picker at all, and the feature exists only for hand-written
     // JSON.
     await group('flow: a wait on a condition can be pointed at an element to watch', async () => {
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
       await panelPage.locator('#tree .node.step').first().click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('wait');
@@ -1736,9 +1742,9 @@ async function main() {
       // The declared output is what makes the reading nameable — the binding picker enumerates
       // declared outputs and nothing else, so a wait that published nothing could not be asked
       // about even by itself.
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"untilCondition"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"untilCondition"'),
         { timeoutMs: 5000, label: 'the wait mode to reach disk' });
-      const saved = JSON.parse(readFileSync(taskFile, 'utf8'));
+      const saved = JSON.parse(taskText(dbPath, ...taskFile));
       assertEqual(JSON.stringify((saved.steps[0].outputs || []).map((o) => o.name)), '["value"]',
         'a condition wait must declare the reading it publishes');
       assertTrue(saved.steps[0].wait.timeoutMs > 0,
@@ -1749,7 +1755,7 @@ async function main() {
       // And a number typed here is the number that runs.
       await panelPage.locator('#ed-wait-timeout').fill('45000');
       await panelPage.locator('#ed-wait-timeout').dispatchEvent('change');
-      await waitFor(() => JSON.parse(readFileSync(taskFile, 'utf8')).steps[0].wait.timeoutMs === 45000,
+      await waitFor(() => JSON.parse(taskText(dbPath, ...taskFile)).steps[0].wait.timeoutMs === 45000,
         { timeoutMs: 5000, label: 'an edited give-up time to reach disk' });
 
       // And the picker offers it. Source-read rather than clicked open: the option is built by
@@ -1762,7 +1768,7 @@ async function main() {
     });
 
     await group('flow: an aggregate step reduces a column and publishes one named answer', async () => {
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
+      const taskFile = ['Verify', 'Insert Fixture'];
       await panelPage.locator('#tree .node.step').first().click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('aggregate');
@@ -1781,16 +1787,16 @@ async function main() {
       // about to be replaced.
       await panelPage.locator('#ed-agg-column').fill('price');
       await panelPage.locator('#ed-agg-column').dispatchEvent('change');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"columnName": "price"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"columnName": "price"'),
         { timeoutMs: 5000, label: 'the chosen column to reach disk' });
 
       await panelPage.locator('#ed-agg-op').selectOption('average');
-      await waitFor(() => readFileSync(taskFile, 'utf8').includes('"op": "average"'),
+      await waitFor(() => taskText(dbPath, ...taskFile).includes('"op": "average"'),
         { timeoutMs: 5000, label: 'the chosen reduction to reach disk' });
 
       // The answer's name is declared for the step rather than typed, so a later step can bind to
       // it the moment the step exists.
-      const saved = JSON.parse(readFileSync(taskFile, 'utf8')).steps[0];
+      const saved = JSON.parse(taskText(dbPath, ...taskFile)).steps[0];
       assertEqual(saved.aggregate.op, 'average');
       assertEqual(JSON.stringify((saved.outputs ?? []).map((o) => o.name)), JSON.stringify(['value']),
         'an aggregate step should publish "value" without being asked');
@@ -1821,8 +1827,8 @@ async function main() {
 
       // The stored label follows too. The tree never reads it, but the host writes run-log lines
       // from it and has no way to run this derivation.
-      const taskFile = path.join(collectionsRoot, 'Verify', 'Insert Fixture.json');
-      await waitFor(() => /"label": "Click[^"]*Alpha/.test(readFileSync(taskFile, 'utf8')),
+      const taskFile = ['Verify', 'Insert Fixture'];
+      await waitFor(() => /"label": "Click[^"]*Alpha/.test(taskText(dbPath, ...taskFile)),
         { timeoutMs: 5000, label: 'the label snapshot to reach disk' });
     });
 
@@ -1839,8 +1845,8 @@ async function main() {
       await panelPage.locator('.column-row[data-input-index="0"] [data-field="name"]').fill('term');
       await panelPage.locator('.column-row[data-input-index="0"] [data-field="name"]').dispatchEvent('change');
 
-      const target = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
-      await waitFor(() => readFileSync(target, 'utf8').includes('"name": "term"'),
+      const target = ['Verify Flow', 'Loop'];
+      await waitFor(() => taskText(dbPath, ...target).includes('"name": "term"'),
         { timeoutMs: 5000, label: 'the declared input to reach disk' });
 
       await panelPage.locator('#modal-ok').click();
@@ -1866,15 +1872,15 @@ async function main() {
 
       await panelPage.locator('#modal-list .action-pick[data-value="input:term"]').click();
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
-      await waitFor(() => readFileSync(target, 'utf8').includes('"taskInput"'),
+      await waitFor(() => taskText(dbPath, ...target).includes('"taskInput"'),
         { timeoutMs: 5000, label: 'the binding to reach disk' });
     });
 
     await group('pipeline: a task publishes a value, and another task wires its input to it', async () => {
       // Both halves are PICKED. A wiring is two names that have to agree, and a typed id that
       // agrees with nothing is a pipeline that runs, passes, and quietly uses a default.
-      const readerFile = path.join(collectionsRoot, 'Verify Flow', 'Reader.json');
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const readerFile = ['Verify Flow', 'Reader'];
+      const loopFile = ['Verify Flow', 'Loop'];
 
       const reader = panelPage.locator(`.node.task[data-task="${readerTaskId}"]`);
       await clickRowOp(reader, 'task-inputs');
@@ -1898,7 +1904,7 @@ async function main() {
         .dispatchEvent('change');
 
       await waitFor(() => {
-        const task = JSON.parse(readFileSync(readerFile, 'utf8'));
+        const task = JSON.parse(taskText(dbPath, ...readerFile));
         return task.outputs?.[0]?.name === 'heading' && task.outputs[0].sourceStepId === 'reader-read';
       }, { timeoutMs: 5000, label: 'the declared output to reach disk, naming the step behind it' });
 
@@ -1920,19 +1926,19 @@ async function main() {
         .selectOption({ label: 'Reader \u2192 heading' });
 
       await waitFor(() => {
-        const task = JSON.parse(readFileSync(loopFile, 'utf8'));
+        const task = JSON.parse(taskText(dbPath, ...loopFile));
         const from = task.inputs?.[0]?.from;
         return from?.taskId === readerTaskId && from.outputName === 'heading';
       }, { timeoutMs: 5000, label: 'the wiring to reach disk, pointing at the task by id' });
 
       // And it can be taken off again, without editing anything by hand.
       await panelPage.locator('[data-from="0"]').selectOption('');
-      await waitFor(() => JSON.parse(readFileSync(loopFile, 'utf8')).inputs?.[0]?.from === undefined,
+      await waitFor(() => JSON.parse(taskText(dbPath, ...loopFile)).inputs?.[0]?.from === undefined,
         { timeoutMs: 5000, label: 'the wiring to be removed' });
 
       await panelPage.locator('[data-from="0"]')
         .selectOption({ label: 'Reader \u2192 heading' });
-      await waitFor(() => JSON.parse(readFileSync(loopFile, 'utf8')).inputs?.[0]?.from?.outputName === 'heading',
+      await waitFor(() => JSON.parse(taskText(dbPath, ...loopFile)).inputs?.[0]?.from?.outputName === 'heading',
         { timeoutMs: 5000, label: 'the wiring to be put back' });
 
       await panelPage.locator('#modal-ok').click();
@@ -1944,7 +1950,7 @@ async function main() {
       // The gap this closes: the shop examples bind to row.url, but that binding was only ever
       // expressible in code — the picker offered captured outputs, task inputs and environment
       // variables, and no way at all to name a column of the row a loop is on.
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopFile = ['Verify Flow', 'Loop'];
       const steps = () => panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`);
 
       await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
@@ -1993,7 +1999,7 @@ async function main() {
 
       await panelPage.locator('#modal-list .action-pick[data-value="column:sku"]').click();
       await panelPage.locator('.chip.bound').waitFor({ state: 'visible', timeout: 5000 });
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"datasetColumn"'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"datasetColumn"'),
         { timeoutMs: 5000, label: 'the column binding to reach disk' });
 
       // And picking the whole row writes one. Checked by its label rather than by the kind: the
@@ -2002,7 +2008,7 @@ async function main() {
       await panelPage.locator('#modal-list .action-pick').first()
         .waitFor({ state: 'visible', timeout: 5000 });
       await panelPage.locator('#modal-list .action-pick[data-value^="row:"]').first().click();
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('the whole row'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('the whole row'),
         { timeoutMs: 5000, label: 'the whole-row binding to reach disk' });
     });
 
@@ -2011,7 +2017,7 @@ async function main() {
       // the editor's OPS, so its <select> had no option for it, the browser reported the first one
       // (`equals`), and every field in the editor commits on change — so opening the step and
       // touching anything at all rewrote the guard to "is exactly", silently.
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopFile = ['Verify Flow', 'Loop'];
       const steps = () => panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`);
 
       await panelPage.locator(`.node.task[data-task="${flowTaskId}"] .name`).click();
@@ -2028,20 +2034,20 @@ async function main() {
         `the editor must be able to express presence, got ${JSON.stringify(offered)}`);
 
       await panelPage.locator('#ed-cond-op').selectOption('exists');
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"op": "exists"'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"op": "exists"'),
         { timeoutMs: 5000, label: 'the chosen operator to reach disk' });
 
       // Now touch something with nothing to do with the condition.
       await panelPage.locator('#ed-pause').check();
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"pauseForUser": true'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"pauseForUser": true'),
         { timeoutMs: 5000, label: 'the unrelated edit to commit' });
 
-      assertTrue(readFileSync(loopFile, 'utf8').includes('"op": "exists"'),
+      assertTrue(taskText(dbPath, ...loopFile).includes('"op": "exists"'),
         'editing an unrelated field must not rewrite the guard');
 
       // Put the fixture back.
       await panelPage.locator('#ed-pause').uncheck();
-      await waitFor(() => !readFileSync(loopFile, 'utf8').includes('"pauseForUser": true'),
+      await waitFor(() => !taskText(dbPath, ...loopFile).includes('"pauseForUser": true'),
         { timeoutMs: 5000, label: 'the fixture to be restored' });
     });
 
@@ -2049,7 +2055,7 @@ async function main() {
       // Putting a step inside another used to be a drag into the middle third of a row, or
       // Alt+Right. Both work; neither is discoverable. The row that would hold it is the obvious
       // place to ask, and an `if` is the obvious place to be offered its other half.
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopFile = ['Verify Flow', 'Loop'];
       const loopRow = panelPage.locator(`.node.step[data-action="forEach"]`).first();
       await loopRow.waitFor({ state: 'visible', timeout: 10000 });
 
@@ -2066,7 +2072,7 @@ async function main() {
         .waitFor({ state: 'visible', timeout: 5000 });
       await panelPage.locator('#modal-list details.pick-group summary').click();
       await panelPage.locator('#modal-list .action-pick[data-value="if"]').click();
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"if"'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"if"'),
         { timeoutMs: 5000, label: 'the guard to be created inside the loop' });
 
       // The new guard offers its own other half, and taking it makes a correctly paired branch.
@@ -2083,7 +2089,7 @@ async function main() {
         'a branch made this way must be correctly paired, not flagged as orphaned');
 
       // Which means the pairing reached disk by id, not by luck of position.
-      const saved = JSON.parse(readFileSync(loopFile, 'utf8'));
+      const saved = JSON.parse(taskText(dbPath, ...loopFile));
       const flat = [];
       (function walk(list) {
         (list || []).forEach(function (st) { flat.push(st); walk(st.children); });
@@ -2095,12 +2101,12 @@ async function main() {
     });
 
     await group('branching: an otherwise reads as the other half of the if above it', async () => {
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopFile = ['Verify Flow', 'Loop'];
       const row = panelPage.locator(`.node.task[data-task="${flowTaskId}"] ~ .node.step`).nth(1);
       await row.click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
       await panelPage.locator('#ed-action').selectOption('if');
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"if"'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"if"'),
         { timeoutMs: 5000, label: 'the guard to reach disk' });
 
       // A second step beside it, switched to `else`.
@@ -2111,7 +2117,7 @@ async function main() {
       await panelPage.locator('#modal-list details.pick-group summary').click();
       await panelPage.locator('#modal-list .action-pick[data-value="else"]').click();
       await panelPage.locator('#ed-action').waitFor({ state: 'visible', timeout: 10000 });
-      await waitFor(() => readFileSync(loopFile, 'utf8').includes('"else"'),
+      await waitFor(() => taskText(dbPath, ...loopFile).includes('"else"'),
         { timeoutMs: 5000, label: 'the otherwise to reach disk' });
 
       // It has no condition of its own, so the editor has to say what it pairs with — an empty
@@ -2139,7 +2145,7 @@ async function main() {
       // its children, and the engine runs an ordinary step's children unconditionally — so steps
       // that ran only when the condition failed start running every single time, and nothing
       // anywhere says so.
-      const loopFile = path.join(collectionsRoot, 'Verify Flow', 'Loop.json');
+      const loopFile = ['Verify Flow', 'Loop'];
       const elseRow = panelPage.locator(`.node.step[data-action="else"]`).first();
       await elseRow.waitFor({ state: 'visible', timeout: 10000 });
       await elseRow.click();
@@ -2157,7 +2163,7 @@ async function main() {
         { timeoutMs: 5000, label: 'the question to close' });
       assertEqual(await panelPage.locator('#ed-action').inputValue(), 'else',
         'cancelling must put the dropdown back too');
-      assertTrue(readFileSync(loopFile, 'utf8').includes('"else"'),
+      assertTrue(taskText(dbPath, ...loopFile).includes('"else"'),
         'and must not have changed the step on disk');
     });
 
@@ -2167,9 +2173,8 @@ async function main() {
       await waitFor(() => Promise.resolve(existsSync(path.join(demosRoot, 'shop', 'search.html'))),
         { timeoutMs: 15000, label: 'the generated shop pages' });
       assertTrue(existsSync(path.join(demosRoot, 'buttons.html')), 'the buttons example page');
-      const demoDir = path.join(collectionsRoot, 'Demos');
-      assertTrue(existsSync(demoDir), 'the generated Demos collection');
-      const seeded = readdirSync(demoDir).filter((f) => f !== 'collection.json').sort();
+      const seeded = tasksIn(dbPath, 'Demos').map((t) => t.name).sort();
+      assertTrue(seeded.length > 0, 'the generated Demos collection');
       assertTrue(seeded.length >= 3, `expected the example tasks, got ${JSON.stringify(seeded)}`);
     });
 
@@ -2272,10 +2277,7 @@ async function main() {
     await group('examples: an edited one is restored with no warning, silently', async () => {
       // Edit an example the way a user would — through the store, since the point is what
       // regenerating DOES about it, not how it came to be edited.
-      const demoFile = path.join(collectionsRoot, 'Demos', 'Click a button.json');
-      const demo = JSON.parse(readFileSync(demoFile, 'utf8'));
-      demo.steps[0].label = 'mine now';
-      writeFileSync(demoFile, JSON.stringify(demo, null, 2), 'utf8');
+      editTaskSteps(dbPath, 'Demos', 'Click a button', (steps) => { steps[0].label = 'mine now'; });
 
       await panelPage.locator('#btn-settings').click();
       await panelPage.locator('#set-regen-demos').click();
@@ -2288,7 +2290,7 @@ async function main() {
 
       await panelPage.locator('#demos-regen').click();
       await waitFor(() => Promise.resolve(
-        JSON.parse(readFileSync(demoFile, 'utf8')).steps[0].label !== 'mine now'),
+        dbTask(dbPath, 'Demos', 'Click a button')?.steps[0].label !== 'mine now'),
         { timeoutMs: 10000, label: 'the example to be restored' });
     });
 
@@ -2368,8 +2370,7 @@ async function main() {
         { timeoutMs: 10000, label: 'the drafted collection to appear in the tree' },
       );
 
-      const onDisk = readFileSync(
-        path.join(collectionsRoot, 'Drafted by verify', 'Alpha then Beta.json'), 'utf8');
+      const onDisk = taskText(dbPath, 'Drafted by verify', 'Alpha then Beta');
       assertTrue(onDisk.includes('"if"'), 'the guard should have compiled to an if step');
       assertTrue(onDisk.includes('"stepOutput"'), 'the condition should bind to the captured value');
     });
@@ -2402,8 +2403,7 @@ async function main() {
     // with a reason, because a schedule that quietly does nothing is this feature's worst
     // possible failure.
 
-    const scheduleOnDisk = () =>
-      (existsSync(schedulePath) ? JSON.parse(readFileSync(schedulePath, 'utf8')) : []);
+    const scheduleOnDisk = () => dbSchedule(dbPath);
 
     async function openScheduleTab() {
       await panelPage.locator('#tab-schedule').click();
@@ -2662,9 +2662,9 @@ async function main() {
       assertTrue(/Insert Fixture|Verify|Loop/.test(text), `expected a recorded run, got: ${text.slice(0, 200)}`);
       assertTrue(/passed|failed/.test(text), 'each run should report its outcome in words, not colour alone');
 
-      // The list is read from disk, which is what lets it show runs this window never saw.
-      const onDisk = readdirSync(path.join(scratch, 'runs'));
-      assertTrue(onDisk.length > 0, 'runs should have been written to the run store');
+      // The list is read from the run store, which is what lets it show runs this window never saw.
+      const recorded = dbRuns(dbPath);
+      assertTrue(recorded.length > 0, 'runs should have been written to the run store');
 
       const named = await panelPage.evaluate(() =>
         Array.prototype.slice.call(document.querySelectorAll('#run-list .status'))
@@ -2683,19 +2683,13 @@ async function main() {
       // showing an overnight run as "running" with no reason given.
       const runId = 'ab12cd34ef56ab78cd90ef12ab34cd56';
       const started = new Date(Date.now() - 3 * 3600_000);
-      const stamp = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}` +
-        `${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}` +
-        `${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
-      const runDir = path.join(scratch, 'runs', `${stamp(started)}-nightly-${runId.slice(0, 8)}`);
-      mkdirSync(runDir, { recursive: true });
-      writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+      const manifest = {
         schemaVersion: 1, runId, target: 'task', targetId: taskId, targetName: 'Nightly',
         trigger: 'schedule', startedUtc: started.toISOString(),
-      }, null, 2));
+      };
 
       const resumeAt = new Date(Date.now() + 6 * 3600_000);
-      mkdirSync(parkedRoot, { recursive: true });
-      writeFileSync(path.join(parkedRoot, `${runId}.json`), JSON.stringify({
+      seedParkedRun(dbPath, manifest, {
         schemaVersion: 1, runId, target: 'task', targetName: 'Nightly', trigger: 'schedule',
         taskId, taskName: 'Nightly batch', collectionId,
         remainingTaskIds: [], tasksPassed: 0, totalTasks: 1,
@@ -2706,7 +2700,7 @@ async function main() {
           resumePath: [1], resumeStepId: 'w', stepLabel: 'Wait until 09:00',
           outputs: [], variables: {}, passed: 1, healed: 0,
         },
-      }, null, 2));
+      });
 
       await panelPage.locator('#tab-runs').click();
       await panelPage.locator('#btn-refresh-runs').click();
@@ -2733,10 +2727,9 @@ async function main() {
     // Record → refine → Run is covered above, step by step. What was never covered is what happens
     // after: a task leaves the app as a file and comes back. These run last because importing adds
     // a collection, and every count above would rather it did not.
-    const roundTripDir = path.join(collectionsRoot, 'Verify Round Trip');
-    const importedDir = path.join(collectionsRoot, 'Verify Round Trip (2)');
-    const readRoundTrip = (dir) =>
-      JSON.parse(readFileSync(path.join(dir, 'Round Trip.json'), 'utf8'));
+    const roundTripDir = 'Verify Round Trip';
+    const importedDir = 'Verify Round Trip (2)';
+    const readRoundTrip = (collectionName) => dbTask(dbPath, collectionName, 'Round Trip');
     // The imported copy's ids are only known once it exists, and the run check needs them to
     // address ITS rows — both collections hold a task called "Round Trip", so anything matching by
     // name would be a coin toss.

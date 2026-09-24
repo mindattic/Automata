@@ -10,10 +10,12 @@ namespace Automata.Tests;
 public class SchemaMigrationTests
 {
     private string root = null!;
+    private TestDb db = null!;
 
     [SetUp]
     public void SetUp()
     {
+        db = new TestDb();
         root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(root);
     }
@@ -21,17 +23,13 @@ public class SchemaMigrationTests
     [TearDown]
     public void TearDown()
     {
+        db.Dispose();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 
-    /// <summary>
-    /// The whole point of the v1 -> v2 change being additive: a store written by the previous
-    /// version loads without a migration pass, keeping every field it had.
-    /// </summary>
-    [Test]
-    public void AHandWrittenV1Store_LoadsUnchanged()
+    private string WriteV1Store()
     {
-        var dir = Path.Combine(root, "Legacy");
+        var dir = Path.Combine(root, "Collections", "Legacy");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "collection.json"), """
             { "schemaVersion": 1, "id": "c1", "name": "Legacy", "description": "",
@@ -44,8 +42,20 @@ public class SchemaMigrationTests
               "target": { "tag": "button", "cssSelector": "#go", "classList": [] }, "children": [] } ],
               "createdUtc": "2026-01-01T00:00:00+00:00", "modifiedUtc": "2026-01-01T00:00:00+00:00" }
             """);
+        return dir;
+    }
 
-        var store = new CollectionStore(root);
+    /// <summary>
+    /// The whole point of the v1 -> v2 change being additive: a store written by an old version
+    /// comes into the database without a migration pass, keeping every field it had.
+    /// </summary>
+    [Test]
+    public void AHandWrittenV1Store_ImportsUnchanged()
+    {
+        WriteV1Store();
+
+        new LegacyWorkspaceImporter(db.Database, LegacyLocations.Under(root)).ImportOnce();
+        var store = db.Collections();
         var collections = store.LoadCollections();
         var tasks = store.LoadTasks("c1");
 
@@ -57,61 +67,59 @@ public class SchemaMigrationTests
             Assert.That(tasks, Has.Count.EqualTo(1));
             Assert.That(tasks[0].Steps, Has.Count.EqualTo(1));
             Assert.That(tasks[0].Steps[0].Action, Is.EqualTo(StepAction.Click));
+            Assert.That(tasks[0].Steps[0].Target!.CssSelector, Is.EqualTo("#go"));
             Assert.That(tasks[0].Settings, Is.Null);
+            Assert.That(tasks[0].CreatedUtc, Is.EqualTo(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)),
+                "history survives the move");
         });
     }
 
     /// <summary>
-    /// Loading must not rewrite an untouched store. Opening the new version against an existing
-    /// Documents\Automata should leave every file exactly as it was found.
+    /// Importing must not rewrite the old files: they are the user's backup, and have to be left
+    /// exactly as they were found.
     /// </summary>
     [Test]
-    public void LoadingAV1Store_DoesNotRewriteItOnDisk()
+    public void ImportingAV1Store_DoesNotRewriteItOnDisk()
     {
-        var dir = Path.Combine(root, "Legacy");
-        Directory.CreateDirectory(dir);
-        var manifest = Path.Combine(dir, "collection.json");
-        File.WriteAllText(manifest, """
-            { "schemaVersion": 1, "id": "c1", "name": "Legacy", "description": "",
-              "createdUtc": "2026-01-01T00:00:00+00:00", "modifiedUtc": "2026-01-01T00:00:00+00:00",
-              "taskOrder": [] }
-            """);
-        var before = File.ReadAllText(manifest);
+        var dir = WriteV1Store();
+        var before = Directory.GetFiles(dir).ToDictionary(f => f, File.ReadAllText);
 
-        new CollectionStore(root).LoadCollections();
+        new LegacyWorkspaceImporter(db.Database, LegacyLocations.Under(root)).ImportOnce();
 
-        Assert.That(File.ReadAllText(manifest), Is.EqualTo(before));
+        foreach (var (file, text) in before)
+            Assert.That(File.ReadAllText(file), Is.EqualTo(text), file);
+        Assert.That(Directory.GetFiles(dir), Has.Length.EqualTo(before.Count), "nothing was added beside them");
     }
 
     [Test]
     public void SavingStampsTheCurrentSchemaVersion()
     {
-        var store = new CollectionStore(root);
+        var store = db.Collections();
         var collection = store.CreateCollection("Fresh");
         var task = new TaskDefinition { CollectionId = collection.Id, Name = "T", SchemaVersion = 1 };
         store.SaveTask(task);
 
-        var manifest = File.ReadAllText(Path.Combine(root, "Fresh", "collection.json"));
-        var taskJson = File.ReadAllText(Path.Combine(root, "Fresh", "T.json"));
+        var exported = JsonSerializer.Serialize(store.GetTask(task.Id), AutomataJson.Options);
 
         Assert.Multiple(() =>
         {
-            Assert.That(JsonDocument.Parse(manifest).RootElement.GetProperty("schemaVersion").GetInt32(),
+            Assert.That(store.GetCollection(collection.Id)!.SchemaVersion,
                 Is.EqualTo(SchemaMigration.CurrentCollectionVersion));
-            Assert.That(JsonDocument.Parse(taskJson).RootElement.GetProperty("schemaVersion").GetInt32(),
-                Is.EqualTo(SchemaMigration.CurrentTaskVersion),
-                "the write path stamps the version whose shape the file was actually written in");
+            Assert.That(store.GetTask(task.Id)!.SchemaVersion, Is.EqualTo(SchemaMigration.CurrentTaskVersion),
+                "the write path stamps the version whose shape the row was actually written in");
+            Assert.That(JsonDocument.Parse(exported).RootElement.GetProperty("schemaVersion").GetInt32(),
+                Is.EqualTo(SchemaMigration.CurrentTaskVersion));
         });
     }
 
     /// <summary>
-    /// An override that overrides nothing must never reach disk — otherwise a task nobody has
-    /// configured looks configured, both to a reader and to the first-run floor check.
+    /// An override that overrides nothing must never be persisted — otherwise a task nobody has
+    /// configured looks configured, both to a reader of an export and to the first-run floor check.
     /// </summary>
     [Test]
     public void AnEmptyOverrideIsPrunedInsteadOfPersisted()
     {
-        var store = new CollectionStore(root);
+        var store = db.Collections();
         var collection = store.CreateCollection("Fresh");
         collection.Settings = new EngineSettingsOverride();
         store.SaveCollection(collection);
@@ -125,11 +133,15 @@ public class SchemaMigrationTests
         };
         store.SaveTask(task);
 
-        var manifest = File.ReadAllText(Path.Combine(root, "Fresh", "collection.json"));
-        var taskJson = File.ReadAllText(Path.Combine(root, "Fresh", "T.json"));
+        var back = store.GetTask(task.Id)!;
+        var manifest = JsonSerializer.Serialize(store.GetCollection(collection.Id), AutomataJson.Options);
+        var taskJson = JsonSerializer.Serialize(back, AutomataJson.Options);
 
         Assert.Multiple(() =>
         {
+            Assert.That(store.GetCollection(collection.Id)!.Settings, Is.Null);
+            Assert.That(back.Settings, Is.Null);
+            Assert.That(back.Steps[0].Settings, Is.Null);
             Assert.That(manifest, Does.Not.Contain("settings"));
             Assert.That(taskJson, Does.Not.Contain("settings"));
         });
@@ -138,7 +150,7 @@ public class SchemaMigrationTests
     [Test]
     public void ARealOverrideSurvivesARoundTrip()
     {
-        var store = new CollectionStore(root);
+        var store = db.Collections();
         var collection = store.CreateCollection("Scoped");
         collection.Settings = new EngineSettingsOverride { DefaultStepTimeoutMs = 3000 };
         store.SaveCollection(collection);
@@ -152,13 +164,14 @@ public class SchemaMigrationTests
             Steps = [new Step { Id = "s1", Action = StepAction.Click, Settings = new EngineSettingsOverride { SelfHeal = false } }],
         });
 
-        var reloaded = new CollectionStore(root);
+        var reloaded = db.Collections();
         var back = reloaded.LoadCollections().Single(c => c.Name == "Scoped");
         var task = reloaded.LoadTasks(back.Id).Single();
 
         Assert.Multiple(() =>
         {
             Assert.That(back.Settings!.DefaultStepTimeoutMs, Is.EqualTo(3000));
+            Assert.That(back.Settings.SelfHeal, Is.Null, "what was not overridden still inherits");
             Assert.That(task.Settings!.Retry!.MaxAttempts, Is.EqualTo(3));
             Assert.That(task.Settings.Retry.DelayMs, Is.EqualTo(50));
             Assert.That(task.Steps[0].Settings!.SelfHeal, Is.False);

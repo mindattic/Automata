@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync }
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { dbBeside, tasksIn, datasetRows } from './automata-db.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const exe = join(repo, 'Automata.Runner', 'bin', 'Debug', 'net10.0-windows', 'automata-runner.exe');
@@ -66,6 +67,8 @@ const roots = {
   AUTOMATA_BROWSER_PROFILE_ROOT: join(scratch, 'browsers'),
 };
 const env = { ...process.env, ...roots };
+// Everything the app and runner store is in one database, beside the scratch settings path.
+const dbPath = dbBeside(roots.AUTOMATA_SETTINGS_PATH);
 
 function runner(...args) {
   const result = spawnSync(exe, args, { env, encoding: 'utf8', timeout: 10 * 60 * 1000 });
@@ -81,25 +84,16 @@ function pause(seconds = 4) {
   spawnSync(process.execPath, ['-e', `setTimeout(() => {}, ${seconds * 1000})`], { timeout: 60000 });
 }
 
-/// A harvest writes a CSV; this reads back what it actually collected.
+/// A harvest writes a dataset; this reads back what it actually collected (its one column).
 function rowsOf(dataset) {
-  const file = join(roots.AUTOMATA_DATASETS_ROOT, dataset);
-  if (!existsSync(file)) return null;
-  const lines = readFileSync(file, 'utf8').trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  return lines.slice(1).map((line) => line.replace(/^"|"$/g, '').replace(/""/g, '"'));
+  const rows = datasetRows(dbPath, dataset);
+  if (rows === null) return null;
+  return rows.map((row) => Object.values(row)[0] ?? '');
 }
 
-/// The profile as it currently sits on disk, by id — the names carry an em dash and the files are
-/// named after them, so scanning beats constructing a path.
+/// The profile as it currently sits in the database, by id.
 function profileOnDisk(id) {
-  const dir = join(roots.AUTOMATA_COLLECTIONS_ROOT, 'Acceptance');
-  if (!existsSync(dir)) return null;
-  for (const file of readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'collection.json')) {
-    const task = JSON.parse(readFileSync(join(dir, file), 'utf8'));
-    if (task.id === id) return task;
-  }
-  return null;
+  return tasksIn(dbPath, 'Acceptance').find((task) => task.id === id) ?? null;
 }
 
 /// What a self-heal actually WROTE, step by step.

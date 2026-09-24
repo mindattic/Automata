@@ -11,21 +11,28 @@ namespace Automata.Tests;
 public class ArchiveServiceTests
 {
     private string workDir = null!;
+    private TestDb sourceDb = null!;
+    private TestDb targetDb = null!;
     private CollectionStore sourceStore = null!;
     private CollectionStore targetStore = null!;
 
+    /// <summary>Two databases — two machines — so an export really travels.</summary>
     [SetUp]
     public void SetUp()
     {
         workDir = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(workDir);
-        sourceStore = new CollectionStore(Path.Combine(workDir, "source"));
-        targetStore = new CollectionStore(Path.Combine(workDir, "target"));
+        sourceDb = new TestDb();
+        targetDb = new TestDb();
+        sourceStore = sourceDb.Collections();
+        targetStore = targetDb.Collections();
     }
 
     [TearDown]
     public void TearDown()
     {
+        sourceDb.Dispose();
+        targetDb.Dispose();
         if (Directory.Exists(workDir)) Directory.Delete(workDir, recursive: true);
     }
 

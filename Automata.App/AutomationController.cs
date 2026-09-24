@@ -18,12 +18,13 @@ using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using MindAttic.Vault.Credentials;
+using AutoWebNav;
 
 namespace Automata.App;
 
 /// <summary>
 /// Everything the sidebar's collection/task/step UI can ask for: store CRUD, recording,
-/// replay (run / dry run / validate), pause-continue, and zip import/export. Lives beside
+/// replay (run / dry run / validate), pause-continue, and zip/JSON import/export. Lives beside
 /// MainWindow so the window class stays a thin bridge.
 /// </summary>
 public sealed class AutomationController
@@ -303,10 +304,15 @@ public sealed class AutomationController
                 return true;
 
             case "openRuns":
-                Directory.CreateDirectory(runs.RootPath);
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{runs.RootPath}\"") { UseShellExecute = true });
-                await logAsync($"Opened {runs.RootPath}");
+            {
+                // Run history lives in the database; what is still a folder is the plain-text run
+                // logs, one file per run.
+                var logs = RunLogWriter.DefaultRoot;
+                Directory.CreateDirectory(logs);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{logs}\"") { UseShellExecute = true });
+                await logAsync($"Opened {logs}");
                 return true;
+            }
 
             case "getSchedule":
                 await PushScheduleAsync();
@@ -346,10 +352,12 @@ public sealed class AutomationController
                 await PushDatasetsAsync();
                 return true;
 
-            case "openDatasets":
-                Directory.CreateDirectory(datasets.RootPath);
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{datasets.RootPath}\"") { UseShellExecute = true });
-                await logAsync($"Opened {datasets.RootPath}");
+            case "importDataset":
+                await ImportDatasetAsync();
+                return true;
+
+            case "exportDataset":
+                await ExportDatasetAsync(Str(msg, "name") ?? "");
                 return true;
 
             case "getSettings":
@@ -435,11 +443,25 @@ public sealed class AutomationController
                 await ImportAsync();
                 return true;
 
-            case "openCollections":
-                Directory.CreateDirectory(store.RootPath);
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{store.RootPath}\"") { UseShellExecute = true });
-                await logAsync($"Opened {store.RootPath}");
+            case "exportWorkspace":
+                await ExportWorkspaceAsync();
                 return true;
+
+            case "importWorkspace":
+                await ImportAsync(workspace: true);
+                return true;
+
+            case "openDataFolder":
+            {
+                // Everything lives in one database file; show it selected in its folder rather than
+                // a folder of files nobody should hand-edit any more.
+                var dbPath = store.Database.DatabasePath;
+                Directory.CreateDirectory(store.Database.DataDirectory);
+                var args = File.Exists(dbPath) ? $"/select,\"{dbPath}\"" : $"\"{store.Database.DataDirectory}\"";
+                Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
+                await logAsync($"Opened {store.Database.DataDirectory}");
+                return true;
+            }
 
             default:
                 return false;
@@ -931,23 +953,35 @@ public sealed class AutomationController
             return;
         }
 
-        // Recorder JSON rides on the existing Export flow as a second file type rather than a
-        // tenth toolbar button: "export as" is already the question being asked.
+        // One Export button, three shapes: the zip everyone already shares, the same content as
+        // one readable .automata.json, and a Chrome DevTools Recorder flow. "Export as" is already
+        // the question being asked, so the file type answers it.
         var chosen = HarnessFilePath;
         if (chosen == null)
         {
             var dialog = new SaveFileDialog
             {
                 FileName = ArchiveService.SuggestedZipName(display),
-                Filter = "Automata export (*.automata.zip)|*.automata.zip|Zip archive (*.zip)|*.zip"
+                Filter = "Automata export (*.automata.zip)|*.automata.zip"
+                       + "|Automata JSON (*.automata.json)|*.automata.json"
                        + "|Chrome DevTools Recorder (*.json)|*.json",
             };
             if (dialog.ShowDialog() != true) return;
             chosen = dialog.FileName;
+            if (dialog.FilterIndex == 2) chosen = WithJsonExportExtension(chosen);
         }
 
         try
         {
+            if (chosen.EndsWith(ArchiveService.JsonExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                var written = collectionId != null
+                    ? archive.ExportCollectionJson(collectionId, chosen)
+                    : archive.ExportTaskJson(taskId!, chosen);
+                await logAsync($"Exported '{display}' to {written}");
+                return;
+            }
+
             if (chosen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
                 if (taskId == null)
@@ -972,14 +1006,52 @@ public sealed class AutomationController
         }
     }
 
-    private async Task ImportAsync()
+    /// <summary>"x.automata.zip" or "x.json" chosen under the Automata JSON filter → "x.automata.json".</summary>
+    private static string WithJsonExportExtension(string path)
+    {
+        if (path.EndsWith(ArchiveService.JsonExtension, StringComparison.OrdinalIgnoreCase)) return path;
+        foreach (var ext in new[] { ".automata.zip", ".zip", ".json" })
+            if (path.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                return path[..^ext.Length] + ArchiveService.JsonExtension;
+        return path + ArchiveService.JsonExtension;
+    }
+
+    /// <summary>Every collection, dataset, schedule entry, run and the settings, as one JSON file.</summary>
+    private async Task ExportWorkspaceAsync()
+    {
+        var chosen = HarnessFilePath;
+        if (chosen == null)
+        {
+            var dialog = new SaveFileDialog
+            {
+                FileName = ArchiveService.SuggestedWorkspaceName(),
+                Filter = "Automata workspace (*.automata.json)|*.automata.json",
+            };
+            if (dialog.ShowDialog() != true) return;
+            chosen = WithJsonExportExtension(dialog.FileName);
+        }
+
+        try
+        {
+            var written = archive.ExportWorkspaceJson(chosen);
+            await logAsync($"Exported the whole workspace to {written}");
+        }
+        catch (Exception ex)
+        {
+            await logAsync($"⚠ Export failed: {ex.Message}");
+        }
+    }
+
+    private async Task ImportAsync(bool workspace = false)
     {
         var chosen = HarnessFilePath;
         if (chosen == null)
         {
             var dialog = new OpenFileDialog
             {
-                Filter = "Automata export (*.zip)|*.zip|Chrome DevTools Recorder (*.json)|*.json|All files|*.*",
+                Filter = workspace
+                    ? "Automata workspace (*.automata.json)|*.automata.json|All files|*.*"
+                    : "Automata export (*.zip;*.json)|*.zip;*.json|Chrome DevTools Recorder (*.json)|*.json|All files|*.*",
             };
             if (dialog.ShowDialog() != true) return;
             chosen = dialog.FileName;
@@ -989,19 +1061,98 @@ public sealed class AutomationController
         {
             if (chosen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
-                await ImportRecorderFlowAsync(chosen);
+                var text = await File.ReadAllTextAsync(chosen);
+                // An Automata export (task, collection or workspace) or one of the old per-task
+                // files; anything else is taken to be a Recorder flow.
+                if (!ArchiveService.IsAutomataJson(text))
+                {
+                    await ImportRecorderFlowAsync(chosen);
+                    return;
+                }
+                await ReportImportAsync(archive.ImportJson(text));
                 return;
             }
 
-            var result = archive.Import(chosen);
-            foreach (var warning in result.Warnings)
-                await logAsync($"⚠ {warning}");
-            await logAsync($"Imported {result.Collections.Count} collection(s), {result.Tasks.Count} task(s).");
-            await PushStateAsync();
+            await ReportImportAsync(archive.ImportZip(chosen));
         }
         catch (Exception ex)
         {
             await logAsync($"⚠ Import failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReportImportAsync(ImportResult result)
+    {
+        foreach (var warning in result.Warnings)
+            await logAsync($"⚠ {warning}");
+        await logAsync($"Imported {result.Describe()}.");
+        await PushStateAsync();
+        await PushDatasetsAsync();
+        await PushScheduleAsync();
+        await PushRunsAsync();
+    }
+
+    /// <summary>Brings CSV or JSON files in as datasets, each named after its file. A dataset of
+    /// the same name is replaced — importing a file under its own name is how it is refreshed.</summary>
+    private async Task ImportDatasetAsync()
+    {
+        string[] files;
+        if (HarnessFilePath is { } harness) files = [harness];
+        else
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Datasets (*.csv;*.json)|*.csv;*.json|All files|*.*",
+                Multiselect = true,
+            };
+            if (dialog.ShowDialog() != true) return;
+            files = dialog.FileNames;
+        }
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var replacing = datasets.Exists(Path.GetFileName(file));
+                var name = datasets.ImportFile(file);
+                await logAsync($"{(replacing ? "Replaced" : "Imported")} dataset '{name}' ({datasets.Count(name)} rows) from {file}");
+            }
+            catch (Exception ex)
+            {
+                await logAsync($"⚠ Could not import {file}: {ex.Message}");
+            }
+        }
+        await PushDatasetsAsync();
+    }
+
+    private async Task ExportDatasetAsync(string name)
+    {
+        if (!datasets.Exists(name))
+        {
+            await logAsync($"⚠ No dataset '{name}' to export.");
+            return;
+        }
+
+        var chosen = HarnessFilePath;
+        if (chosen == null)
+        {
+            var dialog = new SaveFileDialog
+            {
+                FileName = name,
+                Filter = DatasetStore.IsJson(name) ? "JSON (*.json)|*.json" : "CSV (*.csv)|*.csv",
+            };
+            if (dialog.ShowDialog() != true) return;
+            chosen = dialog.FileName;
+        }
+
+        try
+        {
+            datasets.ExportFile(name, chosen);
+            await logAsync($"Exported dataset '{name}' to {chosen}");
+        }
+        catch (Exception ex)
+        {
+            await logAsync($"⚠ Export failed: {ex.Message}");
         }
     }
 
@@ -1022,6 +1173,15 @@ public sealed class AutomationController
     {
         if (demosSeeded) return;
         demosSeeded = true;
+
+        // The one-time move off the old JSON files happened at startup, before the panel could
+        // show anything; this is the first moment it can be reported.
+        if (App.StartupImport is { Ran: true } imported)
+        {
+            await logAsync(imported.Describe());
+            foreach (var warning in imported.Warnings) await logAsync($"⚠ {warning}");
+        }
+
         try
         {
             var report = demos.SeedMissing();
@@ -1245,7 +1405,7 @@ public sealed class AutomationController
         {
             provider = settings.Provider,
             borderRadius = settings.BorderRadius,
-            // Coerced on the way out as well as on the way in: the file on disk is hand-editable,
+            // Coerced on the way out as well as on the way in: settings can arrive from an import,
             // and a name the panel does not know would leave it with no palette at all.
             theme = AutomataSettings.Themes.Coerce(settings.Theme),
             // Read from the SETTING rather than from the window, because this controller does not
@@ -1506,7 +1666,7 @@ public sealed class AutomationController
     /// The reason an entry cannot be saved, or null when it is sound.
     /// </summary>
     /// <param name="saved">
-    /// The entry as it currently stands on disk, or null when this is a new one. Consulted for one
+    /// The entry as it currently stands in the store, or null when this is a new one. Consulted for one
     /// rule only — see the one-shot case below — and deliberately not for anything else: every
     /// other check is about the entry being saved, not about how it got that way.
     /// </param>
@@ -1659,7 +1819,7 @@ public sealed class AutomationController
                 }
                 : null,
         });
-        var json = JsonSerializer.Serialize(new { root = runs.RootPath, runs = recent }, AutomataJson.Options);
+        var json = JsonSerializer.Serialize(new { runs = recent }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onRuns({json})");
     }
 
@@ -1673,10 +1833,9 @@ public sealed class AutomationController
         {
             name,
             columns = datasets.Columns(name),
-            rows = datasets.Read(name).Count,
+            rows = datasets.Count(name),
         });
-        var json = JsonSerializer.Serialize(
-            new { root = datasets.RootPath, datasets = listed }, AutomataJson.Options);
+        var json = JsonSerializer.Serialize(new { datasets = listed }, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onDatasets({json})");
     }
 

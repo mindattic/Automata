@@ -2,8 +2,9 @@ namespace Automata.Core.Automation.Model;
 
 /// <summary>
 /// A replayable browser task: an ordered tree of steps. Named TaskDefinition (not Task) to stay
-/// clear of System.Threading.Tasks.Task. Fully self-contained in one JSON file so a single task
-/// can be shared by copying that file.
+/// clear of System.Threading.Tasks.Task. Fully self-contained as one JSON document — the shape a
+/// task export carries, and the shape its step tree is stored in — so a single task can be shared
+/// on its own.
 /// </summary>
 public sealed class TaskDefinition
 {

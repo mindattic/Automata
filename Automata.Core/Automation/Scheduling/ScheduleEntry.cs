@@ -61,10 +61,10 @@ public enum ScheduleTargetKind { Collection, Task }
 /// <summary>
 /// One scheduled thing: what to run, and what starts it.
 /// <para>
-/// Kept apart from <c>Collection</c> and <c>TaskDefinition</c> on purpose. Those files are
-/// hand-editable in Explorer and describe what a workflow *is*; when it runs is a different
-/// concern with a different lifetime, and mixing them would make every collection.json carry
-/// scheduler bookkeeping it does not need.
+/// Kept apart from <c>Collection</c> and <c>TaskDefinition</c> on purpose. Those describe what a
+/// workflow *is* — and travel in exports; when it runs is a different concern with a different
+/// lifetime, and mixing them would make every exported collection carry scheduler bookkeeping it
+/// does not need.
 /// </para>
 /// </summary>
 public sealed class ScheduleEntry

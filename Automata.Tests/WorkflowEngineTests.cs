@@ -6,12 +6,14 @@ using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 
 [TestFixture]
 public class WorkflowEngineTests
 {
+    private TestDb db = null!;
     private string root = null!;
     private CollectionStore collections = null!;
     private DatasetStore datasets = null!;
@@ -19,14 +21,16 @@ public class WorkflowEngineTests
     [SetUp]
     public void SetUp()
     {
+        db = new TestDb();
         root = Path.Combine(Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"));
-        collections = new CollectionStore(Path.Combine(root, "collections"));
-        datasets = new DatasetStore(Path.Combine(root, "datasets"));
+        collections = db.Collections();
+        datasets = db.Datasets();
     }
 
     [TearDown]
     public void TearDown()
     {
+        db.Dispose();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 
@@ -1107,13 +1111,13 @@ public class WorkflowEngineTests
     }
 
     [Test]
-    public async Task Aggregate_OverADatasetThatIsNotThere_SaysWhereItLooked()
+    public async Task Aggregate_OverADatasetThatIsNotThere_SaysWhichOneAndHowToAddIt()
     {
         var events = await Run(Reducing(AggregateOp.Sum), Browser());
 
         var done = events.OfType<StepEvent.StepCompleted>().Single();
         Assert.That(done.Status, Is.EqualTo(StepStatus.Failed));
-        Assert.That(done.Message, Does.Contain(datasets.RootPath));
+        Assert.That(done.Message, Does.Contain("not found").And.Contain("Data tab"));
     }
 
     /// <summary>
@@ -1544,8 +1548,7 @@ public class WorkflowEngineTests
     /// out of somewhere else, and the one a spreadsheet cannot produce.
     /// </summary>
     private void SeedRagged() =>
-        File.WriteAllText(
-            Path.Combine(Directory.CreateDirectory(datasets.RootPath).FullName, "roster.json"),
+        datasets.ImportText("roster.json",
             """[ { "Name": "Ada" }, { "Role": "unknown" }, { "Name": "Grace" } ]""");
 
     /// <summary>A loop that records which branch each row took, so both halves are checkable.</summary>

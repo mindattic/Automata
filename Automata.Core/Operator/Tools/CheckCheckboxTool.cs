@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AutoWebNav;
 
 namespace Automata.Core.Operator.Tools;
 
@@ -42,7 +43,7 @@ public class CheckCheckboxTool : IBrowserTool
         if (candidates.Length == 0)
             return JsonSerializer.Serialize(new { error = "text_candidates was empty." });
 
-        var result = await BrowserFormHelpers.TickMatchingCheckboxesAsync(ctx, candidates, ct);
+        var result = await BrowserFormHelpers.TickMatchingCheckboxesAsync(ctx.Browser, candidates, ct);
         if (result.BlockedByProcessing)
         {
             return JsonSerializer.Serialize(new

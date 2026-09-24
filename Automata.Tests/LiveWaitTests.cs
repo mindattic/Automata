@@ -6,6 +6,7 @@ using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Storage;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 
@@ -21,6 +22,7 @@ namespace Automata.Tests;
 [TestFixture]
 public class LiveWaitTests
 {
+    private TestDb db = null!;
     /// <summary>A resolve that succeeded, in the shape the envelope parser expects.</summary>
     private const string Found =
         """
@@ -35,21 +37,23 @@ public class LiveWaitTests
     [SetUp]
     public void SetUp()
     {
+        db = new TestDb();
         root = Path.Combine(Path.GetTempPath(), "automata-livewait-" + Guid.NewGuid().ToString("n")[..8]);
-        collections = new CollectionStore(root);
+        collections = db.Collections();
         browser = new FakeBrowserSurface();
     }
 
     [TearDown]
     public void TearDown()
     {
+        db.Dispose();
         try { Directory.Delete(root, recursive: true); } catch { /* a held file; the temp sweep gets it */ }
     }
 
     private WorkflowEngine Engine() => new(
         new ReplayEngine(new FingerprintResolver { PollIntervalMs = 5 }),
         collections,
-        new DatasetStore(Path.Combine(root, "datasets")));
+        db.Datasets());
 
     /// <summary>A wait that watches <c>#status</c> until it says <paramref name="want"/>.</summary>
     private static Step Watching(string want, int timeoutMs = 2000) => new()

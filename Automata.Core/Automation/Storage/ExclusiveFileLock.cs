@@ -6,7 +6,9 @@ using System.Text;
 namespace Automata.Core.Automation.Storage;
 
 /// <summary>
-/// Serialises read-modify-write access to one file, across threads AND across processes.
+/// Serialises a read-modify-write critical section, across threads AND across processes. Keyed by
+/// a path-like string — a real file, or a name derived from the database path (see
+/// <see cref="Data.AutomataDatabase"/>) for sections such as one dataset's appends.
 /// <para>
 /// Both halves are needed, for different reasons. <b>Threads:</b> a parallel for-each runs several
 /// rows at once in one process, and every one of them may append to the same dataset. <b>Processes:</b>
@@ -14,16 +16,14 @@ namespace Automata.Core.Automation.Storage;
 /// runner can be mid-run when someone opens the app — or two scheduled runs can overlap.
 /// </para>
 /// <para>
-/// Without this, an append is a lost update waiting to happen: appending reads the file, works out
-/// the union of columns, and writes it back, so two writers racing produce a file missing whichever
-/// rows lost — and on Windows they usually collide outright with "the process cannot access the
-/// file". Both were observed before this existed, by a parallel run that quietly came back short.
+/// Without this, an append is a lost update waiting to happen: appending works out the union of
+/// columns from what is already there and writes the result, so two writers racing lose whichever
+/// update finished first. That was observed before this existed, by a parallel run that quietly
+/// came back short.
 /// </para>
 /// <para>
-/// The lock is a small sentinel file in the system temp folder, named from a hash of the target's
-/// full path, rather than a <c>.lock</c> beside the data. Datasets and collections are meant to be
-/// browsable in Explorer, and lock files sitting next to a spreadsheet would be clutter the user
-/// has to learn to ignore.
+/// The lock is a small sentinel file in the system temp folder, named from a hash of the key, so
+/// nothing is ever left beside the user's data.
 /// </para>
 /// </summary>
 public sealed class ExclusiveFileLock : IDisposable

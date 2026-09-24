@@ -466,30 +466,25 @@ public class TriggerEvaluatorTests
 [TestFixture]
 public class ScheduleStoreTests
 {
-    private string path = null!;
+    private TestDb db = null!;
 
     [SetUp]
-    public void SetUp() => path = Path.Combine(
-        Path.GetTempPath(), "automata-tests", Guid.NewGuid().ToString("n"), "schedule.json");
+    public void SetUp() => db = new TestDb();
 
     [TearDown]
-    public void TearDown()
-    {
-        var dir = Path.GetDirectoryName(path)!;
-        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-    }
+    public void TearDown() => db.Dispose();
 
     [Test]
-    public void AFreshMachineHasAnEmptyScheduleAndNoFile()
+    public void AFreshMachineHasAnEmptySchedule()
     {
-        Assert.That(new ScheduleStore(path).Load(), Is.Empty);
-        Assert.That(File.Exists(path), Is.False, "nothing is written until something is scheduled");
+        Assert.That(db.Schedule().Load(), Is.Empty);
+        Assert.That(db.Schedule().Get("anything"), Is.Null);
     }
 
     [Test]
     public void AnEntryRoundTrips()
     {
-        var store = new ScheduleStore(path);
+        var store = db.Schedule();
         store.Upsert(new ScheduleEntry
         {
             Id = "e1", Name = "Nightly", Target = ScheduleTargetKind.Collection, TargetId = "c1",
@@ -504,7 +499,7 @@ public class ScheduleStoreTests
             NextDueUtc = new DateTimeOffset(2026, 5, 4, 9, 0, 0, TimeSpan.Zero),
         });
 
-        var back = new ScheduleStore(path).Get("e1")!;
+        var back = db.Schedule().Get("e1")!;
 
         Assert.Multiple(() =>
         {
@@ -518,7 +513,7 @@ public class ScheduleStoreTests
     [Test]
     public void UpsertReplacesRatherThanDuplicating()
     {
-        var store = new ScheduleStore(path);
+        var store = db.Schedule();
         store.Upsert(new ScheduleEntry { Id = "e1", Name = "First" });
         store.Upsert(new ScheduleEntry { Id = "e1", Name = "Renamed" });
 
@@ -529,7 +524,7 @@ public class ScheduleStoreTests
     [Test]
     public void RemoveReportsWhetherAnythingWasThere()
     {
-        var store = new ScheduleStore(path);
+        var store = db.Schedule();
         store.Upsert(new ScheduleEntry { Id = "e1" });
 
         Assert.That(store.Remove("e1"), Is.True);
@@ -537,13 +532,16 @@ public class ScheduleStoreTests
         Assert.That(store.Load(), Is.Empty);
     }
 
-    /// <summary>A corrupt schedule must not stop the app starting; nothing fires until it is fixed.</summary>
+    /// <summary>Saving the whole list keeps its order and drops what is no longer in it — the
+    /// scheduler's tick reads everything, updates its bookkeeping and writes it all back.</summary>
     [Test]
-    public void ACorruptFileLoadsAsEmptyRatherThanThrowing()
+    public void SavingTheWholeListKeepsItsOrderAndDropsWhatLeft()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, "{ not json");
+        var store = db.Schedule();
+        store.Save([new ScheduleEntry { Id = "b" }, new ScheduleEntry { Id = "a" }, new ScheduleEntry { Id = "c" }]);
+        store.Save([new ScheduleEntry { Id = "c" }, new ScheduleEntry { Id = "b" }]);
+        store.Upsert(new ScheduleEntry { Id = "d" });
 
-        Assert.That(new ScheduleStore(path).Load(), Is.Empty);
+        Assert.That(store.Load().Select(e => e.Id), Is.EqualTo(new[] { "c", "b", "d" }));
     }
 }

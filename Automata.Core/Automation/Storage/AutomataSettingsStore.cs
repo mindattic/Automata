@@ -1,6 +1,6 @@
-using System.IO;
-using System.Text.Json;
+using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
+using Microsoft.EntityFrameworkCore;
 
 namespace Automata.Core.Automation.Storage;
 
@@ -13,8 +13,8 @@ public sealed class AutomataSettings
         public const string Dark = "dark";
         public const string Light = "light";
 
-        /// <summary>The name if it is one this app knows, and the default if it is not — a
-        /// hand-edited settings file must not be able to leave the panel unstyled.</summary>
+        /// <summary>The name if it is one this app knows, and the default if it is not — an
+        /// imported or hand-edited settings value must not be able to leave the panel unstyled.</summary>
         public static string Coerce(string? name) =>
             string.Equals(name, Light, StringComparison.OrdinalIgnoreCase) ? Light : Dark;
     }
@@ -65,8 +65,8 @@ public sealed class AutomataSettings
     /// they are used.
     /// <para>
     /// Nullable rather than NaN, and this is not a style preference: <c>double.NaN</c> cannot be
-    /// written as JSON at all, so a NaN here threw inside <see cref="AutomataSettingsStore.Save"/>
-    /// and took the whole action that was saving with it. A value this type cannot serialise has
+    /// written as JSON at all (and the settings travel as JSON in a workspace export), so a NaN
+    /// here threw on save and took the whole action that was saving with it. A value this type cannot serialise has
     /// no business being a default.
     /// </para>
     /// </summary>
@@ -87,38 +87,44 @@ public sealed class AutomataSettings
 }
 
 /// <summary>
-/// Tiny JSON settings file at %APPDATA%\MindAttic\Automata\settings.json. Read on every access
-/// (it's one small file) so a key saved in the sidebar takes effect on the next run without a
-/// restart. Note: stored as plain text in the user's roaming profile — same trust level as the
-/// machine account itself.
+/// App settings: the single row of the <c>Settings</c> table (engine defaults as a complex type on
+/// it). Read on every access — it is one small row — so a value saved in the sidebar takes effect
+/// on the next run without a restart. API keys are not here; they live in MindAttic.Vault.
 /// </summary>
 public sealed class AutomataSettingsStore
 {
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "MindAttic", "Automata", "settings.json");
+    private const int RowId = 1;
 
-    public string FilePath { get; }
+    public AutomataSettingsStore(AutomataDatabase database) => Database = database;
 
-    public AutomataSettingsStore(string? filePath = null) => FilePath = filePath ?? DefaultPath;
+    public AutomataDatabase Database { get; }
+
+    /// <summary>Whether settings have ever been saved here (rather than being the defaults).</summary>
+    public bool HasSaved
+    {
+        get
+        {
+            using var db = Database.CreateDbContext();
+            return db.Settings.Any();
+        }
+    }
 
     public AutomataSettings Load()
     {
-        try
-        {
-            if (!File.Exists(FilePath)) return new AutomataSettings();
-            return JsonSerializer.Deserialize<AutomataSettings>(File.ReadAllText(FilePath), AutomataJson.Options)
-                ?? new AutomataSettings();
-        }
-        catch (Exception ex) when (ex is JsonException or IOException)
-        {
-            return new AutomataSettings();
-        }
+        using var db = Database.CreateDbContext();
+        return db.Settings.AsNoTracking().FirstOrDefault() ?? new AutomataSettings();
     }
 
     public void Save(AutomataSettings settings)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(settings, AutomataJson.Options));
+        // An override that overrides nothing is stored as no override at all.
+        if (settings.EngineDefaults is { IsEmpty: true }) settings.EngineDefaults = null;
+
+        using var db = Database.CreateDbContext();
+        var exists = db.Settings.Any();
+        var entry = db.Entry(settings);
+        entry.Property(AutomataDb.SettingsKey).CurrentValue = RowId;
+        entry.State = exists ? EntityState.Modified : EntityState.Added;
+        db.SaveChanges();
     }
 }

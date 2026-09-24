@@ -1,67 +1,90 @@
-using System.IO;
-using System.Text.Json;
-using Automata.Core.Automation.Model;
+using Automata.Core.Automation.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Automata.Core.Automation.Scheduling;
 
 /// <summary>
-/// The schedule, in one file at <c>Documents\Automata\Schedule\schedule.json</c>.
+/// The schedule, in the <c>Schedule</c> table — one row per entry, its triggers a JSON column,
+/// kept in the order it was written.
 /// <para>
-/// One file rather than the folder-per-item shape <c>CollectionStore</c> uses, because schedule
-/// entries are few, small, and machine-maintained — they carry next-due bookkeeping nobody
-/// hand-edits. Whole-file read and write, like the settings store.
+/// Whole-list read and write on purpose: entries are few, small and machine-maintained, and the
+/// scheduler's tick reads them all, updates their bookkeeping and writes them all back.
 /// </para>
 /// </summary>
 public sealed class ScheduleStore
 {
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "Automata", "Schedule", "schedule.json");
+    private readonly Lock gate = new();
 
-    public string FilePath { get; }
+    public ScheduleStore(AutomataDatabase database) => Database = database;
 
-    public ScheduleStore(string? filePath = null) => FilePath = filePath ?? DefaultPath;
+    public AutomataDatabase Database { get; }
 
     public List<ScheduleEntry> Load()
     {
-        try
-        {
-            if (!File.Exists(FilePath)) return [];
-            return JsonSerializer.Deserialize<List<ScheduleEntry>>(
-                File.ReadAllText(FilePath), AutomataJson.Options) ?? [];
-        }
-        catch (Exception ex) when (ex is JsonException or IOException)
-        {
-            // A corrupt schedule must not stop the app starting; an empty schedule simply means
-            // nothing fires until it is fixed.
-            return [];
-        }
+        using var db = Database.CreateDbContext();
+        return db.Schedule.AsNoTracking()
+            .OrderBy(e => EF.Property<int>(e, AutomataDb.SortOrder))
+            .ToList();
     }
 
+    /// <summary>Replaces the whole schedule with <paramref name="entries"/>, in that order.</summary>
     public void Save(IEnumerable<ScheduleEntry> entries)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(entries.ToList(), AutomataJson.Options));
+        var list = entries.ToList();
+        lock (gate)
+        {
+            using var db = Database.CreateDbContext();
+            using var tx = db.Database.BeginTransaction();
+            var keep = list.Select(e => e.Id).ToList();
+            db.Schedule.Where(e => !keep.Contains(e.Id)).ExecuteDelete();
+            var existing = db.Schedule.AsNoTracking().Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
+            for (var i = 0; i < list.Count; i++)
+            {
+                var entry = db.Entry(list[i]);
+                entry.State = existing.Contains(list[i].Id) ? EntityState.Modified : EntityState.Added;
+                entry.Property(AutomataDb.SortOrder).CurrentValue = i;
+                existing.Add(list[i].Id);
+            }
+            db.SaveChanges();
+            tx.Commit();
+        }
     }
 
-    public ScheduleEntry? Get(string id) =>
-        Load().FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+    public ScheduleEntry? Get(string id)
+    {
+        using var db = Database.CreateDbContext();
+        return db.Schedule.AsNoTracking().FirstOrDefault(e => e.Id == id);
+    }
 
-    /// <summary>Adds or replaces an entry by id.</summary>
+    /// <summary>Adds (at the end) or replaces an entry by id.</summary>
     public void Upsert(ScheduleEntry entry)
     {
-        var entries = Load();
-        var index = entries.FindIndex(e => e.Id == entry.Id);
-        if (index >= 0) entries[index] = entry;
-        else entries.Add(entry);
-        Save(entries);
+        lock (gate)
+        {
+            using var db = Database.CreateDbContext();
+            var current = db.Schedule.AsNoTracking()
+                .Where(e => e.Id == entry.Id)
+                .Select(e => (int?)EF.Property<int>(e, AutomataDb.SortOrder))
+                .FirstOrDefault();
+            var tracked = db.Entry(entry);
+            if (current is { } order)
+            {
+                tracked.State = EntityState.Modified;
+                tracked.Property(AutomataDb.SortOrder).CurrentValue = order;
+            }
+            else
+            {
+                var last = db.Schedule.Max(e => (int?)EF.Property<int>(e, AutomataDb.SortOrder)) ?? -1;
+                tracked.State = EntityState.Added;
+                tracked.Property(AutomataDb.SortOrder).CurrentValue = last + 1;
+            }
+            db.SaveChanges();
+        }
     }
 
     public bool Remove(string id)
     {
-        var entries = Load();
-        var removed = entries.RemoveAll(e => e.Id == id) > 0;
-        if (removed) Save(entries);
-        return removed;
+        using var db = Database.CreateDbContext();
+        return db.Schedule.Where(e => e.Id == id).ExecuteDelete() > 0;
     }
 }

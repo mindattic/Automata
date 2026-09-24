@@ -3,17 +3,18 @@ using Automata.Core.Automation.Model;
 namespace Automata.Core.Automation.Storage;
 
 /// <summary>
-/// Schema versioning for the on-disk model.
+/// Versioning for the JSON shape of collections and tasks — the shape export files, the old
+/// per-task files and the database's step-tree column all share. (The database's own schema is
+/// versioned separately, by EF migrations.)
 /// <para>
 /// v1 → v2 added scoped engine settings (<see cref="EngineSettingsOverride"/>) to collections,
 /// tasks and steps. The change is purely additive: System.Text.Json leaves a missing property at
-/// its default, so every v1 file already loads correctly and there is nothing to rewrite.
+/// its default, so every v1 document already loads correctly and there is nothing to rewrite.
 /// </para>
 /// <para>
-/// That is why migration here is <b>lazy</b>: files are stamped with the current version when
-/// they are written for some other reason, never rewritten en masse on first launch. Opening v3
-/// against an existing Documents\Automata therefore touches nothing until the user edits
-/// something — which is also what keeps the first-run experience byte-identical.
+/// <see cref="Migrate(TaskDefinition)"/> runs on everything that comes IN — an import, the
+/// one-time move off the old files — and <see cref="StampCurrentVersion{T}"/> on everything the
+/// store writes, so a row always carries the version whose shape it was written in.
 /// </para>
 /// </summary>
 public static class SchemaMigration
@@ -43,9 +44,9 @@ public static class SchemaMigration
     }
 
     /// <summary>
-    /// Called from the store's single write path, so every persisted entity — whether saved by
-    /// the user or rewritten by the store's own hand-edit healing — lands stamped with the
-    /// version whose shape it was actually written in.
+    /// Called from the store's write paths, so every persisted entity — saved by the user,
+    /// imported, or moved off the old files — lands stamped with the version whose shape it was
+    /// actually written in.
     /// </summary>
     public static void StampCurrentVersion<T>(T value)
     {
@@ -81,7 +82,7 @@ public static class SchemaMigration
     }
 
     /// <summary>
-    /// An override that overrides nothing is noise: it bloats the file and, worse, makes a task
+    /// An override that overrides nothing is noise: it bloats an export and, worse, makes a task
     /// that has never been configured look configured. Drop it.
     /// </summary>
     private static EngineSettingsOverride? Prune(EngineSettingsOverride? settings) =>

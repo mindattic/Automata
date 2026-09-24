@@ -1,4 +1,5 @@
 using Automata.Core.Automation.Model;
+using AutoWebNav;
 
 namespace Automata.Core.Automation.Demos;
 

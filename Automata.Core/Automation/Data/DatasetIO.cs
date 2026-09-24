@@ -6,7 +6,8 @@ using Automata.Core.Automation.Storage;
 namespace Automata.Core.Automation.Data;
 
 /// <summary>
-/// Reads and writes the CSV/JSON files a task fans out over or writes its results into.
+/// Reads and writes CSV/JSON dataset text: the files a dataset is imported from or exported to,
+/// and the row shapes <see cref="Storage.DatasetStore"/> keeps in the database.
 /// <para>
 /// Hand-rolled rather than taking a dependency: Automata.Core has deliberately few, and the
 /// subset that matters here — RFC 4180 quoting, an embedded comma/quote/newline, a header row —
@@ -273,23 +274,60 @@ public static class DatasetIO
     /// the file says is data, and what this works out is convenience.
     /// </para>
     /// </summary>
-    private static IReadOnlyList<Dictionary<string, string>> ReadJson(string path, bool flattenNested)
-    {
-        if (!File.Exists(path)) return [];
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+    private static IReadOnlyList<Dictionary<string, string>> ReadJson(string path, bool flattenNested) =>
+        File.Exists(path)
+            ? JsonRowTexts(File.ReadAllText(path)).Select(r => JsonRow(r, flattenNested)).ToList()
+            : [];
 
-        var rows = new List<Dictionary<string, string>>();
-        foreach (var element in doc.RootElement.EnumerateArray())
-        {
-            if (element.ValueKind != JsonValueKind.Object) continue;
-            var row = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var prop in element.EnumerateObject()) row[prop.Name] = Stringify(prop.Value);
-            if (flattenNested)
-                foreach (var prop in element.EnumerateObject()) AddLeaves(row, prop.Name, prop.Value);
-            rows.Add(row);
-        }
-        return rows;
+    /// <summary>
+    /// The objects of a JSON array, each as its own raw JSON text — nested values untouched. This
+    /// is how a JSON dataset's rows are stored. Anything that is not an object is skipped, and a
+    /// document that is not an array has no rows.
+    /// </summary>
+    public static IReadOnlyList<string> JsonRowTexts(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        using var doc = JsonDocument.Parse(text);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+        return doc.RootElement.EnumerateArray()
+            .Where(e => e.ValueKind == JsonValueKind.Object)
+            .Select(e => e.GetRawText())
+            .ToList();
+    }
+
+    /// <summary>One stored JSON row as the string columns a task binds against — see
+    /// <see cref="ReadJsonArray"/> for what flattening adds.</summary>
+    public static Dictionary<string, string> JsonRow(string objectJson, bool flattenNested)
+    {
+        using var doc = JsonDocument.Parse(objectJson);
+        var element = doc.RootElement;
+        var row = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (element.ValueKind != JsonValueKind.Object) return row;
+        foreach (var prop in element.EnumerateObject()) row[prop.Name] = Stringify(prop.Value);
+        if (flattenNested)
+            foreach (var prop in element.EnumerateObject()) AddLeaves(row, prop.Name, prop.Value);
+        return row;
+    }
+
+    /// <summary>Stored JSON rows back into one indented JSON array document.</summary>
+    public static string JsonArrayText(IEnumerable<string> rowTexts)
+    {
+        var array = new System.Text.Json.Nodes.JsonArray();
+        foreach (var text in rowTexts) array.Add(System.Text.Json.Nodes.JsonNode.Parse(text));
+        return array.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    /// <summary>The header row of CSV text, or nothing for empty text.</summary>
+    public static IReadOnlyList<string> CsvHeader(string text) => ParseCsv(text).FirstOrDefault() ?? [];
+
+    /// <summary>RFC 4180 CSV text for these columns and rows; a row missing a column gets "".</summary>
+    public static string CsvText(IReadOnlyList<string> columns, IEnumerable<IReadOnlyDictionary<string, string>> rows)
+    {
+        var sb = new StringBuilder();
+        sb.Append(string.Join(",", columns.Select(Escape))).Append('\n');
+        var list = columns.ToList();
+        foreach (var row in rows) AppendRow(sb, list, row);
+        return sb.ToString();
     }
 
     /// <summary>

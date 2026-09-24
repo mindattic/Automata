@@ -3,6 +3,7 @@ using Automata.Core.Automation.Replay;
 using Automata.Core.Automation.Settings;
 using Automata.Tests.Fakes;
 using NUnit.Framework;
+using AutoWebNav;
 
 namespace Automata.Tests;
 

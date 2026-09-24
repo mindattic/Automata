@@ -56,6 +56,7 @@
   --color-mini-bg: #3a3a3a;
   --color-mini-bg-hover: #4a4a4a;
   --color-mini-fg: #bbb;          /* 5.92:1 on --color-mini-bg */
+  --color-mini-fg-hover: #fff;    /* 8.86:1 on --color-mini-bg-hover */
   --color-pick-bg: #2e2e2e;
 
   /* ---- spacing ---- */
@@ -147,6 +148,7 @@
   --color-mini-bg: #e2e5e8;
   --color-mini-bg-hover: #d5d9dd;
   --color-mini-fg: #2b3138;       /* 10.38:1 on --color-mini-bg */
+  --color-mini-fg-hover: #1b2026; /* 11.55:1 on --color-mini-bg-hover (white was 1.42:1) */
   --color-pick-bg: #eef1f4;
 
   --focus-ring-color: #1a5fd0;    /* 5.03:1 on bg-2, 5.85:1 on bg-1 — clears the 3:1 minimum */

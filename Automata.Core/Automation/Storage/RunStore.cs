@@ -1,6 +1,7 @@
-using System.IO;
 using System.Text.Json;
+using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
+using Microsoft.EntityFrameworkCore;
 
 namespace Automata.Core.Automation.Storage;
 
@@ -29,38 +30,22 @@ public sealed class RunManifest
 }
 
 /// <summary>
-/// Durable run artifacts: the manifest, a per-task event log, the values steps published, and any
-/// datasets a run wrote.
+/// Durable run records: the manifest (<c>Runs</c>), a per-task event log (<c>RunEvents</c>) and
+/// the values steps published (<c>RunOutputs</c>).
 /// <para>
-/// This is where <c>ExtractText</c>'s captured value finally has somewhere to go — until now it
-/// reached the log and was dropped. It is also what lets the sidebar show runs it did not start,
-/// including ones that finished while the window was closed.
+/// This is where <c>ExtractText</c>'s captured value has somewhere to go, and what lets the
+/// sidebar show runs it did not start, including ones the headless runner finished while the
+/// window was closed. Events are written as they happen, one row each, so a crashed run still
+/// leaves everything it had already reported. (The plain-text run log is still a file — see
+/// <see cref="Logging.RunLogWriter"/>.)
 /// </para>
-/// <code>
-/// Documents\Automata\Runs\&lt;yyyyMMdd-HHmmss&gt;-&lt;slug&gt;\
-///     manifest.json
-///     tasks\&lt;taskId&gt;\events.jsonl     one event per line, append-only
-///     tasks\&lt;taskId&gt;\outputs.json     { stepId: { outputName: value } }
-///     datasets\&lt;name&gt;.csv|.json
-/// </code>
-/// The timestamp-first directory name means listing runs newest-first is an ordinary name sort,
-/// and it matches the convention <see cref="Logging.RunLogWriter"/> already uses.
 /// </summary>
 public sealed class RunStore
 {
-    public const string ManifestFileName = "manifest.json";
+    public RunStore(AutomataDatabase database) => Database = database;
 
-    public static string DefaultRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Automata", "Runs");
+    public AutomataDatabase Database { get; }
 
-    public string RootPath { get; }
-
-    public RunStore(string? rootPath = null) => RootPath = rootPath ?? DefaultRoot;
-
-    /// <summary>
-    /// Creates a run directory and its manifest. Nothing is written until a run actually starts,
-    /// so a fresh install has no Runs tree at all.
-    /// </summary>
     public RunManifest CreateRun(RunTargetKind target, string targetId, string targetName, string trigger = "manual")
     {
         var manifest = new RunManifest
@@ -70,126 +55,149 @@ public sealed class RunStore
             TargetId = targetId,
             TargetName = targetName,
             Trigger = trigger,
-            StartedUtc = DateTimeOffset.UtcNow,
+            StartedUtc = StoreUtil.UtcNow(),
         };
 
-        var dir = Path.Combine(RootPath, DirectoryNameFor(manifest));
-        Directory.CreateDirectory(dir);
-        WriteManifest(dir, manifest);
+        using var db = Database.CreateDbContext();
+        db.Runs.Add(manifest);
+        db.SaveChanges();
         return manifest;
     }
 
-    /// <summary>Absolute path of a run's directory, or null if it no longer exists.</summary>
-    public string? DirectoryFor(string runId) => FindDirectory(runId);
-
-    public string DatasetPath(string runId, string datasetName)
-    {
-        var dir = FindDirectory(runId) ?? throw new InvalidOperationException($"Unknown run '{runId}'.");
-        var datasets = Path.Combine(dir, "datasets");
-        Directory.CreateDirectory(datasets);
-        return Path.Combine(datasets, StoreUtil.SafeFileName(datasetName));
-    }
-
-    /// <summary>Appends one event as a JSON line. Unbuffered, like the run log: a crashed run
-    /// still leaves everything it had already reported.</summary>
+    /// <summary>Appends one event, serialized on one line. An unknown run is ignored.</summary>
     public void AppendEvent(string runId, string taskId, object evt)
     {
-        var dir = TaskDirectory(runId, taskId);
-        if (dir == null) return;
-        File.AppendAllText(
-            Path.Combine(dir, "events.jsonl"),
-            JsonSerializer.Serialize(evt, AutomataJson.Options).ReplaceLineEndings(" ") + "\n");
+        using var db = Database.CreateDbContext();
+        if (!db.Runs.Any(r => r.RunId == runId)) return;
+        db.RunEvents.Add(new RunEventRecord
+        {
+            RunId = runId,
+            TaskId = taskId,
+            AtUtc = StoreUtil.UtcNow(),
+            Json = JsonSerializer.Serialize(evt, AutomataJson.Compact).ReplaceLineEndings(" "),
+        });
+        db.SaveChanges();
     }
 
-    /// <summary>Persists the values one task's steps published, keyed step id → output name.</summary>
+    /// <summary>One task's events in a run, oldest first, each as its JSON line.</summary>
+    public IReadOnlyList<string> LoadEvents(string runId, string taskId)
+    {
+        using var db = Database.CreateDbContext();
+        return db.RunEvents.AsNoTracking()
+            .Where(e => e.RunId == runId && e.TaskId == taskId)
+            .OrderBy(e => e.Id)
+            .Select(e => e.Json)
+            .ToList();
+    }
+
+    /// <summary>The task ids a run recorded anything for, in the order they first appeared.</summary>
+    public IReadOnlyList<string> TaskIds(string runId)
+    {
+        using var db = Database.CreateDbContext();
+        var fromEvents = db.RunEvents.AsNoTracking().Where(e => e.RunId == runId)
+            .OrderBy(e => e.Id).Select(e => e.TaskId).ToList();
+        var fromOutputs = db.RunOutputs.AsNoTracking().Where(o => o.RunId == runId)
+            .OrderBy(o => o.Id).Select(o => o.TaskId).ToList();
+        return fromEvents.Concat(fromOutputs).Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>Replaces the values one task's steps published, keyed step id → output name.</summary>
     public void SaveOutputs(string runId, string taskId, IReadOnlyDictionary<string, Dictionary<string, string>> outputs)
     {
-        var dir = TaskDirectory(runId, taskId);
-        if (dir == null) return;
-        File.WriteAllText(Path.Combine(dir, "outputs.json"),
-            JsonSerializer.Serialize(outputs, AutomataJson.Options));
+        using var db = Database.CreateDbContext();
+        if (!db.Runs.Any(r => r.RunId == runId)) return;
+        using var tx = db.Database.BeginTransaction();
+        db.RunOutputs.Where(o => o.RunId == runId && o.TaskId == taskId).ExecuteDelete();
+        foreach (var (stepId, fields) in outputs)
+            foreach (var (name, value) in fields)
+                db.RunOutputs.Add(new RunOutputRecord
+                {
+                    RunId = runId, TaskId = taskId, StepId = stepId, Name = name, Value = value,
+                });
+        db.SaveChanges();
+        tx.Commit();
     }
 
     public IReadOnlyDictionary<string, Dictionary<string, string>> LoadOutputs(string runId, string taskId)
     {
-        var dir = TaskDirectory(runId, taskId, create: false);
-        var file = dir == null ? null : Path.Combine(dir, "outputs.json");
-        if (file == null || !File.Exists(file)) return new Dictionary<string, Dictionary<string, string>>();
-        try
+        using var db = Database.CreateDbContext();
+        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (var o in db.RunOutputs.AsNoTracking()
+                     .Where(o => o.RunId == runId && o.TaskId == taskId)
+                     .OrderBy(o => o.Id))
         {
-            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
-                File.ReadAllText(file), AutomataJson.Options) ?? [];
+            if (!result.TryGetValue(o.StepId, out var fields))
+                result[o.StepId] = fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            fields[o.Name] = o.Value;
         }
-        catch (JsonException) { return new Dictionary<string, Dictionary<string, string>>(); }
+        return result;
     }
 
     public void CompleteRun(string runId, bool success, string summary)
     {
-        var dir = FindDirectory(runId);
-        if (dir == null) return;
-        var manifest = ReadManifest(dir);
+        using var db = Database.CreateDbContext();
+        var manifest = db.Runs.FirstOrDefault(r => r.RunId == runId);
         if (manifest == null) return;
         manifest.Success = success;
         manifest.Summary = summary;
-        manifest.EndedUtc = DateTimeOffset.UtcNow;
-        WriteManifest(dir, manifest);
+        manifest.EndedUtc = StoreUtil.UtcNow();
+        db.SaveChanges();
     }
 
-    /// <summary>
-    /// Most recent runs first. Directory names lead with a sortable timestamp, so this is a name
-    /// sort rather than a stat of every manifest.
-    /// </summary>
+    /// <summary>Most recent runs first.</summary>
     public IReadOnlyList<RunManifest> ListRuns(int limit = 50)
     {
-        if (!Directory.Exists(RootPath)) return [];
-        return Directory.EnumerateDirectories(RootPath)
-            .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
-            .Select(ReadManifest)
-            .Where(m => m != null)
+        using var db = Database.CreateDbContext();
+        return db.Runs.AsNoTracking()
+            .OrderByDescending(r => r.StartedUtc)
             .Take(limit)
-            .ToList()!;
+            .ToList();
     }
 
     public RunManifest? GetRun(string runId)
     {
-        var dir = FindDirectory(runId);
-        return dir == null ? null : ReadManifest(dir);
+        if (string.IsNullOrEmpty(runId)) return null;
+        using var db = Database.CreateDbContext();
+        return db.Runs.AsNoTracking().FirstOrDefault(r => r.RunId == runId);
     }
 
-    // ---- internals ---------------------------------------------------------------------------
-
-    private static string DirectoryNameFor(RunManifest manifest) =>
-        $"{manifest.StartedUtc.ToLocalTime():yyyyMMdd-HHmmss}-{StoreUtil.Slug(manifest.TargetName)}-{manifest.RunId[..8]}";
-
-    private string? FindDirectory(string runId)
+    /// <summary>
+    /// Writes a whole run as given — its own id and timestamps — for imports and the one-time move
+    /// off the old files. A run whose id is already here is left alone: the same id is the same
+    /// run, and history is never overwritten.
+    /// </summary>
+    /// <returns>False when the run already existed.</returns>
+    public bool ImportRun(RunManifest manifest, IEnumerable<ImportedRunTask> tasks)
     {
-        if (!Directory.Exists(RootPath) || string.IsNullOrEmpty(runId)) return null;
-        // The id's prefix is in the directory name, so this is a name match rather than a scan of
-        // every manifest on disk.
-        var suffix = "-" + (runId.Length >= 8 ? runId[..8] : runId);
-        return Directory.EnumerateDirectories(RootPath)
-            .FirstOrDefault(d => Path.GetFileName(d).EndsWith(suffix, StringComparison.Ordinal));
-    }
-
-    private string? TaskDirectory(string runId, string taskId, bool create = true)
-    {
-        var runDir = FindDirectory(runId);
-        if (runDir == null) return null;
-        var dir = Path.Combine(runDir, "tasks", StoreUtil.SafeFileName(taskId));
-        if (create) Directory.CreateDirectory(dir);
-        else if (!Directory.Exists(dir)) return null;
-        return dir;
-    }
-
-    private static void WriteManifest(string dir, RunManifest manifest) =>
-        File.WriteAllText(Path.Combine(dir, ManifestFileName),
-            JsonSerializer.Serialize(manifest, AutomataJson.Options));
-
-    private static RunManifest? ReadManifest(string dir)
-    {
-        var file = Path.Combine(dir, ManifestFileName);
-        if (!File.Exists(file)) return null;
-        try { return JsonSerializer.Deserialize<RunManifest>(File.ReadAllText(file), AutomataJson.Options); }
-        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+        using var db = Database.CreateDbContext();
+        if (db.Runs.Any(r => r.RunId == manifest.RunId)) return false;
+        using var tx = db.Database.BeginTransaction();
+        db.Runs.Add(manifest);
+        foreach (var task in tasks)
+        {
+            foreach (var json in task.Events)
+                db.RunEvents.Add(new RunEventRecord
+                {
+                    RunId = manifest.RunId,
+                    TaskId = task.TaskId,
+                    AtUtc = manifest.StartedUtc,
+                    Json = json.ReplaceLineEndings(" "),
+                });
+            foreach (var (stepId, fields) in task.Outputs)
+                foreach (var (name, value) in fields)
+                    db.RunOutputs.Add(new RunOutputRecord
+                    {
+                        RunId = manifest.RunId, TaskId = task.TaskId, StepId = stepId, Name = name, Value = value,
+                    });
+        }
+        db.SaveChanges();
+        tx.Commit();
+        return true;
     }
 }
+
+/// <summary>One task's share of an imported run: its event lines and published values.</summary>
+public sealed record ImportedRunTask(
+    string TaskId,
+    IReadOnlyList<string> Events,
+    IReadOnlyDictionary<string, Dictionary<string, string>> Outputs);
