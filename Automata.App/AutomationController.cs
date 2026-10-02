@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using Automata.Core.Automation;
 using Automata.Core.Automation.Logging;
 using Automata.Core.Automation.Model;
-using Automata.Core.Automation.Recording;
 using Automata.Core.Automation.Demos;
 using Automata.Core.Automation.Execution;
 using Automata.Core.Automation.Flow;
@@ -19,6 +18,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using MindAttic.Vault.Credentials;
 using AutoWebNav;
+using AutoWebNav.WebView2;
 
 namespace Automata.App;
 
@@ -544,7 +544,7 @@ public sealed class AutomationController
         if (core != null)
             await core.ExecuteScriptAsync("window.__automataRecorder && window.__automataRecorder.disable()");
 
-        var steps = RecorderSessionBuilder.Build(recorded);
+        var steps = RecordingBuilder.Build(recorded).Select(ToAutomataStep).ToList();
         var runConcluded = true;
 
         if (pendingGapInsert is { } gap)
@@ -635,20 +635,11 @@ public sealed class AutomationController
         if (!recording) return;
         try
         {
-            var evt = new RecorderEvent
-            {
-                Kind = Str(msg, "kind") ?? "",
-                TargetKind = Str(msg, "targetKind"),
-                Value = Str(msg, "value"),
-                SelectedText = Str(msg, "selectedText"),
-                Masked = msg["masked"]?.GetValue<bool>() ?? false,
-                Checked = msg["checked"]?.GetValue<bool>(),
-                Url = Str(msg, "url"),
-                Ts = msg["ts"]?.GetValue<long>() ?? NowMs(),
-            };
-            var fpNode = msg["fingerprint"];
-            if (fpNode != null)
-                evt.Fingerprint = JsonSerializer.Deserialize<ElementFingerprint>(fpNode.ToJsonString(), AutomataJson.Options);
+            // Shared with every AutoWebNav host app: the same wire-protocol parsing
+            // RecorderSession uses, reused here since Automata still routes the pick/recording
+            // split and its own Task/gap-insert state itself.
+            var evt = AutoWebNav.WebView2.RecorderSession.TryParseEvent(msg.ToJsonString());
+            if (evt == null) return;
             recorded.Add(evt);
             await PushRecordedPreviewAsync();
         }
@@ -1314,10 +1305,38 @@ public sealed class AutomationController
 
     private Task PushRecordedPreviewAsync()
     {
-        var steps = RecorderSessionBuilder.Build(recorded);
+        var steps = RecordingBuilder.Build(recorded).Select(ToAutomataStep).ToList();
         var json = JsonSerializer.Serialize(steps, AutomataJson.Options);
         return execPanelScript($"window.ssPanel.onRecordedSteps({json})");
     }
+
+    /// <summary>Maps AutoWebNav's portable, app-agnostic recording output onto Automata's own
+    /// richer <see cref="Step"/> (flow control, bindings and task-tree fields default; recording
+    /// never touches them). A new <see cref="Step.Id"/> is assigned by <see cref="Step"/>'s own
+    /// default constructor, exactly as it was when these steps were built in place here.</summary>
+    private static Step ToAutomataStep(RecordedStep r) => new()
+    {
+        Action = r.Kind switch
+        {
+            RecordedStepKind.Navigate => StepAction.Navigate,
+            RecordedStepKind.Click => StepAction.Click,
+            RecordedStepKind.TypeText => StepAction.TypeText,
+            RecordedStepKind.SetValue => StepAction.SetValue,
+            RecordedStepKind.PressEnter => StepAction.PressEnter,
+            RecordedStepKind.Check => StepAction.Check,
+            RecordedStepKind.Uncheck => StepAction.Uncheck,
+            RecordedStepKind.SelectRadio => StepAction.SelectRadio,
+            RecordedStepKind.SelectOption => StepAction.SelectOption,
+            RecordedStepKind.UploadFile => StepAction.UploadFile,
+            _ => throw new ArgumentOutOfRangeException(nameof(r), r.Kind, "Unmapped recorded step kind."),
+        },
+        Label = r.Label,
+        Target = r.Target,
+        Value = r.Value,
+        Url = r.Url,
+        Masked = r.Masked,
+        IsCommitPoint = r.IsCommitPoint,
+    };
 
     /// <summary>Delivers the step(s) captured by a record-at-gap session to the panel, which
     /// splices them into the tree via the same insertion path as a manually created step.</summary>

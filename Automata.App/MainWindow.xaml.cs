@@ -489,10 +489,9 @@ public partial class MainWindow : Window
         // on every FRAME of every document, which is the only reason a click inside an iframe can be
         // recorded at all. Registered SECOND, so the fingerprint and the harvest picker it calls are
         // already defined: WebView2 runs document-created scripts in registration order, and both of
-        // those come from the surface's bundle above.
-        var recorderJs =
-            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wwwroot", "target", "recorder.js"));
-        await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(recorderJs);
+        // those come from the surface's bundle above. Shared with every AutoWebNav host app — see
+        // ToolkitScripts.RecorderJs's own doc comment.
+        await TargetBrowser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(ToolkitScripts.RecorderJs);
         TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;
         TargetBrowser.CoreWebView2.NavigationCompleted += (_, _) =>
             _ = controller.OnTargetNavigationCompletedAsync(TargetBrowser.CoreWebView2.Source);
