@@ -24,9 +24,26 @@ public partial class MainWindow : Window
     private readonly AutomationController controller;
     private readonly Automata.Core.Automation.Storage.AutomataSettingsStore settingsStore;
 
+    /// <summary>Live Observation (AutoWebNav): a CDP port per pane, registered with this PID in
+    /// %LocalAppData%\MindAttic\AutoWebNav\instances, so awn-observe can attach to this running
+    /// instance. Always on now; AUTOMATA_PANEL_CDP_PORT / AUTOMATA_TARGET_CDP_PORT still pick the
+    /// ports (tools/verify-ui.mjs, collect-names.mjs).</summary>
+    private readonly LiveObservation observation = new("Automata");
+
+    /// <summary>Always-on session recording of the target pane (AutoWebNav), saved to Downloads as
+    /// Automata-session-&lt;timestamp&gt;.autowebnav-recording.json. Independent of the ● Record
+    /// button, which still records a task to edit.</summary>
+    private readonly SessionRecording sessionRecording = new("Automata");
+
     public MainWindow()
     {
         InitializeComponent();
+        Title = observation.WindowTitle;
+        Closed += (_, _) =>
+        {
+            sessionRecording.Dispose();
+            observation.Dispose();
+        };
 
         settingsStore = App.Services
             .GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>();
@@ -376,15 +393,10 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Opt-in remote-debugging hook for tools/verify-ui.mjs. Null (today's exact
-    /// behavior) unless the named env var holds a valid port number.</summary>
-    private static CoreWebView2EnvironmentOptions? DebugOptions(string envVar)
-    {
-        var raw = Environment.GetEnvironmentVariable(envVar);
-        if (string.IsNullOrWhiteSpace(raw) || !int.TryParse(raw, out var port) || port <= 0)
-            return null;
-        return new CoreWebView2EnvironmentOptions(additionalBrowserArguments: $"--remote-debugging-port={port}");
-    }
+    /// <summary>Preferred CDP ports (distinct from JobHunt's 9366/9367 and KdpPublish's 9368/9369).
+    /// The legacy env vars override them, and LiveObservation registers whichever port is used.</summary>
+    private const int PanelDebugPort = 9370;
+    private const int TargetDebugPort = 9371;
 
     /// <summary>Opt-in profile-directory override so the verification harness never touches the
     /// real profile under %LocalAppData%. Returns today's exact hardcoded path when unset.</summary>
@@ -403,7 +415,8 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(userDataFolder);
 
         var env = await CoreWebView2Environment.CreateAsync(
-            userDataFolder: userDataFolder, options: DebugOptions("AUTOMATA_PANEL_CDP_PORT"));
+            userDataFolder: userDataFolder,
+            options: observation.OptionsFor("panel", PanelDebugPort, legacyPortEnvVar: "AUTOMATA_PANEL_CDP_PORT"));
         await ControlPanel.EnsureCoreWebView2Async(env);
 
         var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -447,7 +460,8 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(userDataFolder);
 
         var env = await CoreWebView2Environment.CreateAsync(
-            userDataFolder: userDataFolder, options: DebugOptions("AUTOMATA_TARGET_CDP_PORT"));
+            userDataFolder: userDataFolder,
+            options: observation.OptionsFor("target", TargetDebugPort, legacyPortEnvVar: "AUTOMATA_TARGET_CDP_PORT"));
         await TargetBrowser.EnsureCoreWebView2Async(env);
 
         // Any "open in new window" request (target="_blank", window.open(), etc.) redirects
@@ -495,6 +509,11 @@ public partial class MainWindow : Window
         TargetBrowser.CoreWebView2.WebMessageReceived += OnTargetMessage;
         TargetBrowser.CoreWebView2.NavigationCompleted += (_, _) =>
             _ = controller.OnTargetNavigationCompletedAsync(TargetBrowser.CoreWebView2.Source);
+
+        // Always-on session recording (the surface above already installed the toolkit). The page
+        // recorder captures while either this or ● Record is on; neither turns the other off, and
+        // the controller still ignores recorder events while it isn't recording a task.
+        await sessionRecording.AttachAsync("target", TargetBrowser.CoreWebView2, installToolkit: false);
 
         TargetBrowser.CoreWebView2.Navigate("about:blank");
     }

@@ -28,6 +28,21 @@ function nextColumnName(fields) {
     }
 }
 
+// Live Observation (AutoWebNav): what an attached observer (awn-observe) reports for this pane —
+// the app's own view of itself: run/record state, the selected task, and the panel log.
+window.__awnObserve = function () {
+    var task = state.sel.taskId ? findTask(state.sel.taskId) : null;
+    var failed = Object.keys(state.stepStatus).filter(function (k) { return state.stepStatus[k] === 'failed'; }).length;
+    return {
+        running: !!state.running,
+        recording: !!state.recording,
+        summary: (task ? 'task "' + task.name + '"' : 'no task selected') +
+            (state.running ? ' · running' + (state.pausedStepId ? ' (paused)' : '') : '') +
+            (state.recording ? ' · recording' : '') + (failed ? ' · ' + failed + ' step(s) failed' : ''),
+        log: Array.prototype.map.call(logEl.querySelectorAll('.log-line'), function (d) { return d.textContent; })
+    };
+};
+
 window.ssPanel = {
     onLog: function (line) {
         var div = document.createElement('div');

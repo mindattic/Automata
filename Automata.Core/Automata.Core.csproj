@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AutoWebNav" Version="2.0.0" />
+    <PackageReference Include="AutoWebNav" Version="3.0.0" />
     <PackageReference Include="Gherkin" Version="42.0.1" />
     <PackageReference Include="MindAttic.Legion" Version="26.0.0" />
     <PackageReference Include="MindAttic.Vault" Version="5.0.0" />
