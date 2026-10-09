@@ -11,8 +11,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AutoWebNav" Version="3.0.0" />
+    <PackageReference Include="AutoWebNav" Version="4.0.0" />
     <PackageReference Include="Gherkin" Version="42.0.1" />
+    <PackageReference Include="MindAttic.Export" Version="3.0.0" />
     <PackageReference Include="MindAttic.Legion" Version="26.0.0" />
     <PackageReference Include="MindAttic.Vault" Version="5.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />

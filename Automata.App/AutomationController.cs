@@ -981,7 +981,7 @@ public sealed class AutomationController
                     return;
                 }
                 var task = store.GetTask(taskId)!;
-                await File.WriteAllTextAsync(chosen, RecorderFlowIO.Export(task));
+                await ChosenFile.WriteTextAsync(chosen, RecorderFlowIO.Export(task));
                 await logAsync($"Exported '{display}' as a Recorder flow to {chosen}");
                 return;
             }

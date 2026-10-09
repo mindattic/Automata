@@ -159,12 +159,8 @@ public sealed class DatasetStore
             : DatasetIO.CsvText(record.Columns, rows.Select(r => (IReadOnlyDictionary<string, string>)CsvRow(record.Columns, r)));
     }
 
-    public void ExportFile(string datasetName, string filePath)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
-        if (dir != null) Directory.CreateDirectory(dir);
-        File.WriteAllText(filePath, ExportText(datasetName));
-    }
+    public void ExportFile(string datasetName, string filePath) =>
+        ChosenFile.WriteText(filePath, ExportText(datasetName));
 
     // ---- internals ---------------------------------------------------------------------------
 

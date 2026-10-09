@@ -648,12 +648,8 @@ public sealed class ArchiveService
         return export;
     }
 
-    private static void WriteJsonFile<T>(string destPath, T value)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(destPath));
-        if (dir != null) Directory.CreateDirectory(dir);
-        File.WriteAllText(destPath, JsonSerializer.Serialize(value, AutomataJson.Options));
-    }
+    private static void WriteJsonFile<T>(string destPath, T value) =>
+        ChosenFile.WriteText(destPath, JsonSerializer.Serialize(value, AutomataJson.Options));
 
     private static T? Deserialize<T>(string json) where T : class
     {
@@ -661,14 +657,8 @@ public sealed class ArchiveService
         catch (JsonException ex) { throw new InvalidDataException($"The export could not be read: {ex.Message}", ex); }
     }
 
-    private static void CreateZip(string destZipPath, Action<ZipArchive> fill)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(destZipPath));
-        if (dir != null) Directory.CreateDirectory(dir);
-        using var stream = File.Create(destZipPath);
-        using var zip = new ZipArchive(stream, ZipArchiveMode.Create);
-        fill(zip);
-    }
+    private static void CreateZip(string destZipPath, Action<ZipArchive> fill) =>
+        ChosenFile.WriteZip(destZipPath, fill);
 
     private static void WriteEntry<T>(ZipArchive zip, string name, T value)
     {
