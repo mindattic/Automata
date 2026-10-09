@@ -10,6 +10,8 @@ using Automata.Core.Operator.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using MindAttic.Log;
+using MindAttic.Log.Extensions;
 using MindAttic.Vault.Credentials;
 using AutoWebNav;
 
@@ -23,6 +25,20 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAutomataCore(this IServiceCollection services)
     {
+        // First MindAttic app migrated onto the shared pipeline (see MindAttic.Log's
+        // docs/MIGRATION.md) — proves the app-owned-SQLite tier: the sink's MindAttic_Log table
+        // lives in the SAME automata.db file EF already owns, not a second file, so AppData
+        // backup/restore and AUTOMATA_DB_PATH overrides keep covering logs for free. The sink
+        // only ever touches its own table (see MindAttic.Log's LOG-LAW-1), so this is safe
+        // alongside EF's own migrations on the same file. Apps keep calling ILogger<T> — nothing
+        // else in this method changes.
+        services.AddMindAtticLog(o =>
+        {
+            o.Application = "Automata";
+            o.Destination = LogDestination.Sqlite;
+            o.SqlitePath = AutomataDatabase.ResolvePath();
+        });
+
         // One SQLite database holds everything. Its path comes from AUTOMATA_DB_PATH (or sits
         // beside a harness's AUTOMATA_SETTINGS_PATH) so a test or the UI harness runs against a
         // scratch database instead of the developer's real one — see AutomataDatabase.
