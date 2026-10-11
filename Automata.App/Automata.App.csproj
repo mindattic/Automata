@@ -2,7 +2,8 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- 19041: MindAttic.Capture records the window through Windows Graphics Capture (Windows 10 2004+). -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -24,8 +25,16 @@
     <PackageReference Include="MindAttic.Vault" Version="5.0.0" />
   </ItemGroup>
 
+  <!-- MindAttic.Capture (-capture video / -capture screen N, capture hooks) is a development tool: it is left out of
+       Release builds entirely. The package defines MINDATTIC_CAPTURE, which the #if blocks key off. -->
+  <ItemGroup Condition="'$(Configuration)' != 'Release'">
+    <PackageReference Include="MindAttic.Capture.Wpf" Version="1.0.0" />
+    <PackageReference Include="MindAttic.Capture.WebView2" Version="1.0.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="capture.json" CopyToOutputDirectory="PreserveNewest" Condition="'$(Configuration)' != 'Release'" />
   </ItemGroup>
 
 </Project>

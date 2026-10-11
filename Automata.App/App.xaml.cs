@@ -2,6 +2,9 @@ using System.Windows;
 using Automata.Core.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+#if MINDATTIC_CAPTURE
+using MindAttic.Capture.Wpf;
+#endif
 using MindAttic.Vault.Configuration;
 using MindAttic.Vault.DependencyInjection;
 
@@ -59,6 +62,12 @@ public partial class App : Application
         // Documents\Automata JSON files (left in place as a backup). The outcome is shown in the
         // sidebar log once the panel is up — see AutomationController.
         StartupImport = Services.MigrateAutomataDatabase();
+
+#if MINDATTIC_CAPTURE
+        // Debug builds: -capture video records the window from here to exit; -capture screen 5 takes a PNG every
+        // 5 s. Output: R:\MindAttic\Capture\Automata\<timestamp>.<ext>. Hooks raised in AutomationController go through capture.json.
+        CaptureWpf.Init(this, e.Args);
+#endif
 
         new MainWindow().Show();
     }

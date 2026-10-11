@@ -1,4 +1,8 @@
 using System.Diagnostics;
+#if MINDATTIC_CAPTURE
+using CaptureHooks = MindAttic.Capture.Capture;
+using CaptureData = MindAttic.Capture.CaptureData;
+#endif
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -825,6 +829,10 @@ public sealed class AutomationController
                         break;
                     case StepEvent.StepCompleted c:
                         if (c.Status == StepStatus.Healed && ownSteps.Contains(c.StepId)) healed = true;
+#if MINDATTIC_CAPTURE
+                        if (c.Status == StepStatus.Failed)
+                            CaptureHooks.Raise("step-failed", new CaptureData { ["task"] = task.Name, ["step"] = c.StepId, ["message"] = c.Message });
+#endif
                         // Where an extracted value finally lands durably, rather than scrolling
                         // out of the log.
                         if (c.ExtractedText != null)
@@ -842,6 +850,9 @@ public sealed class AutomationController
                         break;
                     case StepEvent.RunCompleted rc:
                         success = rc.Success;
+#if MINDATTIC_CAPTURE
+                        CaptureHooks.Raise(rc.Success ? "run-passed" : "run-failed", new CaptureData { ["task"] = task.Name, ["summary"] = rc.Summary });
+#endif
                         if (gap is { PauseBeforeStepId: null } g2 && rc.Success)
                             await ArmRecordingForInsertAsync(task.Id, g2.ParentStepId, g2.Index, runStillSuspended: false);
                         break;

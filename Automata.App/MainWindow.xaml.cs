@@ -419,6 +419,12 @@ public partial class MainWindow : Window
             options: observation.OptionsFor("panel", PanelDebugPort, legacyPortEnvVar: "AUTOMATA_PANEL_CDP_PORT"));
         await ControlPanel.EnsureCoreWebView2Async(env);
 
+#if MINDATTIC_CAPTURE
+        // The panel page can call window.mindattic.capture.screenshot()/raise(); only our own panel, not target sites.
+        await MindAttic.Capture.WebView2.CaptureWebView2.AttachAsync(ControlPanel.CoreWebView2,
+            new MindAttic.Capture.WebView2.WebViewBridgeOptions { AllowedOrigins = { "https://automata.local" } });
+#endif
+
         var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         ControlPanel.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "automata.local", wwwroot, CoreWebView2HostResourceAccessKind.Allow);

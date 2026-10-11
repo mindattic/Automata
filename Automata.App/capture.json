@@ -1,0 +1,7 @@
+{
+  "rules": [
+    { "on": "step-failed", "action": "screenshot", "tag": "step-failed" },
+    { "on": "run-failed", "action": "screenshot", "tag": "run-failed" },
+    { "on": "run-*", "action": "marker" }
+  ]
+}
