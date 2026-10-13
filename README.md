@@ -295,10 +295,10 @@ dotnet test Automata.Tests
 ### Run from source
 
 ```powershell
-launch.bat
+.\deploy.ps1 -Launch
 ```
 
-`launch.bat` (repo root) stops any running instance, clean-rebuilds, publishes to `C:\Apps\Automata\` (a convention specific to the maintainer's own machine) and opens that deployed copy, so a double-click always runs current source, never a stale build. `dotnet run --project Automata.App` works too for a quick dev run. The publish step is `tools/deploy.ps1`; it never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
+`deploy.ps1` (repo root) publishes to `C:\Apps\Automata\` (a convention specific to the maintainer's own machine); `-Launch` then opens that deployed copy. It only stops the running instance and republishes when source has changed since the last deploy, so an unchanged repo is a fast no-op; `.\deploy.ps1 -Force` forces a clean bin/obj rebuild. The publish also writes `C:\Apps\Automata\deploy.bat`, the desktop shortcut target: it runs `deploy.ps1` and then starts the exe (passing its arguments through), so a double-click always runs current source, never a stale build. `dotnet run --project Automata.App` works too for a quick dev run. Deploying never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
 
 ### Publish a distributable build
 
