@@ -75,6 +75,11 @@ public sealed class AutomationController
     private ReplayControl? replayControl;
     private bool runActive;
 
+    /// <summary>True while a recording or a run is active — a manual navigation (address bar
+    /// Back/Forward/Reload/typed URL) during either would be captured as a stray step or race a
+    /// step in flight, so a host should gate its own navigation UI on this.</summary>
+    public bool IsBusy => recording || runActive;
+
     /// <summary>Set by Cancel while a collection run is in progress — checked between tasks so
     /// Cancel stops the whole collection, not just whichever task happens to be running.</summary>
     private bool collectionCancelRequested;

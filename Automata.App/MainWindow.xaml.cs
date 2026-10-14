@@ -35,6 +35,15 @@ public partial class MainWindow : Window
     /// button, which still records a task to edit.</summary>
     private readonly SessionRecording sessionRecording = new("Automata");
 
+    /// <summary>Gates the target address bar's Back/Forward/Reload/typed-navigate/Home — both of
+    /// this window's own busy signal (the free-text AI loop, <see cref="runCts"/>) and the
+    /// controller's (recording or a replay run) block manual navigation, since nothing else
+    /// prevents a stray navigation from polluting a recording or racing an in-flight step.</summary>
+    private string? NavigationBlockReason =>
+        controller.IsBusy ? "Navigation is locked while recording or a run is active."
+        : runCts is not null ? "Navigation is locked while the AI loop is running."
+        : null;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -469,6 +478,10 @@ public partial class MainWindow : Window
             userDataFolder: userDataFolder,
             options: observation.OptionsFor("target", TargetDebugPort, legacyPortEnvVar: "AUTOMATA_TARGET_CDP_PORT"));
         await TargetBrowser.EnsureCoreWebView2Async(env);
+
+        TargetAddressBar.Attach(TargetBrowser.CoreWebView2);
+        TargetAddressBar.NavigationGuard = _ => NavigationBlockReason;
+        TargetAddressBar.NavigationBlocked += (_, e) => _ = PostLogAsync($"⚠ {e.Reason}");
 
         // Any "open in new window" request (target="_blank", window.open(), etc.) redirects
         // back into this same pane instead of spawning an untracked standalone popup window
