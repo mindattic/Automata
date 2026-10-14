@@ -22,3 +22,4 @@ _Nothing recorded yet._
 |---|---|---|---|---|---|
 | AUT-T1 | 2026-10-12 | docs | closed | Start the permanent ticket log in USER_STORIES.md | — |
 | AUT-T2 | 2026-10-13 | chore | closed | Move deploy script to repo-root deploy.ps1 (-Force/-Launch, rebuild only on change) and generate C:\Apps\Automata\deploy.bat in place of launch.bat | deploy.ps1 |
+| AUT-T3 | 2026-10-13 | feature | open | Move to MindAttic.Components.Wpf 5.0.0 and turn on McWindow.DarkTitleBar for its windows | MindAttic.Components.Wpf 5.0.0 |
