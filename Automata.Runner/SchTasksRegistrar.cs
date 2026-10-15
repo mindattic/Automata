@@ -28,7 +28,7 @@ namespace Automata.Runner;
 /// </summary>
 public sealed class SchTasksRegistrar(string exePath) : IScheduledTaskRegistrar
 {
-    public const string TickTaskName = "MindAttic.Automata.Tick";
+    public const string TickTaskName = @"MindAttic\Automata\MindAttic.Automata.Tick";
 
     /// <summary>
     /// A separate at-logon task that earlier versions registered alongside the tick. The logon

@@ -10,9 +10,10 @@ using Automata.Core.Operator.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using MindAttic.Log;
 using MindAttic.Log.Extensions;
+using MindAttic.Log.Migration;
 using MindAttic.Vault.Credentials;
+using MindAttic.Vault.Paths;
 using AutoWebNav;
 
 namespace Automata.Core.Extensions;
@@ -25,18 +26,15 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAutomataCore(this IServiceCollection services)
     {
-        // First MindAttic app migrated onto the shared pipeline (see MindAttic.Log's
-        // docs/MIGRATION.md) — proves the app-owned-SQLite tier: the sink's MindAttic_Log table
-        // lives in the SAME automata.db file EF already owns, not a second file, so AppData
-        // backup/restore and AUTOMATA_DB_PATH overrides keep covering logs for free. The sink
-        // only ever touches its own table (see MindAttic.Log's LOG-LAW-1), so this is safe
-        // alongside EF's own migrations on the same file. Apps keep calling ILogger<T> — nothing
-        // else in this method changes.
+        // Phase 2 (MindAttic.Log 3.0.0, see its docs/BIBLE.md §1.1): logs now live in their own
+        // standalone MindAttic.Log.db under Vault's shared roaming root, not inside automata.db —
+        // Phase 1 shared the same file EF owns; that's superseded so a cleared/restored automata.db
+        // can no longer take the log history with it. Apps keep calling ILogger<T> — nothing else
+        // in this method changes.
         services.AddMindAtticLog(o =>
         {
             o.Application = "Automata";
-            o.Destination = LogDestination.Sqlite;
-            o.SqlitePath = AutomataDatabase.ResolvePath();
+            o.DbPath = VaultPaths.LoggingDbPath("Automata");
         });
 
         // One SQLite database holds everything. Its path comes from AUTOMATA_DB_PATH (or sits
@@ -162,6 +160,15 @@ public static class ServiceCollectionExtensions
     {
         var database = services.GetRequiredService<AutomataDatabase>();
         database.EnsureMigrated();
+
+        // Phase 2 (MindAttic.Log 3.0.0): one-time copy of any MindAttic_Log rows this app wrote
+        // into automata.db under Phase 1, into the new standalone database, then drop the old
+        // table. Idempotent and a clean no-op once the table is gone — safe to call on every
+        // startup, not just the first. See docs/MIGRATION.md in the MindAttic.Log repo.
+        MindAtticLogMigrator.MigrateFromSqliteAsync(
+            AutomataDatabase.ResolvePath(), VaultPaths.LoggingDbPath("Automata"), dropSource: true)
+            .GetAwaiter().GetResult();
+
         var log = services.GetService<ILoggerFactory>()?.CreateLogger("Automata.Storage");
         return new LegacyWorkspaceImporter(database, LegacyLocations.FromEnvironment(), log).ImportOnce();
     }
