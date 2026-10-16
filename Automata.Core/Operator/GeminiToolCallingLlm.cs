@@ -121,7 +121,11 @@ public class GeminiToolCallingLlm : IToolCallingLlm
             }
 
             var doc = JsonNode.Parse(raw) ?? throw new InvalidOperationException("Gemini response was null JSON");
-            var parts = doc["candidates"]?[0]?["content"]?["parts"] as JsonArray
+            // doc["candidates"] can be a present-but-EMPTY array (e.g. the prompt was blocked) —
+            // indexing [0] on that throws ArgumentOutOfRangeException instead of short-circuiting
+            // like the rest of this null-conditional chain, so the empty case must be checked first.
+            var candidates = doc["candidates"] as JsonArray;
+            var parts = (candidates is { Count: > 0 } ? candidates[0] : null)?["content"]?["parts"] as JsonArray
                 ?? throw new InvalidOperationException("Gemini response had no candidates[0].content.parts");
             return new ToolTurnResult(FromGeminiParts(parts));
         }
