@@ -26,9 +26,9 @@ public class AnthropicToolClient
     // backoff rather than failing immediately — the OAuth credential pool (shared with an
     // active Claude Code session) legitimately contends for the same account's rate-limit
     // budget, and a short wait is often enough to clear it.
-    private const int MaxRetries = 5;
-    private static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(60);
+    internal const int MaxRetries = 5;
+    internal static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(60);
 
     public AnthropicToolClient(HttpClient http, ILogger<AnthropicToolClient> log)
     {
@@ -111,7 +111,7 @@ public class AnthropicToolClient
 
     /// <summary>Honors a numeric Retry-After header (seconds) when Anthropic sends one;
     /// otherwise exponential backoff from <see cref="BaseDelay"/>, capped at <see cref="MaxDelay"/>.</summary>
-    private static TimeSpan ResolveRetryDelay(HttpResponseMessage resp, int attempt)
+    internal static TimeSpan ResolveRetryDelay(HttpResponseMessage resp, int attempt)
     {
         if (resp.Headers.RetryAfter?.Delta is { } delta) return delta;
         if (resp.Headers.TryGetValues("retry-after", out var values)
