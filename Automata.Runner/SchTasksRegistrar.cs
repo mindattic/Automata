@@ -86,73 +86,15 @@ public sealed class SchTasksRegistrar(string exePath) : IScheduledTaskRegistrar
     /// The task definition. <c>StartWhenAvailable</c> runs a firing the machine slept through;
     /// <c>IgnoreNew</c> keeps ticks from stacking up behind a long run; and the finite execution
     /// limit means one wedged run cannot hold the only instance slot forever and silence the
-    /// schedule for good.
+    /// schedule for good. The XML itself is built by <see cref="ScheduledTaskXmlBuilder"/>, which
+    /// lives in Automata.Core so it stays covered by plain NUnit tests even though this registrar
+    /// is Windows-only.
     /// </summary>
     private string BuildTaskXml(int intervalMinutes)
     {
         var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
-        return $"""
-        <?xml version="1.0" encoding="UTF-16"?>
-        <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-          <RegistrationInfo>
-            <Description>Automata heartbeat: resumes parked runs and runs whatever is due. Runs only while you are logged on, because browser lanes cannot render in session 0.</Description>
-            <URI>\{TickTaskName}</URI>
-          </RegistrationInfo>
-          <Triggers>
-            <TimeTrigger>
-              <StartBoundary>{DateTime.Now:yyyy-MM-dd\THH:mm:ss}</StartBoundary>
-              <Enabled>true</Enabled>
-              <Repetition>
-                <Interval>PT{intervalMinutes}M</Interval>
-                <StopAtDurationEnd>false</StopAtDurationEnd>
-              </Repetition>
-            </TimeTrigger>
-            <LogonTrigger>
-              <Enabled>true</Enabled>
-              <UserId>{Escape(user)}</UserId>
-            </LogonTrigger>
-          </Triggers>
-          <Principals>
-            <Principal id="Author">
-              <UserId>{Escape(user)}</UserId>
-              <LogonType>InteractiveToken</LogonType>
-              <RunLevel>LeastPrivilege</RunLevel>
-            </Principal>
-          </Principals>
-          <Settings>
-            <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-            <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-            <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-            <AllowHardTerminate>true</AllowHardTerminate>
-            <StartWhenAvailable>true</StartWhenAvailable>
-            <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-            <IdleSettings>
-              <StopOnIdleEnd>false</StopOnIdleEnd>
-              <RestartOnIdle>false</RestartOnIdle>
-            </IdleSettings>
-            <AllowStartOnDemand>true</AllowStartOnDemand>
-            <Enabled>true</Enabled>
-            <Hidden>false</Hidden>
-            <RunOnlyIfIdle>false</RunOnlyIfIdle>
-            <WakeToRun>false</WakeToRun>
-            <ExecutionTimeLimit>PT72H</ExecutionTimeLimit>
-            <Priority>7</Priority>
-          </Settings>
-          <Actions Context="Author">
-            <Exec>
-              <Command>{Escape(exePath)}</Command>
-              <Arguments>tick</Arguments>
-            </Exec>
-          </Actions>
-        </Task>
-        """;
+        return ScheduledTaskXmlBuilder.Build(TickTaskName, exePath, user, intervalMinutes, DateTime.Now);
     }
-
-    private static string Escape(string value) => value
-        .Replace("&", "&amp;")
-        .Replace("<", "&lt;")
-        .Replace(">", "&gt;")
-        .Replace("\"", "&quot;");
 
     private static async Task<RegistrationResult> RunAsync(string[] arguments, CancellationToken ct)
     {
