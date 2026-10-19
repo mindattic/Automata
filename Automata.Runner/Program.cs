@@ -26,6 +26,26 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        try
+        {
+            return await RunAsync(args);
+        }
+        catch (Exception ex)
+        {
+            // Windows Task Scheduler runs this fresh on every tick with no debugger and no
+            // console attached to read a message from: left unhandled, a startup failure (e.g.
+            // the database write below hitting a full disk) kills the process with a WER crash
+            // popup and an Application-log entry instead of a line anyone can act on. Logging and
+            // exiting cleanly means the next scheduled tick just tries again on its own.
+            var logPath = Path.Combine(Path.GetTempPath(), "automata-runner-error.log");
+            try { File.AppendAllText(logPath, $"[{DateTime.Now:O}] {ex}\n\n"); } catch { /* best effort */ }
+            Console.Error.WriteLine($"error: {ex.Message} (details logged to {logPath})");
+            return RunnerExitCode.Fault;
+        }
+    }
+
+    private static async Task<int> RunAsync(string[] args)
+    {
         var services = new ServiceCollection();
         services.AddAutomataCore();
         using var provider = services.BuildServiceProvider();
