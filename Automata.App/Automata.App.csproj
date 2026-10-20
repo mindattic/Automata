@@ -20,7 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
-    <PackageReference Include="AutoWebNav.WebView2" Version="4.0.0" />
+    <PackageReference Include="AutoWebNav.WebView2" Version="5.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="MindAttic.Vault" Version="6.0.0" />
     <PackageReference Include="MindAttic.Components.Wpf" Version="4.0.0" />
