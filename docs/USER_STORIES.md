@@ -6,7 +6,7 @@ layer: stories
 status: living
 updated: 2026-10-12
 ---
-<!-- GENERATED from MindAttic.Workflow/data/workflow.db by `workflow db render`. Do not edit: this file is rewritten from the database; change stories and tickets with the workflow CLI. -->
+<!-- GENERATED from MindAttic.Tickets/data/Tickets.db by `tickets db render`. Do not edit: this file is rewritten from the database; change stories and tickets with the tickets CLI. -->
 
 # Automata — User Stories
 > ✅ done (shipped & tested) · 🟡 partial · ⬜ planned. Every ✅ cites the test.
@@ -42,4 +42,5 @@ _Nothing recorded yet._
 | AUT-T19 | 2026-10-18 | fix | closed | automata-runner dies with an unhandled SqliteException 'SQLite Error 10: disk I/O error' when the disk is full (Application log 2026-10-18 5:26 PM and 6:11 PM, with a crash popup each time): catch the failed database write, log it, back off and retry on the next tick instead of crashing the runner | Automata.Runner/Program.cs: wrap startup in try/catch, log to %TEMP%\automata-runner-error.log, exit RunnerExitCode.Fault instead of crashing; Automata.Tests all 755 green |
 | AUT-T20 | 2026-10-18 | chore | open | Stop registering the MindAttic.Automata.Tick scheduled task (SchTasksRegistrar / IScheduledTaskRegistrar, App start-up); automata-runner keeps its 'tick' command for WatchDog to call (job now in MindAttic.WatchDog M.WD-T4) | scheduled-task consolidation 2026-10-18 |
 | AUT-T21 | 2026-10-19 | chore | open | Convert tracked source files to LF line endings via .gitattributes, per HOUSE-LAW-13 (low priority) | — |
-| AUT-T22 | 2026-10-19 | fix | open | Bump AutoWebNav/AutoWebNav.WebView2 4.0.0 -> 5.0.0 to pick up the off-screen-lane popup-window fix; rebuilt Automata.Runner Debug so the Automata.Tick scheduled task stops flashing small windows every 5 minutes | — |
+| AUT-T22 | 2026-10-19 | fix | closed | Bump AutoWebNav/AutoWebNav.WebView2 4.0.0 -> 5.0.0 to pick up the off-screen-lane popup-window fix; rebuilt Automata.Runner Debug so the Automata.Tick scheduled task stops flashing small windows every 5 minutes | c86bac2 |
+| AUT-T23 | 2026-10-20 | docs | open | Publish Automata docs to GitHub Pages via the shared Toolkit DocFX pipeline: run adopt-docs-site.ps1 (README.md as home page, docs/*.md as articles, API reference only where the code builds in CI), enable Pages with build_type=workflow, set the repo homepage URL, retire tools/build-readme.ps1 and README.htm, confirm the docs Actions run is green and https://mindattic.github.io/Automata/ returns 200. Depends on MAT-T8. | — |
