@@ -295,10 +295,10 @@ dotnet test Automata.Tests
 ### Run from source
 
 ```powershell
-.\deploy.ps1 -Launch
+.\run.ps1 -Launch
 ```
 
-`deploy.ps1` (repo root) publishes to `C:\Apps\Automata\` (a convention specific to the maintainer's own machine); `-Launch` then opens that deployed copy. It only stops the running instance and republishes when source has changed since the last deploy, so an unchanged repo is a fast no-op; `.\deploy.ps1 -Force` forces a clean bin/obj rebuild. The publish also writes `C:\Apps\Automata\deploy.bat`, the desktop shortcut target: it runs `deploy.ps1` and then starts the exe (passing its arguments through), so a double-click always runs current source, never a stale build. `dotnet run --project Automata.App` works too for a quick dev run. Deploying never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
+`run.ps1` (repo root) publishes to `C:\Apps\Automata\` (a convention specific to the maintainer's own machine); `-Launch` then opens that deployed copy. It only stops the running instance and republishes when source has changed since the last deploy, so an unchanged repo is a fast no-op; `.\run.ps1 -Force` forces a clean bin/obj rebuild. Every run also writes `C:\Apps\Automata\run.bat`, the desktop shortcut target (`.\run.ps1 -LauncherOnly` writes just that, without building): a double-click opens a menu, **1) Deploy & Run** (runs `run.ps1 -Force`, then starts the exe) or **2) Run** (starts the already-deployed exe as is), passing its arguments through either way. `dotnet run --project Automata.App` works too for a quick dev run. Deploying never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
 
 ### Publish a distributable build
 
