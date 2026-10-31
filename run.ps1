@@ -220,6 +220,16 @@ if (-not $Force -and -not (Test-NeedsPublish)) {
         exit 1
     }
 
+    # ── MindAttic Vault settings (LAMP, AUT-T27) ───────────────────────────
+    # Imports today's settings from the database into %APPDATA%\MindAttic\Automata\settings.json (once)
+    # and writes settings.manifest.json beside it, so MindAttic.Vault.Desktop shows Automata's tab.
+    Write-Host ''
+    Write-Host '  Writing the MindAttic Vault settings manifest...' -ForegroundColor Cyan
+    $manifest = Start-Process -FilePath $exe -ArgumentList '--write-settings-manifest' -Wait -PassThru
+    if ($manifest.ExitCode -ne 0) {
+        Write-Host "    (--write-settings-manifest exited $($manifest.ExitCode); Automata writes it on its next start)" -ForegroundColor DarkYellow
+    }
+
     # ── Summary ────────────────────────────────────────────────────────────
     Write-Host ''
     Write-Host '  Published successfully.' -ForegroundColor Green

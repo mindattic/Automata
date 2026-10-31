@@ -5,7 +5,7 @@
 // once — not persisted — so it asks again next launch if it is still true, the same way the
 // first-run tutorial's own "have I checked yet" guard works.
 
-import { $ } from './core.js';
+import { post } from './core.js';
 import { openConfirmModal } from './modal.js';
 
 var checked = false;
@@ -18,16 +18,12 @@ export function maybeAskForKey(payload) {
     checked = true;
     if (!payload || payload.anyConfigured) return;
 
-    var provider = payload.provider || 'claude';
     openConfirmModal('Bring your own API key',
         "Automata is driven by the LLM of your choice — add an API key (Claude, OpenAI, Gemini, " +
         "or Kimi) to turn it on. Without one, free-text task authoring and self-heal repair have " +
         "nothing to call; recording, editing and replaying steps you've already built still works " +
-        "either way. Add a key now, or later from Settings.",
-        'Add a key',
-        function () {
-            $('btn-settings').click();
-            var input = $('key-' + provider);
-            if (input) input.focus();
-        });
+        "either way. Keys are kept in MindAttic Vault, shared by every MindAttic app: add one there " +
+        "now, or later from Settings.",
+        'Open MindAttic Vault',
+        function () { post('openVault'); });
 }

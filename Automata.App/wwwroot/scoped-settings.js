@@ -1,4 +1,5 @@
-// Per-scope engine settings: global → collection → task → step.
+// Per-scope engine settings: global → collection → task → step. The global scope is edited in
+// MindAttic Vault (LAMP, AUT-T27) and shown here only as the outermost inherited value.
 //
 // The presentation rule this module exists to enforce: an inherited value is NEVER a pre-filled,
 // editable-looking control. That is the classic trap — a user edits what looks like this scope's
@@ -25,7 +26,7 @@ var FIELDS = [
     {
         key: 'continueOnTaskError', label: 'Continue after a failed task', type: 'bool',
         // Only a collection runs tasks, so the setting is meaningless deeper than that.
-        levels: ['global', 'collection'],
+        levels: ['collection'],
     },
     { key: 'llmProvider', label: 'LLM provider', type: 'select', options: ['claude', 'openai', 'gemini', 'kimi'] },
 ];
@@ -45,8 +46,7 @@ function scopeContext(level, ids) {
 
     // The scopes ABOVE this one, outermost first, so the deepest match wins.
     function above() {
-        var chain = [];
-        if (level !== 'global') chain.push({ name: 'Global', settings: state.engineDefaults });
+        var chain = [{ name: 'Global', settings: state.engineDefaults }];
         if (level === 'task' || level === 'step') {
             var c = collection();
             chain.push({ name: 'Collection', settings: c && c.settings });
@@ -59,7 +59,6 @@ function scopeContext(level, ids) {
     }
 
     function own() {
-        if (level === 'global') return state.engineDefaults;
         var owner = level === 'collection' ? collection() : level === 'task' ? task() : step();
         return owner ? owner.settings : null;
     }
@@ -68,11 +67,6 @@ function scopeContext(level, ids) {
         // An override that overrides nothing is dropped rather than stored, so a scope nobody has
         // configured never looks configured. The host prunes it too — this is the client half.
         var value = next && Object.keys(next).length ? next : null;
-        if (level === 'global') {
-            state.engineDefaults = value;
-            post('saveSettings', { engineDefaults: value || {} });
-            return;
-        }
         if (level === 'collection') {
             var c = collection();
             if (!c) return;
@@ -92,7 +86,6 @@ function scopeContext(level, ids) {
     }
 
     function title() {
-        if (level === 'global') return 'Global';
         var named = level === 'collection' ? collection() : level === 'task' ? task() : step();
         var name = named ? (named.name || named.label || named.action) : '';
         return LEVEL_NAMES[level] + (name ? ' “' + name + '”' : '');

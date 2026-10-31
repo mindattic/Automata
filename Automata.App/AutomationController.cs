@@ -20,7 +20,6 @@ using Automata.Core.Automation.Storage;
 using Automata.Core.Operator;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
-using MindAttic.Vault.Credentials;
 using AutoWebNav;
 using AutoWebNav.WebView2;
 
@@ -44,13 +43,6 @@ public sealed class AutomationController
     private readonly DemoSeeder demos;
     private readonly IClock clock;
     private readonly IReadOnlyList<IToolCallingLlm> providers;
-
-    // This app's own Vault-backed key override, namespaced under "automata-<provider>" — never
-    // the shared %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves. Each provider can
-    // hold MORE THAN ONE key (a rotation/failover pool), hence AppScopedCredentialStore rather
-    // than the plain ICredentialStore interface — GetKeys/SetKeys are the pool-aware surface.
-    private static readonly AppScopedCredentialStore ownKeys =
-        new("automata", LlmCredentialStore.Default);
 
     /// <summary>
     /// The run a collection is currently working through, so its tasks land under ONE run record
@@ -373,63 +365,13 @@ public sealed class AutomationController
                 await PushSettingsAsync();
                 return true;
 
-            case "saveSettings":
-            {
-                var settings = settingsStore.Load();
-
-                if (Str(msg, "provider") is { } provider
-                    && provider is "claude" or "openai" or "gemini" or "kimi")
-                {
-                    settings.Provider = provider;
-                    await logAsync($"LLM provider set to {provider} — used for the next AI run.");
-                }
-
-                // BYO keys bypass AutomataSettings entirely — they live in Vault, under this
-                // app's own scoped id (see ownKeys), so entering one here never touches what
-                // another MindAttic app resolves. The textarea sends one key per line — a blank
-                // field means "leave unchanged" (matches the single-key behaviour this replaces);
-                // a non-blank field REPLACES the whole pool with whatever lines it contains.
-                foreach (var (field, providerName) in KeyFields())
-                {
-                    if (Str(msg, field) is { Length: > 0 } raw)
-                    {
-                        var keys = raw
-                            .Split('\n')
-                            .Select(line => line.Trim())
-                            .Where(line => line.Length > 0)
-                            .Select(line => new CredentialPoolEntry(line))
-                            .ToList();
-                        ownKeys.SetKeys(providerName, keys);
-                        await logAsync(keys.Count == 1
-                            ? $"{field} saved (BYO-key) — used for the next AI run."
-                            : $"{field} saved ({keys.Count} keys, BYO-key pool) — used for the next AI run.");
-                    }
-                }
-                if (Str(msg, "clearKey") is { } clear && clear is "claude" or "openai" or "gemini" or "kimi")
-                {
-                    ownKeys.SetKeys(clear, Array.Empty<CredentialPoolEntry>());
-                    await logAsync($"{clear} key override cleared — falling back to the shared default.");
-                }
-
-                if (msg["borderRadius"] != null)
-                    settings.BorderRadius = Math.Clamp(msg["borderRadius"]!.GetValue<int>(), 0, 10);
-
-                if (Str(msg, "theme") is { } theme)
-                    settings.Theme = AutomataSettings.Themes.Coerce(theme);
-
-                // The panel always sends a whole override object; ParseOverride collapses one that
-                // overrides nothing back to null, so "reset everything to the floor" needs no
-                // separate message.
-                if (msg["engineDefaults"] is { } engineDefaults)
-                {
-                    settings.EngineDefaults = AutomationControllerRules.ParseOverride(engineDefaults);
-                    await logAsync("Global engine defaults updated — applied from the next run.");
-                }
-
-                settingsStore.Save(settings);
-                await PushSettingsAsync();
+            // LAMP (AUT-T27): provider, keys, theme, border radius and the global engine defaults are edited in
+            // MindAttic.Vault.Desktop; the cog opens it at Automata's tab. Saves there reach the panel live
+            // (AutomataSettingsStore.Watch -> PushSettingsAsync).
+            case "openVault":
+                if (!AutomataVaultSettings.OpenInVault(Str(msg, "setting")))
+                    await logAsync($"⚠ MindAttic Vault isn't installed — edit {settingsStore.Vault.FilePath} instead.");
                 return true;
-            }
 
             case "continueRun":
                 replayControl?.Continue();
@@ -1334,68 +1276,15 @@ public sealed class AutomationController
         return execPanelScript($"window.ssPanel.onGapRecorded({json})");
     }
 
-    private static IEnumerable<(string Field, string ProviderName)> KeyFields() =>
-    [
-        ("claudeKey", "claude"),
-        ("openaiKey", "openai"),
-        ("geminiKey", "gemini"),
-        ("kimiKey", "kimi"),
-    ];
-
-    /// <summary>True if the roster's provider named <paramref name="name"/> can actually
-    /// authenticate right now — checked live rather than assumed, so the hint in
-    /// <see cref="PushSettingsAsync"/> never claims a fallback works when nothing backs it. Since
-    /// this app's own Vault-backed key is checked FIRST inside the resolver itself, this is only
-    /// meaningful for a provider whose own scoped key (<see cref="ownKeys"/>) is empty — exactly
-    /// how the caller uses it.</summary>
-    private async Task<bool> FallbackConfiguredAsync(string name)
-    {
-        var provider = providers.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-        return provider != null && await provider.IsConfiguredAsync();
-    }
-
-    /// <summary>Settings for the panel — keys themselves never cross the bridge, only hints.</summary>
+    /// <summary>Settings for the panel. Keys never cross the bridge; <c>anyConfigured</c> says only whether any
+    /// provider can authenticate right now (checked live through the same key chain the runs use).</summary>
     public async Task PushSettingsAsync()
     {
         var settings = settingsStore.Load();
 
-        // This app's own Vault-backed override, per provider — never the shared
-        // %APPDATA%\MindAttic\LLM\ key another MindAttic app resolves. Each provider can hold a
-        // whole rotation/failover pool, not just one key.
-        var claudeKeys = ownKeys.GetKeys("claude");
-        var openAiKeys = ownKeys.GetKeys("openai");
-        var geminiKeys = ownKeys.GetKeys("gemini");
-        var kimiKeys = ownKeys.GetKeys("kimi");
-
-        var claudeFallback = await FallbackConfiguredAsync("Claude");
-        var openAiFallback = await FallbackConfiguredAsync("OpenAI");
-        var geminiFallback = await FallbackConfiguredAsync("Gemini");
-        var kimiFallback = await FallbackConfiguredAsync("Kimi");
-
-        static object Hint(IReadOnlyList<CredentialPoolEntry> keys, bool fallbackConfigured) => new
-        {
-            set = keys.Count > 0,
-            // The fallback hint is never assumed: it only says a default is available when that
-            // default was just checked and actually resolved.
-            hint = keys.Count switch
-            {
-                0 => fallbackConfigured ? "Using a shared default" : "Not configured — add a key above",
-                // A key too short to safely show a masked suffix still IS a BYO override — showing
-                // the fallback hint for it would contradict `set: true` and read as if no override
-                // were active.
-                1 => keys[0].Key.Length >= 4 ? "BYO …" + keys[0].Key[^4..] : "BYO key set",
-                _ => $"BYO {keys.Count} keys set (rotates on failure)",
-            },
-        };
-
-        // Whether AI-backed features (free-text authoring, self-heal repair) can do anything at
-        // all right now — the same question PushSettingsAsync just answered per provider, reduced
-        // to one bit the panel can act on (prompting for a key) without re-deriving the logic.
-        var anyConfigured =
-            claudeKeys.Count > 0 || claudeFallback ||
-            openAiKeys.Count > 0 || openAiFallback ||
-            geminiKeys.Count > 0 || geminiFallback ||
-            kimiKeys.Count > 0 || kimiFallback;
+        var anyConfigured = false;
+        foreach (var provider in providers)
+            if (await provider.IsConfiguredAsync()) { anyConfigured = true; break; }
 
         var json = JsonSerializer.Serialize(new
         {
@@ -1407,18 +1296,11 @@ public sealed class AutomationController
             // Read from the SETTING rather than from the window, because this controller does not
             // own one — the window writes the setting as it detaches, so the two cannot disagree.
             panelDetached = settings.PanelDetached,
-            // The outermost link of the settings chain, plus the floor beneath it. The floor is
-            // sent rather than mirrored in JS so there is exactly one definition of it.
+            // The outermost link of the settings chain (edited in Vault), plus the floor beneath it, for the
+            // collection/task/step editors' "inherited from" labels.
             engineDefaults = settings.EngineDefaults,
             engineFloor = EngineSettingsResolver.Floor(),
             anyConfigured,
-            keys = new
-            {
-                claude = Hint(claudeKeys, claudeFallback),
-                openai = Hint(openAiKeys, openAiFallback),
-                gemini = Hint(geminiKeys, geminiFallback),
-                kimi = Hint(kimiKeys, kimiFallback),
-            },
         }, AutomataJson.Options);
         await execPanelScript($"window.ssPanel.onSettings({json})");
     }

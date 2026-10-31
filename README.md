@@ -127,7 +127,7 @@ Recording, harvesting and uploading reach the same places. A harvest generalises
 1. Run `Automata.App.exe`. Windows may offer to install the .NET Desktop Runtime the first time, if it is not already on the machine; accept that prompt once and relaunch. The WebView2 Runtime is already installed on virtually every current Windows 10 or 11 machine, so nothing else is needed.
 2. The window has two panes: the sidebar (collections, tasks and steps tree, step editor, record and replay controls) and the live browser pane the automation acts on. The browser pane uses its own persistent WebView2 profile, so a site login survives app restarts without touching your regular browser.
 3. The first launch walks you through building a real example (see [First run](#first-run)).
-4. Optional: to turn on the AI side, open Settings, pick a provider (Claude, OpenAI, Gemini or Kimi) and paste in a key. Without one, free-text authoring and LLM repair have nothing to call; recording, editing and replaying steps you have already built work either way. Automata asks once, on first launch, if no key is configured.
+4. Optional: to turn on the AI side, add a key (Claude, OpenAI, Gemini or Kimi) in MindAttic Vault (Settings, **Open in MindAttic Vault**). Without one, free-text authoring and LLM repair have nothing to call; recording, editing and replaying steps you have already built work either way. Automata asks once, on first launch, if no key is configured.
 
 ### From source
 
@@ -190,16 +190,21 @@ Two per-step flags:
 
 ## Settings
 
-The **Settings** fold-out in the sidebar holds:
+Automata's app-level settings and its API keys are edited in **MindAttic Vault** (MindAttic.Vault.Desktop), the one place every MindAttic app's settings and keys live. The sidebar's **Settings** button **Open in MindAttic Vault** opens Automata's tab there, which holds:
 
-- **LLM provider and keys**: four providers (Claude, OpenAI, Gemini, Kimi via Moonshot). Pick which one runs first; the rest stay fallbacks, and the first with a usable key wins. Each provider takes one or more keys, one per line. A key entered here is Automata's own, stored separately from every other MindAttic app, so it never changes what one of those resolves. A blank key falls back to whatever shared default is actually configured on this machine, which is checked live rather than assumed: the field says "Not configured" when nothing backs it. Changes take effect on the next run, with no restart.
-- **Engine defaults**: timeouts, retries and self-heal behaviour that every collection, task and step inherits unless something further down overrides it.
+- **AI provider**: which LLM runs first (Claude, OpenAI, Gemini, Kimi via Moonshot); the rest stay fallbacks, and the first with a usable key wins.
+- **Appearance**: Theme (Dark, the default, or Light; both palettes are checked against WCAG 2.2 AA by `tools/verify-ui.mjs`) and Border radius (0 to 10 px, default 5).
+- **Engine defaults**: the global scope of the engine settings (step timeout, self-heal, LLM repair, retry, continue on step/task error, browser profile, screenshot on failure, LLM provider for runs). Empty means the built-in default; every collection, task and step can still override each one from its row menu in the sidebar.
+- **Keys**: the shared MindAttic named keys for Claude, OpenAI, Gemini and Kimi. Keys assigned to Automata on its tab are used first, in order, failing over on error; with none assigned, Automata uses the Claude OAuth session and then the shared keys, as before. Keys Automata kept for itself before are moved into the shared list as its assigned keys on first start.
+
+A save in Vault applies to the running app at once (the theme and radius repaint live) and to the next run, with no restart. Values live in `%APPDATA%\MindAttic\Automata\settings.json`; on first start Automata copies its settings from the database there once (the database row is left as it was). `Automata.App.exe --write-settings-manifest` does that and writes the manifest Vault reads, then exits; `run.ps1` runs it after publishing.
+
+The sidebar's **Settings** fold-out still holds:
+
 - **Examples**: review the generated Demos collection, reset it to the version this build ships, or take a guided tour through every example, one at a time.
 - **Import and export**: move a collection or task in or out as a `*.automata.zip` or `*.automata.json`, or back up and merge the whole workspace as one `*.automata.json` (see [Storage](#storage)).
 - **Open data folder**: shows `automata.db` in File Explorer.
 - **Layout**: **Detach the sidebar** moves the build panel into its own window, for another monitor or a third of the screen. Closing that window docks it again, and its position is remembered across launches. It is the same panel either way, reparented and never reloaded, so nothing it was holding is lost.
-- **Theme**: Dark (default) or Light, applied immediately and remembered. Both palettes are checked against WCAG 2.2 AA by `tools/verify-ui.mjs`.
-- **Border radius**: a 0 to 10 px slider (default 5) rounding every button and input, applied live.
 
 ## Storage
 

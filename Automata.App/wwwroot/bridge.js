@@ -17,7 +17,6 @@ import { maybeStartTutorial, advanceTutorial } from './tutorial.js';
 import { advanceTour, onTourRunFinished } from './tour.js';
 import { maybeAskForKey } from './keysetup.js';
 import { showBuildTab } from './tabs.js';
-import { LLM_PROVIDERS } from './settings.js';
 
 /// A free "column1", "column2"… so a freshly picked column always has a usable name; the user
 /// renames it in place. An unnamed column would be dropped on the next save.
@@ -228,7 +227,6 @@ window.ssPanel = {
         // user never sees a frame of dark on launch. Applied again here because this is what makes
         // the choice take effect the moment it is made.
         document.documentElement.dataset.theme = (s && s.theme) === 'light' ? 'light' : 'dark';
-        $('set-theme').value = document.documentElement.dataset.theme;
 
         // Its own window or beside the browser. The button says what pressing it will DO, which
         // for a toggle is the only labelling that does not read as a status light.
@@ -236,15 +234,6 @@ window.ssPanel = {
 
         var radius = (s && s.borderRadius != null) ? s.borderRadius : 5;
         document.documentElement.style.setProperty('--radius', radius + 'px');
-        $('set-radius').value = radius;
-        $('set-radius-value').textContent = radius + 'px';
-
-        LLM_PROVIDERS.forEach(function (p) {
-            $('llm-' + p).checked = (s && s.provider) === p;
-            var info = s && s.keys && s.keys[p];
-            // The key never crosses the bridge — the input's placeholder shows the status.
-            $('key-' + p).placeholder = info ? info.hint : '';
-        });
 
         maybeAskForKey(s);
     },

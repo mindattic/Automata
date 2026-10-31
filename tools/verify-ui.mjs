@@ -1239,21 +1239,23 @@ async function main() {
       // the same bar, so this runs the SAME axe pass the dark baseline runs, on the same panel,
       // with the palette swapped — the contrast ratios written into tokens.css are a claim, and
       // this is what checks it.
-      await panelPage.locator('#btn-settings').click();
-      await panelPage.locator('#set-theme').waitFor({ state: 'visible', timeout: 5000 });
-
-      await panelPage.locator('#set-theme').selectOption('light');
+      // LAMP (AUT-T27): the theme is edited in MindAttic Vault, and a save there applies live. The harness's
+      // scratch database gets its Vault file beside it (vault\Automata\settings.json), so writing that file
+      // is exactly what a save in Vault.Desktop does.
+      const vaultSettings = path.join(scratch, 'vault', 'Automata', 'settings.json');
+      const writeTheme = (theme) => {
+        mkdirSync(path.dirname(vaultSettings), { recursive: true });
+        const current = existsSync(vaultSettings) ? JSON.parse(readFileSync(vaultSettings, 'utf8')) : {};
+        writeFileSync(vaultSettings, JSON.stringify({ ...current, theme }, null, 2));
+      };
+      writeTheme('light');
       await waitFor(() => panelPage.evaluate(() => document.documentElement.dataset.theme === 'light'),
-        { timeoutMs: 5000, label: 'the light palette to be applied' });
+        { timeoutMs: 10000, label: 'the light palette to be applied live from the Vault file' });
 
       // The body's own background has to move, or the tokens are defined and nothing reads them.
       const ground = await panelPage.evaluate(() => getComputedStyle(document.body).backgroundColor);
       assertTrue(/^rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)$/.test(ground),
         `expected a light body background, got ${ground}`);
-
-      await panelPage.locator('#settings-modal-close').click();
-      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
-        { timeoutMs: 5000, label: 'settings modal to close' });
 
       await panelPage.addScriptTag({ path: axeCorePath });
       const violations = await panelPage.evaluate(async () => {
@@ -1269,14 +1271,9 @@ async function main() {
         `light theme axe violations: ${JSON.stringify(violations, null, 2)}`);
 
       // Back to the default, so every later check sees the palette it was written against.
-      await panelPage.locator('#btn-settings').click();
-      await panelPage.locator('#set-theme').waitFor({ state: 'visible', timeout: 5000 });
-      await panelPage.locator('#set-theme').selectOption('dark');
+      writeTheme('dark');
       await waitFor(() => panelPage.evaluate(() => document.documentElement.dataset.theme === 'dark'),
-        { timeoutMs: 5000, label: 'the dark palette to be restored' });
-      await panelPage.locator('#settings-modal-close').click();
-      await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
-        { timeoutMs: 5000, label: 'settings modal to close' });
+        { timeoutMs: 10000, label: 'the dark palette to be restored' });
     });
 
     await group('detach: the sidebar moves to its own window and is the same panel', async () => {
@@ -1343,9 +1340,10 @@ async function main() {
 
     await group('Settings modal opens, is interactable, and closes without saving', async () => {
       await panelPage.locator('#btn-settings').click();
-      await panelPage.locator('#llm-claude').waitFor({ state: 'visible', timeout: 5000 });
-      assertTrue(await panelPage.locator('#key-openai').isVisible(), 'expected the OpenAI key input to be visible');
-      assertTrue(await panelPage.locator('#set-radius').isVisible(), 'expected the border-radius slider to be visible');
+      await panelPage.locator('#open-vault').waitFor({ state: 'visible', timeout: 5000 });
+      // LAMP (AUT-T27): provider, keys, theme and radius are edited in MindAttic Vault, not here.
+      for (const gone of ['#llm-claude', '#key-openai', '#set-radius', '#set-theme', '#set-engine-defaults'])
+        assertTrue(await panelPage.locator(gone).count() === 0, `expected ${gone} to be gone from Settings`);
       await panelPage.locator('#settings-modal-close').click();
       await waitFor(() => hasClass(panelPage.locator('#settings-modal'), 'hidden'),
         { timeoutMs: 5000, label: 'settings modal to close' });

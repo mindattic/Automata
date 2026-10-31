@@ -1,9 +1,9 @@
-// The Settings dialog (LLM provider, BYO keys, border radius) and the Help dialog. Raw API keys
-// never cross the bridge - the host sends only a redacted hint, shown as the input's placeholder.
+// The Settings dialog and the Help dialog. App-level settings (LLM provider and keys, theme, border
+// radius, global engine defaults) are edited in MindAttic Vault (LAMP, AUT-T27): its button asks the host
+// to open Automata's tab there. Keys never cross the bridge.
 
 import { $, post } from './core.js';
 import { trapFocus, openInfoModal } from './modal.js';
-import { openScopedSettings } from './scoped-settings.js';
 
 // Settings and Help dialogs: same open/close/focus discipline as the generic modal.
 var settingsReturnEl = null;
@@ -57,54 +57,17 @@ var HELP_TEXT = [
     '  Drag rows to reorder steps, or drop a task on another collection.',
 ].join('\n');
 
-// Opened from the Settings dialog rather than nested inside it: two stacked overlays would fight
-// over Escape and the focus trap.
-$('set-engine-defaults').addEventListener('click', function () {
+$('open-vault').addEventListener('click', function () {
     closeSettings();
-    openScopedSettings('global', {});
+    post('openVault');
 });
 
 $('btn-help').addEventListener('click', function () {
     openInfoModal('Help & keyboard shortcuts', HELP_TEXT, null);
 });
 
-// Settings: LLM provider radios, per-provider BYO keys, border radius.
-export const LLM_PROVIDERS = ['claude', 'openai', 'gemini', 'kimi'];
-
-LLM_PROVIDERS.forEach(function (p) {
-    $('llm-' + p).addEventListener('change', function () {
-        if ($('llm-' + p).checked) post('saveSettings', { provider: p });
-    });
-});
-$('set-key-save').addEventListener('click', function () {
-    var payload = {};
-    LLM_PROVIDERS.forEach(function (p) {
-        var value = $('key-' + p).value.trim();
-        if (value) { payload[p + 'Key'] = value; $('key-' + p).value = ''; }
-    });
-    if (Object.keys(payload).length) post('saveSettings', payload);
-});
-document.querySelectorAll('[data-clear]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-        post('saveSettings', { clearKey: btn.getAttribute('data-clear') });
-    });
-});
 $('set-detach').addEventListener('click', function () {
     // The host owns the window, so it owns the answer: the button's own label is rewritten when
     // the settings come back, rather than guessed at here.
     post('togglePanelDetached');
-});
-$('set-theme').addEventListener('change', function () {
-    // Applied here rather than waiting for the host to echo it back: a theme switch that lags a
-    // round trip reads as a control that did not work.
-    document.documentElement.dataset.theme = $('set-theme').value === 'light' ? 'light' : 'dark';
-    post('saveSettings', { theme: $('set-theme').value });
-});
-$('set-radius').addEventListener('input', function () {
-    var radius = parseInt($('set-radius').value, 10) || 0;
-    document.documentElement.style.setProperty('--radius', radius + 'px');
-    $('set-radius-value').textContent = radius + 'px';
-});
-$('set-radius').addEventListener('change', function () {
-    post('saveSettings', { borderRadius: parseInt($('set-radius').value, 10) || 0 });
 });

@@ -47,27 +47,17 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient();                    // generic factory for the LLM adapters
         services.AddHttpClient<AnthropicToolClient>();
 
-        // BYO-key: every MindAttic app gets its OWN Vault-backed override — entering a key in
-        // Automata's Settings writes to this app's own scoped id ("automata-<provider>"), never
-        // to the shared id another app resolves — falling back to that shared
-        // %APPDATA%\MindAttic\LLM\ key (Claude: OAuth session first, then the shared key) only
-        // when this app has none of its own. Both tiers are read live per call, so saving a key
-        // needs no restart.
-        var ownKeys = new AppScopedCredentialStore("automata", LlmCredentialStore.Default);
-
-        // Every provider's Settings UI stores a LIST of keys (one per line) so a user with
-        // several accounts can rotate/fail over between them — this app's own key pool wins
-        // outright over the shared fallback pool when it has any keys at all.
-        Func<IReadOnlyList<string>> KeyPoolResolver(string providerId, Func<IReadOnlyList<string>> fallback) =>
-            () =>
-            {
-                var ownPool = ownKeys.GetKeys(providerId).Select(k => k.Key).ToList();
-                return ownPool.Count > 0 ? ownPool : fallback();
-            };
+        // LAMP (AUT-T27): keys are the shared MindAttic named keys. Automata's keys ASSIGNED on its Vault tab win;
+        // without an assignment each provider keeps its pre-LAMP fallback (Claude: OAuth session first, then the
+        // shared key). Its own pre-LAMP copies ("automata-<provider>") become its assigned keys on first start, so
+        // it keeps using the same key. Read live per call, so a change in Vault needs no restart.
+        services.AddSingleton(_ => AutomataKeys.ForCurrentUser());
+        Func<IReadOnlyList<string>> KeyPoolResolver(IServiceProvider sp, string providerId, Func<IReadOnlyList<string>> fallback) =>
+            sp.GetRequiredService<AutomataKeys>().PoolResolver(providerId, fallback);
 
         services.AddSingleton(sp => new AnthropicToolCallingLlm(
             sp.GetRequiredService<AnthropicToolClient>(),
-            KeyPoolResolver("claude", AnthropicToolCallingLlm.DefaultResolveApiKeys)));
+            KeyPoolResolver(sp, "claude", AnthropicToolCallingLlm.DefaultResolveApiKeys)));
 
         // Multi-LLM Master Switch-Over: the roster orders the user's selected provider first
         // (live, per run) with the rest as fallbacks — first provider with credentials wins.
@@ -80,13 +70,13 @@ public static class ServiceCollectionExtensions
             var openAiLog = sp.GetRequiredService<ILogger<OpenAiToolCallingLlm>>();
 
             var openAi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyPoolResolver("openai", () => LlmCredentialStore.Default.GetKeys("openai").Select(k => k.Key).ToList()));
+                KeyPoolResolver(sp, "openai", () => LlmCredentialStore.Default.GetKeys("openai").Select(k => k.Key).ToList()));
             var kimi = new OpenAiToolCallingLlm(httpFactory.CreateClient("llm"), openAiLog,
-                KeyPoolResolver("kimi", () => LlmCredentialStore.Default.GetKeys("kimi").Select(k => k.Key).ToList()),
+                KeyPoolResolver(sp, "kimi", () => LlmCredentialStore.Default.GetKeys("kimi").Select(k => k.Key).ToList()),
                 model: "kimi-latest", name: "Kimi", endpoint: "https://api.moonshot.ai/v1/chat/completions");
             var gemini = new GeminiToolCallingLlm(httpFactory.CreateClient("llm"),
                 sp.GetRequiredService<ILogger<GeminiToolCallingLlm>>(),
-                KeyPoolResolver("gemini", () => LlmCredentialStore.Default.GetKeys("gemini").Select(k => k.Key).ToList()));
+                KeyPoolResolver(sp, "gemini", () => LlmCredentialStore.Default.GetKeys("gemini").Select(k => k.Key).ToList()));
 
             return new ProviderRoster(
             [

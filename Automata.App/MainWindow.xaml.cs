@@ -83,6 +83,15 @@ public partial class MainWindow : Window
                 : TryExecuteScriptAsync(ControlPanel.CoreWebView2, script),
             PostLogAsync);
 
+        // LAMP (AUT-T27): a save in MindAttic.Vault.Desktop (theme, border radius, provider, engine defaults)
+        // reaches the window and the panel right away.
+        settingsStore.Changed += () => Dispatcher.BeginInvoke(() =>
+        {
+            ApplyWindowTheme();
+            _ = controller.PushSettingsAsync();
+        });
+        settingsStore.Watch();
+
 #if DEBUG
         KeyDown += (_, e) =>
         {

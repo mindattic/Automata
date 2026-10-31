@@ -63,6 +63,18 @@ public partial class App : Application
         // sidebar log once the panel is up — see AutomationController.
         StartupImport = Services.MigrateAutomataDatabase();
 
+        if (e.Args.Contains(MindAttic.Vault.Settings.Manifest.SettingsManifestCommand.Switch, StringComparer.OrdinalIgnoreCase))
+        {
+            // Install step (run.ps1): import today's settings from the database into MindAttic Vault, write
+            // settings.manifest.json for Vault.Desktop, move any own key copies into the shared list, exit.
+            var store = Services.GetRequiredService<Automata.Core.Automation.Storage.AutomataSettingsStore>();
+            store.Load();
+            Services.GetRequiredService<Automata.Core.Automation.Storage.AutomataKeys>();
+            Console.WriteLine(System.IO.Path.Combine(store.Vault.Directory, MindAttic.Vault.Settings.Manifest.SettingsManifest.FileName));
+            Shutdown();
+            return;
+        }
+
 #if MINDATTIC_CAPTURE
         // Debug builds: -capture video records the window from here to exit; -capture screen 5 takes a PNG every
         // 5 s. Output: R:\MindAttic\Capture\Automata\<timestamp>.<ext>. Hooks raised in AutomationController go through capture.json.

@@ -1,10 +1,15 @@
 using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
 using Microsoft.EntityFrameworkCore;
+using MindAttic.Vault.Settings;
 
 namespace Automata.Core.Automation.Storage;
 
-/// <summary>App-level user settings, editable from the sidebar's Settings section.</summary>
+/// <summary>
+/// The settings row: window placement (sidebar width, detached panel) owned by the app, plus the app-level
+/// settings MindAttic Vault owns (<see cref="AutomataVaultSettings"/>), which <see cref="AutomataSettingsStore"/>
+/// overlays on load. The row keeps every column so workspace exports and imports are unchanged.
+/// </summary>
 public sealed class AutomataSettings
 {
     /// <summary>The themes the app ships, and the one place their names are spelled.</summary>
@@ -24,10 +29,8 @@ public sealed class AutomataSettings
     /// selected one has no usable credentials.</summary>
     public string Provider { get; set; } = "claude";
 
-    // BYO keys themselves live in MindAttic.Vault, not here — see AutomationController's
-    // ownKeys field and key handling. Each app gets its own Vault-backed override (so
-    // testing a key in Automata never touches what another MindAttic app resolves), falling
-    // back to the shared %APPDATA%\MindAttic\LLM\ keys.
+    // API keys are the shared MindAttic named keys (MindAttic.Vault.Desktop's Keys tab), never here;
+    // see AutomataKeys.
 
     /// <summary>Corner rounding (px, 0–10) applied to the sidebar's buttons and inputs.</summary>
     public int BorderRadius { get; set; } = 5;
@@ -87,32 +90,65 @@ public sealed class AutomataSettings
 }
 
 /// <summary>
-/// App settings: the single row of the <c>Settings</c> table (engine defaults as a complex type on
-/// it). Read on every access — it is one small row — so a value saved in the sidebar takes effect
-/// on the next run without a restart. API keys are not here; they live in MindAttic.Vault.
+/// App settings: MindAttic Vault's <see cref="AutomataVaultSettings"/> (provider, theme, border radius, global
+/// engine defaults; edited in MindAttic.Vault.Desktop) overlaid on the single row of the <c>Settings</c> table,
+/// which still holds the window placement and still travels in workspace exports. The first load under Vault
+/// imports the row's values into Vault (the row is left as it was). Read on every access, so a value saved in
+/// Vault takes effect on the next run without a restart; <see cref="Watch"/> also announces it to a running window.
+/// API keys are not here; they are the shared MindAttic named keys (see <see cref="AutomataKeys"/>).
 /// </summary>
-public sealed class AutomataSettingsStore
+public sealed class AutomataSettingsStore : IDisposable
 {
     private const int RowId = 1;
+    private bool seeded;
+    private FileSystemWatcher? watcher;
+    private Timer? debounce;
 
-    public AutomataSettingsStore(AutomataDatabase database) => Database = database;
+    /// <param name="database">The database whose row holds window state.</param>
+    /// <param name="vault">Where the Vault values live; null picks <see cref="VaultFor"/>.</param>
+    public AutomataSettingsStore(AutomataDatabase database, JsonSettingsStore<AutomataVaultSettings>? vault = null)
+    {
+        Database = database;
+        Vault = vault ?? VaultFor(database);
+    }
 
     public AutomataDatabase Database { get; }
 
-    /// <summary>Whether settings have ever been saved here (rather than being the defaults).</summary>
+    /// <summary>The Vault settings file this store overlays.</summary>
+    public JsonSettingsStore<AutomataVaultSettings> Vault { get; }
+
+    /// <summary>Raised (on a worker thread) after the Vault file changed on disk, e.g. a save in MindAttic.Vault.Desktop.</summary>
+    public event Action? Changed;
+
+    /// <summary>
+    /// The real database gets the real Vault file (<c>%APPDATA%\MindAttic\Automata\settings.json</c>). A scratch
+    /// database (tests, the UI harnesses' <c>AUTOMATA_DB_PATH</c>/<c>AUTOMATA_SETTINGS_PATH</c>) gets a Vault file
+    /// beside it, so no harness or test can read or change the user's settings.
+    /// </summary>
+    public static JsonSettingsStore<AutomataVaultSettings> VaultFor(AutomataDatabase database) =>
+        string.Equals(Path.GetFullPath(database.DatabasePath), Path.GetFullPath(AutomataDatabase.DefaultPath), StringComparison.OrdinalIgnoreCase)
+            ? JsonSettingsStore<AutomataVaultSettings>.ForSettingsApp()
+            : new JsonSettingsStore<AutomataVaultSettings>(Path.Combine(database.DataDirectory, "vault", AutomataVaultSettings.AppId));
+
+    /// <summary>Whether settings have ever been saved here (rather than being the defaults): a database row, or
+    /// Vault values that differ from the defaults.</summary>
     public bool HasSaved
     {
         get
         {
-            using var db = Database.CreateDbContext();
-            return db.Settings.Any();
+            using (var db = Database.CreateDbContext())
+                if (db.Settings.Any()) return true;
+            return Vault.Exists() && !Vault.Load().SameAs(new AutomataVaultSettings());
         }
     }
 
     public AutomataSettings Load()
     {
-        using var db = Database.CreateDbContext();
-        return db.Settings.AsNoTracking().FirstOrDefault() ?? new AutomataSettings();
+        AutomataSettings row;
+        using (var db = Database.CreateDbContext())
+            row = db.Settings.AsNoTracking().FirstOrDefault() ?? new AutomataSettings();
+        VaultValues(row).ApplyTo(row);
+        return row;
     }
 
     public void Save(AutomataSettings settings)
@@ -120,11 +156,60 @@ public sealed class AutomataSettingsStore
         // An override that overrides nothing is stored as no override at all.
         if (settings.EngineDefaults is { IsEmpty: true }) settings.EngineDefaults = null;
 
-        using var db = Database.CreateDbContext();
-        var exists = db.Settings.Any();
-        var entry = db.Entry(settings);
-        entry.Property(AutomataDb.SettingsKey).CurrentValue = RowId;
-        entry.State = exists ? EntityState.Modified : EntityState.Added;
-        db.SaveChanges();
+        using (var db = Database.CreateDbContext())
+        {
+            var exists = db.Settings.Any();
+            var entry = db.Entry(settings);
+            entry.Property(AutomataDb.SettingsKey).CurrentValue = RowId;
+            entry.State = exists ? EntityState.Modified : EntityState.Added;
+            db.SaveChanges();
+        }
+
+        // Window-state saves leave the Vault file alone (no rewrite, no change event) unless a Vault value changed.
+        var next = AutomataVaultSettings.From(settings);
+        if (!Vault.Exists() || !next.SameAs(Vault.Load())) Vault.Save(next);
+    }
+
+    /// <summary>
+    /// The Vault values; on the first call imports today's row into Vault when there is no Vault file yet, then
+    /// seeds/writes the manifest (<see cref="JsonSettingsStore{T}.LoadOrSeed"/>).
+    /// </summary>
+    private AutomataVaultSettings VaultValues(AutomataSettings row)
+    {
+        if (seeded) return Vault.Load();
+        try
+        {
+            if (!Vault.Exists()) Vault.Save(AutomataVaultSettings.From(row));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A read-only profile still starts, on the row's values.
+            return AutomataVaultSettings.From(row);
+        }
+        var values = Vault.LoadOrSeed();
+        seeded = true;
+        return values;
+    }
+
+    /// <summary>Starts raising <see cref="Changed"/> when the Vault file changes.</summary>
+    public void Watch()
+    {
+        if (watcher is not null) return;
+        Directory.CreateDirectory(Vault.Directory);
+        watcher = new FileSystemWatcher(Vault.Directory, Vault.FileName)
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime,
+        };
+        FileSystemEventHandler changed = (_, _) => (debounce ??= new Timer(_ => Changed?.Invoke())).Change(300, Timeout.Infinite);
+        watcher.Changed += changed;
+        watcher.Created += changed;
+        watcher.Renamed += (s, e) => changed(s, e);
+        watcher.EnableRaisingEvents = true;
+    }
+
+    public void Dispose()
+    {
+        watcher?.Dispose();
+        debounce?.Dispose();
     }
 }
