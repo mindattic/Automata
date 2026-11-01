@@ -47,3 +47,5 @@ _Nothing recorded yet._
 | AUT-T24 | 2026-10-20 | chore | closed | Move to MindAttic.Components.Wpf 19.0.0 (Mc->Ma rename): bump the PackageReference and confirm the build; a scan found no Mc-prefixed style/class usages of its own to rename | 6321c50 |
 | AUT-T25 | 2026-10-22 | docs | closed | Update USER_STORIES.md | — |
 | AUT-T26 | 2026-10-24 | docs | closed | Update USER_STORIES.md | — |
+| AUT-T27 | 2026-10-31 | feature | closed | LAMP: move Automata's app-level settings and keys to MindAttic.Vault.Desktop (manifest, LoadOrSeed, shared named keys, cog opens Vault) | fab8d57 LampSettingsTests (31/31) |
+| AUT-T28 | 2026-10-31 | docs | closed | Update USER_STORIES.md | — |
