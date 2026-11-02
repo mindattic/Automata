@@ -629,9 +629,14 @@ public sealed partial class WorkflowEngine
                 if (state.Healed > healedBefore)
                 {
                     var count = state.Healed - healedBefore;
-                    collections.SaveTask(target);
-                    yield return new StepEvent.Log(
-                        $"{count} step(s) self-healed in '{target.Name}' — saved back into it.");
+                    // The callee's collection can be deleted while this run is in flight; a repair
+                    // that cannot be written back is not worth killing the caller's run over.
+                    string? saveError = null;
+                    try { collections.SaveTask(target); }
+                    catch (InvalidOperationException ex) { saveError = ex.Message; }
+                    yield return new StepEvent.Log(saveError == null
+                        ? $"{count} step(s) self-healed in '{target.Name}' — saved back into it."
+                        : $"{count} step(s) self-healed in '{target.Name}', but could not be saved: {saveError}");
                 }
 
                 if (state.Stop) yield break;

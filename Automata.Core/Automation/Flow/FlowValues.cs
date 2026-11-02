@@ -45,14 +45,15 @@ public static class FlowValues
 
     public static string PlaceholderName(string written) => written[1..^1].Trim();
 
-    public static int DurationMs(int amount, string unit) => unit.ToLowerInvariant() switch
+    // Checked: "I wait 600 h" would otherwise wrap to a negative number and wait not at all.
+    public static int DurationMs(int amount, string unit) => checked(unit.ToLowerInvariant() switch
     {
         "ms" => amount,
         "s" => amount * 1000,
         "m" => amount * 60_000,
         "h" => amount * 3_600_000,
         _ => amount,
-    };
+    });
 
     public static string ShortUrl(string? url)
     {

@@ -459,7 +459,14 @@ public sealed class ArchiveService
         if (store.TaskIdTaken(task.Id))
         {
             warnings.Add($"Task id '{task.Id}' already exists — imported as a new task.");
+            var original = task.Id;
             task.Id = StoreUtil.NewId();
+            // As DuplicateTask does: a binding that names this task outright must follow the copy
+            // rather than keep reading the original it was exported from.
+            StoreUtil.RemapTaskIds(task, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [original] = task.Id,
+            });
         }
 
         task.CollectionId = parent.Id;

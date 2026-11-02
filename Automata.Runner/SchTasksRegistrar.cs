@@ -77,7 +77,7 @@ public sealed class SchTasksRegistrar(string exePath) : IScheduledTaskRegistrar
         // absence is expected and only its presence-then-failure is worth reporting.
         var legacy = await RunAsync(["/Delete", "/F", "/TN", LegacyLogonTaskName], ct);
 
-        return legacy.Succeeded
+        return legacy.Succeeded && removed.Succeeded
             ? RegistrationResult.Ok($"{removed.Report}{Environment.NewLine}{legacy.Report}")
             : removed;
     }

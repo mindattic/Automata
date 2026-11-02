@@ -610,7 +610,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        runCts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource();
+        runCts = cts;
         await SetRunningAsync(true);
 
         var operatorService = App.Services.GetRequiredService<BrowserOperatorService>();
@@ -619,7 +620,7 @@ public partial class MainWindow : Window
         await PostLogAsync($"Starting: {task}");
         try
         {
-            await foreach (var evt in operatorService.RunAsync(SystemPrompt, task, ctx, cancel: runCts.Token))
+            await foreach (var evt in operatorService.RunAsync(SystemPrompt, task, ctx, cancel: cts.Token))
                 await PostLogAsync(FormatEvent(evt));
         }
         catch (OperationCanceledException)
@@ -629,6 +630,13 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             await PostLogAsync($"Unexpected failure — {ex.Message}");
+        }
+        finally
+        {
+            // Cleared, or NavigationBlockReason keeps reporting "the AI loop is running" — and
+            // the address bar stays locked — for the rest of the session after the first run.
+            if (ReferenceEquals(runCts, cts)) runCts = null;
+            cts.Dispose();
         }
 
         await PostLogAsync("Run finished.");

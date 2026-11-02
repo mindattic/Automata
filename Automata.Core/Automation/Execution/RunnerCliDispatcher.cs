@@ -289,9 +289,19 @@ public sealed class RunnerCliDispatcher
             // healing keeps the repair, and the tick that resumes it starts from the healed record.
             if (healed.Count > 0)
             {
-                collections.SaveTask(task);
-                output.WriteLine(
-                    $"    {healed.Count} step(s) self-healed — saved back into '{task.Name}'.");
+                // Guarded: the task's collection may have been deleted in the app while this run
+                // was in flight, and SaveTask then throws — which would abandon the run record
+                // as "running" forever and, on a tick, skip every entry still to come.
+                try
+                {
+                    collections.SaveTask(task);
+                    output.WriteLine(
+                        $"    {healed.Count} step(s) self-healed — saved back into '{task.Name}'.");
+                }
+                catch (InvalidOperationException ex)
+                {
+                    output.WriteLine($"    {healed.Count} step(s) self-healed, but could not be saved: {ex.Message}");
+                }
             }
 
             if (checkpoint != null)
@@ -479,7 +489,7 @@ public sealed class RunnerCliDispatcher
             ran += await RunEntryChainAsync(entry, entries, started, ct, failed => anyFailed |= failed);
         }
 
-        schedule.Save(entries);
+        schedule.SaveBookkeeping(entries);
         var resumedNote = resumed == 0 ? "" : $"Resumed {resumed} parked run(s). ";
         output.WriteLine(resumedNote + (ran == 0 ? "Nothing due." : $"Ran {ran} scheduled item(s)."));
         return anyFailed ? RunnerExitCode.RunFailed : RunnerExitCode.Success;

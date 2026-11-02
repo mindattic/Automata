@@ -115,7 +115,8 @@ public class AnthropicToolClient
     {
         if (resp.Headers.RetryAfter?.Delta is { } delta) return delta;
         if (resp.Headers.TryGetValues("retry-after", out var values)
-            && double.TryParse(values.FirstOrDefault(), out var secs))
+            && double.TryParse(values.FirstOrDefault(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var secs))
             return TimeSpan.FromSeconds(secs);
 
         var backoff = TimeSpan.FromSeconds(BaseDelay.TotalSeconds * Math.Pow(2, attempt));

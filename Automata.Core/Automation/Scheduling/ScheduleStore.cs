@@ -50,6 +50,31 @@ public sealed class ScheduleStore
         }
     }
 
+    /// <summary>
+    /// Writes back only the scheduler's bookkeeping (<see cref="ScheduleEntry.NextDueUtc"/>,
+    /// <see cref="ScheduleEntry.LastRunUtc"/>, <see cref="ScheduleEntry.LastOutcome"/>) for entries
+    /// that still exist. A tick holds its list for as long as its runs take, and the app edits the
+    /// schedule meanwhile; replacing the whole list would delete entries added during the tick,
+    /// resurrect removed ones and revert edits.
+    /// </summary>
+    public void SaveBookkeeping(IEnumerable<ScheduleEntry> entries)
+    {
+        var byId = entries.ToDictionary(e => e.Id, StringComparer.Ordinal);
+        lock (gate)
+        {
+            using var db = Database.CreateDbContext();
+            var ids = byId.Keys.ToList();
+            foreach (var stored in db.Schedule.Where(e => ids.Contains(e.Id)).ToList())
+            {
+                var source = byId[stored.Id];
+                stored.NextDueUtc = source.NextDueUtc;
+                stored.LastRunUtc = source.LastRunUtc;
+                stored.LastOutcome = source.LastOutcome;
+            }
+            db.SaveChanges();
+        }
+    }
+
     public ScheduleEntry? Get(string id)
     {
         using var db = Database.CreateDbContext();

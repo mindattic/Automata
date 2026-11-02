@@ -318,7 +318,7 @@ public class ReplayEngine
             if (effective.AllowLlmRepair && repairService != null && IsRepairable(step.Action))
             {
                 log.LogInformation("Step '{Label}' unresolvable ({Reason}) — attempting LLM repair", step.Label, reason);
-                if (await TryLlmRepairAsync(step, browser, ct))
+                if (await TryLlmRepairAsync(step, value, browser, ct))
                     return (StepStatus.Passed,
                         $"{reason} — completed via LLM repair; consider re-recording this step", null);
                 return (StepStatus.Failed, $"{reason}; LLM repair also failed", null);
@@ -483,7 +483,7 @@ public class ReplayEngine
 
     /// <summary>True when the LLM loop performed at least one successful tool action and
     /// reported no errors — the closest verifiable proxy for "the step got done".</summary>
-    private async Task<bool> TryLlmRepairAsync(Step step, IBrowserSurface browser, CancellationToken ct)
+    private async Task<bool> TryLlmRepairAsync(Step step, string? value, IBrowserSurface browser, CancellationToken ct)
     {
         var hints = new List<string>();
         if (step.Target?.NearbyLabelText != null) hints.Add($"its label reads \"{step.Target.NearbyLabelText}\"");
@@ -493,7 +493,9 @@ public class ReplayEngine
 
         var instruction =
             $"The step to perform: {step.Action} — \"{step.Label}\"." +
-            (string.IsNullOrEmpty(step.Value) ? "" : $" The value involved: \"{step.Value}\".") +
+            // The RESOLVED value, not the literal: a step bound to an input or an earlier step's
+            // output has nothing (or a stale placeholder) in step.Value.
+            (string.IsNullOrEmpty(value) ? "" : $" The value involved: \"{value}\".") +
             (hints.Count > 0 ? $" The original element: {string.Join("; ", hints)}." : "");
 
         var ctx = new BrowserOperatorContext { Browser = browser };

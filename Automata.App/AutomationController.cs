@@ -645,33 +645,46 @@ public sealed class AutomationController
         collectionCancelRequested = false;
         await execPanelScript("window.ssPanel.onRunState(true)");
 
-        currentRun = runs.CreateRun(RunTargetKind.Collection, collection.Id, collection.Name);
-        var tasks = store.LoadTasks(collectionId);
-        // Collection-scope policy: whether one task failing ends the collection. The floor is
-        // true (keep going), which is what this loop has always done.
-        var policy = EngineSettingsResolver.Resolve(settingsStore.Load(), collection.Settings);
-        var carried = new TaskPipeline.Carried();
-        var passed = 0;
-        foreach (var task in tasks)
+        try
         {
-            if (collectionCancelRequested) break;
-            await execPanelScript($"window.ssPanel.onTaskStarted({JsonSerializer.Serialize(new { taskId = task.Id, collectionId }, AutomataJson.Options)})");
-            if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false, carried: carried))
+            currentRun = runs.CreateRun(RunTargetKind.Collection, collection.Id, collection.Name);
+            var tasks = store.LoadTasks(collectionId);
+            // Collection-scope policy: whether one task failing ends the collection. The floor is
+            // true (keep going), which is what this loop has always done.
+            var policy = EngineSettingsResolver.Resolve(settingsStore.Load(), collection.Settings);
+            var carried = new TaskPipeline.Carried();
+            var passed = 0;
+            foreach (var task in tasks)
             {
-                passed++;
+                if (collectionCancelRequested) break;
+                await execPanelScript($"window.ssPanel.onTaskStarted({JsonSerializer.Serialize(new { taskId = task.Id, collectionId }, AutomataJson.Options)})");
+                if (await RunEngineAsync(task.Id, allowRepair, gap: null, ownsLifecycle: false, carried: carried))
+                {
+                    passed++;
+                }
+                else if (!policy.ContinueOnTaskError)
+                {
+                    await logAsync($"⏹ Stopping '{collection.Name}' after '{task.Name}' failed — continue-on-task-error is off for this collection.");
+                    break;
+                }
             }
-            else if (!policy.ContinueOnTaskError)
-            {
-                await logAsync($"⏹ Stopping '{collection.Name}' after '{task.Name}' failed — continue-on-task-error is off for this collection.");
-                break;
-            }
-        }
 
-        var collectionSummary = $"{passed}/{tasks.Count} task(s) passed.";
-        await logAsync($"▶ Collection '{collection.Name}': {collectionSummary}");
-        runs.CompleteRun(currentRun.RunId, passed == tasks.Count, collectionSummary);
-        currentRun = null;
-        runActive = false;
+            var collectionSummary = $"{passed}/{tasks.Count} task(s) passed.";
+            await logAsync($"▶ Collection '{collection.Name}': {collectionSummary}");
+            runs.CompleteRun(currentRun.RunId, passed == tasks.Count, collectionSummary);
+        }
+        catch (Exception ex)
+        {
+            // Fire-and-forget caller: without this the failure vanished and runActive stayed true,
+            // refusing every later run until the app was restarted.
+            await logAsync($"⚠ Collection '{collection.Name}' stopped unexpectedly — {ex.Message}");
+            if (currentRun != null) runs.CompleteRun(currentRun.RunId, false, $"Stopped unexpectedly: {ex.Message}");
+        }
+        finally
+        {
+            currentRun = null;
+            runActive = false;
+        }
         await execPanelScript("window.ssPanel.onRunState(false)");
         await PushRunsAsync();
     }
@@ -826,9 +839,19 @@ public sealed class AutomationController
 
         if (healed)
         {
-            store.SaveTask(task);
-            await logAsync("Self-healed fingerprints saved back into the task.");
-            await PushTaskAsync(task);
+            // Guarded: the task's collection can be deleted while the run is in flight, and
+            // SaveTask then throws — which used to escape past the runActive reset below and
+            // leave every later Run refused with "a run is already in progress".
+            try
+            {
+                store.SaveTask(task);
+                await logAsync("Self-healed fingerprints saved back into the task.");
+                await PushTaskAsync(task);
+            }
+            catch (Exception ex)
+            {
+                await logAsync($"⚠ Self-healed fingerprints could not be saved: {ex.Message}");
+            }
         }
 
         // Keep runActive/"running" true while a gap-recording session is now armed (mid-tree

@@ -129,7 +129,21 @@ public static class GherkinFlowCompiler
                     $"no step matches \"{step.Text.Trim()}\" — see the vocabulary for what is understood"));
                 continue;
             }
-            var draft = matched.Value.Definition.Build(matched.Value.Match);
+            StepDraft draft;
+            try
+            {
+                draft = matched.Value.Definition.Build(matched.Value.Match);
+            }
+            catch (Exception ex) when (ex is FormatException or OverflowException)
+            {
+                // The phrase matched but a value in it cannot be used — "I wait until 25:00", or
+                // a duration too large to hold. A diagnostic, like every other mistake in the
+                // text, rather than an exception that aborts the whole compile (and the drafting
+                // retry loop that feeds diagnostics back to the model).
+                diagnostics.Add(new FlowDiagnostic(FlowSeverity.Error, step.Location.Line, step.Location.Column,
+                    $"\"{step.Text.Trim()}\" has a value that cannot be used: {ex.Message}"));
+                continue;
+            }
             draft.Step.Id = StoreUtil.NewId();
             RepointSelfReference(draft.Step);
             drafts.Add((draft, step.Location));
