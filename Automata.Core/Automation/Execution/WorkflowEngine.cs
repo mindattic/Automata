@@ -609,6 +609,7 @@ public sealed partial class WorkflowEngine
                 state.Passed++;
                 state.PushInputs(ReplayEngine.SeedInputs(target, supplied));
                 var healedBefore = state.Healed;
+                var targetsBefore = CollectionStore.SnapshotTargets(target);
                 try
                 {
                     // Another task's tree, so an index path from THIS task's root would not
@@ -631,12 +632,23 @@ public sealed partial class WorkflowEngine
                     var count = state.Healed - healedBefore;
                     // The callee's collection can be deleted while this run is in flight; a repair
                     // that cannot be written back is not worth killing the caller's run over.
-                    string? saveError = null;
-                    try { collections.SaveTask(target); }
-                    catch (InvalidOperationException ex) { saveError = ex.Message; }
-                    yield return new StepEvent.Log(saveError == null
-                        ? $"{count} step(s) self-healed in '{target.Name}' — saved back into it."
-                        : $"{count} step(s) self-healed in '{target.Name}', but could not be saved: {saveError}");
+                    // Merged into the callee as stored now, so one deleted or edited during the
+                    // run is neither un-deleted nor reverted.
+                    string message;
+                    try
+                    {
+                        var saved = collections.SaveHealedTargets(target, targetsBefore);
+                        message = saved.TaskGone
+                            ? $"{count} step(s) self-healed in '{target.Name}', but it was deleted during the run — not saved."
+                            : saved.Skipped > 0
+                                ? $"{count} step(s) self-healed in '{target.Name}' — {saved.Applied} saved back into it, {saved.Skipped} not (edited or removed during the run)."
+                                : $"{count} step(s) self-healed in '{target.Name}' — saved back into it.";
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        message = $"{count} step(s) self-healed in '{target.Name}', but could not be saved: {ex.Message}";
+                    }
+                    yield return new StepEvent.Log(message);
                 }
 
                 if (state.Stop) yield break;

@@ -248,6 +248,7 @@ public sealed class RunnerCliDispatcher
             // that happened somewhere else, and say so in the log.
             var ownSteps = Step.Flatten(task.Steps).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
             var healed = new HashSet<string>(StringComparer.Ordinal);
+            var targetsBefore = CollectionStore.SnapshotTargets(task);
 
             await foreach (var evt in engine.RunAsync(
                 task, options, surface, ct, index == 0 ? resumeFirst : null))
@@ -294,9 +295,20 @@ public sealed class RunnerCliDispatcher
                 // as "running" forever and, on a tick, skip every entry still to come.
                 try
                 {
-                    collections.SaveTask(task);
-                    output.WriteLine(
-                        $"    {healed.Count} step(s) self-healed — saved back into '{task.Name}'.");
+                    // Merged into the task as stored now: saving this run's copy whole un-deleted
+                    // a task deleted in the app mid-run and reverted edits made to it meanwhile.
+                    var saved = collections.SaveHealedTargets(task, targetsBefore);
+                    if (saved.TaskGone)
+                        output.WriteLine(
+                            $"    {healed.Count} step(s) self-healed, but '{task.Name}' was deleted during the run — not saved.");
+                    else
+                    {
+                        output.WriteLine(
+                            $"    {saved.Applied} step(s) self-healed — saved back into '{task.Name}'.");
+                        if (saved.Skipped > 0)
+                            output.WriteLine(
+                                $"    {saved.Skipped} self-healed step(s) not saved — edited or removed during the run.");
+                    }
                 }
                 catch (InvalidOperationException ex)
                 {

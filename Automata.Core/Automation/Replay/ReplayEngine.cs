@@ -55,6 +55,11 @@ public class ReplayEngine
     internal const int MinZoomPercent = 25;
     internal const int MaxZoomPercent = 500;
 
+    /// <summary>Why a masked step that could not be found was not handed to LLM repair: its value
+    /// (and the label around it) never goes to a third-party model.</summary>
+    internal const string MaskedNeedsManualRepair =
+        "LLM repair skipped because this step is masked — it needs manual repair";
+
     /// <summary>What a masked step reports instead of its value. Total withholding, not a scrub:
     /// a partial scrub that misses one interpolation is worse than a generic message.</summary>
     private const string Redacted = "••••••";
@@ -190,8 +195,12 @@ public class ReplayEngine
         if (step.Masked)
         {
             if (extracted != null) extracted = Redacted;
+            // The manual-repair notice quotes nothing from the step, so it survives the redaction —
+            // it is the one thing the person needs to know to fix it.
             message = status == StepStatus.Failed
-                ? $"{step.Action} failed — details withheld because this step is masked"
+                ? $"{step.Action} failed — details withheld because this step is masked" +
+                  (message?.EndsWith(MaskedNeedsManualRepair, StringComparison.Ordinal) == true
+                      ? $"; {MaskedNeedsManualRepair}" : "")
                 : null;
         }
 
@@ -317,6 +326,10 @@ public class ReplayEngine
             // Last resort: hand this one step's intent to the LLM tool loop.
             if (effective.AllowLlmRepair && repairService != null && IsRepairable(step.Action))
             {
+                // A masked step's value never leaves the machine: the repair prompt would carry it
+                // (and the label/hints around it) to a third-party LLM. Refuse rather than leak.
+                if (step.Masked)
+                    return (StepStatus.Failed, $"{reason}; {MaskedNeedsManualRepair}", null);
                 log.LogInformation("Step '{Label}' unresolvable ({Reason}) — attempting LLM repair", step.Label, reason);
                 if (await TryLlmRepairAsync(step, value, browser, ct))
                     return (StepStatus.Passed,

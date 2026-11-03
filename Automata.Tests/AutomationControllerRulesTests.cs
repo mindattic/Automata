@@ -124,6 +124,7 @@ public class AutomationControllerRulesTests
     public void AnIntervalUnderOneMinuteIsRefused()
     {
         Assert.That(Validate(Entry("e1", Interval(0))), Does.Contain("at least one minute"));
+        Assert.That(Validate(Entry("e1", Interval(59))), Does.Contain("at least one minute"));
     }
 
     [Test]

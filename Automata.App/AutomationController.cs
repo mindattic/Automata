@@ -768,6 +768,7 @@ public sealed class AutomationController
         // its repairs itself — crediting them here would rewrite this task's file for a heal that
         // happened in another one, and announce it as this task's.
         var ownSteps = Step.Flatten(task.Steps).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        var targetsBefore = CollectionStore.SnapshotTargets(task);
         var healed = false;
         var success = false;
 
@@ -842,11 +843,22 @@ public sealed class AutomationController
             // Guarded: the task's collection can be deleted while the run is in flight, and
             // SaveTask then throws — which used to escape past the runActive reset below and
             // leave every later Run refused with "a run is already in progress".
+            // Merged into the task as stored NOW: saving the run's copy whole un-deleted a task
+            // deleted mid-run and reverted any edit made to it while it ran.
             try
             {
-                store.SaveTask(task);
-                await logAsync("Self-healed fingerprints saved back into the task.");
-                await PushTaskAsync(task);
+                var saved = store.SaveHealedTargets(task, targetsBefore);
+                if (saved.TaskGone)
+                    await logAsync("Self-healed fingerprints not saved — the task was deleted during the run.");
+                else
+                {
+                    if (saved.Applied > 0)
+                        await logAsync($"Self-healed fingerprints saved back into the task ({saved.Applied} step(s)).");
+                    if (saved.Skipped > 0)
+                        await logAsync($"⚠ {saved.Skipped} self-healed fingerprint(s) not saved — those steps were edited or removed during the run.");
+                    if (saved.Applied > 0 && store.GetTask(task.Id) is { } current)
+                        await PushTaskAsync(current);
+                }
             }
             catch (Exception ex)
             {

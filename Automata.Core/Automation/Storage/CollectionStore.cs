@@ -1,3 +1,4 @@
+using AutoWebNav;
 using Automata.Core.Automation.Data;
 using Automata.Core.Automation.Model;
 using Microsoft.EntityFrameworkCore;
@@ -263,6 +264,59 @@ public sealed class CollectionStore
             tx.Commit();
         }
     }
+
+    /// <summary>
+    /// Each step's target fingerprint, serialized, keyed by step id — taken before a run so
+    /// <see cref="SaveHealedTargets"/> can tell which fingerprints the run refreshed and whether
+    /// anyone else changed them meanwhile.
+    /// </summary>
+    public static Dictionary<string, string> SnapshotTargets(TaskDefinition task) =>
+        Step.Flatten(task.Steps)
+            .GroupBy(s => s.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => TargetJson(g.First().Target), StringComparer.Ordinal);
+
+    /// <summary>What <see cref="SaveHealedTargets"/> did.</summary>
+    /// <param name="TaskGone">The task was deleted while the run was in flight; nothing was saved.</param>
+    /// <param name="Applied">Refreshed fingerprints written into the stored task.</param>
+    /// <param name="Skipped">Refreshed fingerprints dropped because that step was edited or
+    /// removed during the run.</param>
+    public readonly record struct HealSaveResult(bool TaskGone, int Applied, int Skipped);
+
+    /// <summary>
+    /// Writes the fingerprints a run self-healed back into the task AS IT IS STORED NOW, not the
+    /// copy the run started from. Saving the run's copy whole resurrected a task deleted during
+    /// the run (saving under a hidden id un-hides it) and reverted every edit made to it
+    /// meanwhile. Here a deleted task is left deleted, and a healed fingerprint is applied only
+    /// when that step still exists and its stored target is still the one the run started with.
+    /// </summary>
+    public HealSaveResult SaveHealedTargets(TaskDefinition ranTask, IReadOnlyDictionary<string, string> targetsBefore)
+    {
+        var healed = Step.Flatten(ranTask.Steps)
+            .Where(s => targetsBefore.TryGetValue(s.Id, out var before) && before != TargetJson(s.Target))
+            .GroupBy(s => s.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        if (healed.Count == 0) return new HealSaveResult(false, 0, 0);
+
+        lock (saveGate)
+        {
+            var current = GetTask(ranTask.Id);
+            if (current == null) return new HealSaveResult(true, 0, healed.Count);
+
+            var applied = 0;
+            foreach (var step in Step.Flatten(current.Steps))
+            {
+                if (!healed.TryGetValue(step.Id, out var ran)) continue;
+                if (TargetJson(step.Target) != targetsBefore[step.Id]) continue;
+                step.Target = ran.Target;
+                applied++;
+            }
+            if (applied > 0) SaveTask(current);
+            return new HealSaveResult(false, applied, healed.Count - applied);
+        }
+    }
+
+    private static string TargetJson(ElementFingerprint? target) =>
+        target == null ? "" : System.Text.Json.JsonSerializer.Serialize(target);
 
     /// <summary>Hides a task and takes it out of its collection's order. Nothing is erased.</summary>
     public void DeleteTask(string taskId)

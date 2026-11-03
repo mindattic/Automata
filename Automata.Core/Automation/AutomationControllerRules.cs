@@ -66,7 +66,7 @@ public static class AutomationControllerRules
                     break;
 
                 case TriggerKind.Interval:
-                    if (trigger.IntervalSeconds is not > 0)
+                    if (trigger.IntervalSeconds is not >= 60)
                         return "An interval needs to be at least one minute.";
                     break;
 
