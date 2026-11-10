@@ -49,3 +49,7 @@ _Nothing recorded yet._
 | AUT-T26 | 2026-10-24 | docs | closed | Update USER_STORIES.md | — |
 | AUT-T27 | 2026-10-31 | feature | closed | LAMP: move Automata's app-level settings and keys to MindAttic.Vault.Desktop (manifest, LoadOrSeed, shared named keys, cog opens Vault) | fab8d57 LampSettingsTests (31/31) |
 | AUT-T28 | 2026-10-31 | docs | closed | Update USER_STORIES.md | — |
+| AUT-T29 | 2026-11-02 | docs | open | Adopt MindAttic.Agency docs-site pipeline, publish README to GitHub Pages (HOUSE-LAW-14) | — |
+| AUT-T30 | 2026-11-02 | fix | closed | Bughunt sweep, two passes: find and fix real bugs across tracked source (user request 2026-11-02) | — |
+| AUT-T31 | 2026-11-02 | fix | closed | Fix the open items the 2026-11-02 bughunt left for decision (masked-step LLM repair, end-of-run heal save, interval minimum, others) | — |
+| AUT-T32 | 2026-11-10 | chore | closed | Crash recovery: commit the command-catalog sync (.agent/commands/*.md) and regenerated docs/USER_STORIES.md left uncommitted by the session crash | — |
