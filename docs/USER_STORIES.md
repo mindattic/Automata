@@ -43,13 +43,15 @@ _Nothing recorded yet._
 | AUT-T20 | 2026-10-18 | chore | open | Stop registering the MindAttic.Automata.Tick scheduled task (SchTasksRegistrar / IScheduledTaskRegistrar, App start-up); automata-runner keeps its 'tick' command for WatchDog to call (job now in MindAttic.WatchDog M.WD-T4) | scheduled-task consolidation 2026-10-18 |
 | AUT-T21 | 2026-10-19 | chore | wont-do | Convert tracked source files to LF line endings via .gitattributes, per HOUSE-LAW-13 (low priority) | — |
 | AUT-T22 | 2026-10-19 | fix | closed | Bump AutoWebNav/AutoWebNav.WebView2 4.0.0 -> 5.0.0 to pick up the off-screen-lane popup-window fix; rebuilt Automata.Runner Debug so the Automata.Tick scheduled task stops flashing small windows every 5 minutes | c86bac2 |
-| AUT-T23 | 2026-10-20 | docs | open | Publish Automata docs to GitHub Pages via the shared Agency DocFX pipeline: run adopt-docs-site.ps1 (README.md as home page, docs/*.md as articles, API reference only where the code builds in CI), enable Pages with build_type=workflow, set the repo homepage URL, retire tools/build-readme.ps1 and README.htm, confirm the docs Actions run is green and https://mindattic.github.io/Automata/ returns 200. Depends on MAT-T8. | — |
+| AUT-T23 | 2026-10-20 | docs | closed | Publish Automata docs to GitHub Pages via the shared Agency DocFX pipeline: run adopt-docs-site.ps1 (README.md as home page, docs/*.md as articles, API reference only where the code builds in CI), enable Pages with build_type=workflow, set the repo homepage URL, retire tools/build-readme.ps1 and README.htm, confirm the docs Actions run is green and https://mindattic.github.io/Automata/ returns 200. Depends on MAT-T8. | — |
 | AUT-T24 | 2026-10-20 | chore | closed | Move to MindAttic.Components.Wpf 19.0.0 (Mc->Ma rename): bump the PackageReference and confirm the build; a scan found no Mc-prefixed style/class usages of its own to rename | 6321c50 |
 | AUT-T25 | 2026-10-22 | docs | closed | Update USER_STORIES.md | — |
 | AUT-T26 | 2026-10-24 | docs | closed | Update USER_STORIES.md | — |
 | AUT-T27 | 2026-10-31 | feature | closed | LAMP: move Automata's app-level settings and keys to MindAttic.Vault.Desktop (manifest, LoadOrSeed, shared named keys, cog opens Vault) | fab8d57 LampSettingsTests (31/31) |
 | AUT-T28 | 2026-10-31 | docs | closed | Update USER_STORIES.md | — |
-| AUT-T29 | 2026-11-02 | docs | open | Adopt MindAttic.Agency docs-site pipeline, publish README to GitHub Pages (HOUSE-LAW-14) | — |
+| AUT-T29 | 2026-11-02 | docs | closed | Adopt MindAttic.Agency docs-site pipeline, publish README to GitHub Pages (HOUSE-LAW-14) | — |
 | AUT-T30 | 2026-11-02 | fix | closed | Bughunt sweep, two passes: find and fix real bugs across tracked source (user request 2026-11-02) | — |
 | AUT-T31 | 2026-11-02 | fix | closed | Fix the open items the 2026-11-02 bughunt left for decision (masked-step LLM repair, end-of-run heal save, interval minimum, others) | — |
 | AUT-T32 | 2026-11-10 | chore | closed | Crash recovery: commit the command-catalog sync (.agent/commands/*.md) and regenerated docs/USER_STORIES.md left uncommitted by the session crash | — |
+| AUT-T33 | 2026-11-10 | chore | closed | Adopt the shared docs-site pipeline: turn on GitHub Pages | — |
+| AUT-T34 | 2026-11-17 | docs | closed | Update USER_STORIES.md | — |
