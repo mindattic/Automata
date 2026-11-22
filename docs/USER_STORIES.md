@@ -55,3 +55,5 @@ _Nothing recorded yet._
 | AUT-T32 | 2026-11-10 | chore | closed | Crash recovery: commit the command-catalog sync (.agent/commands/*.md) and regenerated docs/USER_STORIES.md left uncommitted by the session crash | — |
 | AUT-T33 | 2026-11-10 | chore | closed | Adopt the shared docs-site pipeline: turn on GitHub Pages | — |
 | AUT-T34 | 2026-11-17 | docs | closed | Update USER_STORIES.md | — |
+| AUT-T35 | 2026-11-21 | feature | wont-do | New Automata collection that drives Midjourney (upload female reference portrait + prompt, submit, wait, download candidates) looped over Unity.GridGame's 70-hero-class manifest | — |
+| AUT-T36 | 2026-11-22 | docs | closed | 2026-11-22 morning | — |
