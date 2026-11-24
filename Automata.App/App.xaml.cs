@@ -3,7 +3,7 @@ using Automata.Core.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 #if MINDATTIC_CAPTURE
-using MindAttic.Capture.Wpf;
+using MindAttic.Media.Capture.Wpf;
 #endif
 using MindAttic.Vault.Configuration;
 using MindAttic.Vault.DependencyInjection;

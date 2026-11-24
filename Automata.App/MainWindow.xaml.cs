@@ -439,8 +439,8 @@ public partial class MainWindow : Window
 
 #if MINDATTIC_CAPTURE
         // The panel page can call window.mindattic.capture.screenshot()/raise(); only our own panel, not target sites.
-        await MindAttic.Capture.WebView2.CaptureWebView2.AttachAsync(ControlPanel.CoreWebView2,
-            new MindAttic.Capture.WebView2.WebViewBridgeOptions { AllowedOrigins = { "https://automata.local" } });
+        await MindAttic.Media.Capture.WebView2.CaptureWebView2.AttachAsync(ControlPanel.CoreWebView2,
+            new MindAttic.Media.Capture.WebView2.WebViewBridgeOptions { AllowedOrigins = { "https://automata.local" } });
 #endif
 
         var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");

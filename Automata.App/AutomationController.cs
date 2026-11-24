@@ -1,7 +1,7 @@
 using System.Diagnostics;
 #if MINDATTIC_CAPTURE
-using CaptureHooks = MindAttic.Capture.Capture;
-using CaptureData = MindAttic.Capture.CaptureData;
+using CaptureHooks = MindAttic.Media.Capture.Capture;
+using CaptureData = MindAttic.Media.Capture.CaptureData;
 #endif
 using System.IO;
 using System.Runtime.InteropServices;
