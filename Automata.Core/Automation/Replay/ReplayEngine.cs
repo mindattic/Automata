@@ -169,8 +169,11 @@ public class ReplayEngine
             (status, message, extracted) = await PerformAsync(step, options, effective, (value, url), browser, state, ct);
             if (status != StepStatus.Failed || attempt >= attempts) break;
 
-            var delayMs = (int)Math.Round(
-                effective.Retry.DelayMs * Math.Pow(effective.Retry.BackoffMultiplier, attempt - 1));
+            // Clamped before the int cast: with a multiplier and many attempts the product passes
+            // int.MaxValue, the cast wraps negative, and Task.Delay throws (or, at exactly -1,
+            // waits for ever) — a retry policy must not be able to fault the run it protects.
+            var backoff = effective.Retry.DelayMs * Math.Pow(effective.Retry.BackoffMultiplier, attempt - 1);
+            var delayMs = double.IsNaN(backoff) ? 0 : (int)Math.Round(Math.Clamp(backoff, 0, 3_600_000));
             // Redacted HERE and not only at the end. This line is emitted from inside the retry
             // loop, and several failure messages quote the value — "value read back as 'x'",
             // "expected text 'x' but found 'y'" — so a masked step that failed and retried wrote
