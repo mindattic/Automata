@@ -831,11 +831,20 @@ public sealed class AutomationController
             await logAsync($"⚠ Unexpected failure — {ex.Message}");
         }
 
-        if (outputs.Count > 0) runs.SaveOutputs(run.RunId, task.Id, outputs);
-        if (ownsRun)
+        // Guarded like the self-heal save below: a store failure here used to escape past the
+        // runActive reset and refuse every later Run until the app restarted.
+        try
         {
-            runs.CompleteRun(run.RunId, success, success ? "Passed." : "Failed.");
-            await PushRunsAsync();
+            if (outputs.Count > 0) runs.SaveOutputs(run.RunId, task.Id, outputs);
+            if (ownsRun)
+            {
+                runs.CompleteRun(run.RunId, success, success ? "Passed." : "Failed.");
+                await PushRunsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            await logAsync($"⚠ The run's record could not be saved: {ex.Message}");
         }
 
         if (healed)
