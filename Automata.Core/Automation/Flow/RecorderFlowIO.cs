@@ -37,8 +37,8 @@ public static class RecorderFlowIO
                 [$"not valid JSON: {ex.Message}"]);
         }
 
-        var flow = root?.AsObject();
-        var title = flow?["title"]?.GetValue<string>();
+        var flow = root as JsonObject;
+        var title = Str(flow?["title"]);
         var task = new TaskDefinition
         {
             Name = taskName ?? (string.IsNullOrWhiteSpace(title) ? "Imported recording" : title!),
@@ -46,15 +46,15 @@ public static class RecorderFlowIO
             ModifiedUtc = DateTimeOffset.UtcNow,
         };
 
-        var steps = flow?["steps"]?.AsArray();
+        var steps = flow?["steps"] as JsonArray;
         if (steps == null)
             return new RecorderImportResult(task, ["no \"steps\" array — is this a Recorder export?"]);
 
         foreach (var node in steps)
         {
-            var step = node?.AsObject();
+            var step = node as JsonObject;
             if (step == null) continue;
-            var type = step["type"]?.GetValue<string>() ?? "";
+            var type = Str(step["type"]) ?? "";
             var converted = ConvertStep(type, step, warnings);
             if (converted != null)
             {
@@ -73,13 +73,17 @@ public static class RecorderFlowIO
         return new RecorderImportResult(task, warnings);
     }
 
+    /// <summary>A string value, or null when the node is missing or not a string (a hand-edited file may hold a number).</summary>
+    private static string? Str(JsonNode? node) =>
+        node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
     private static Step? ConvertStep(string type, JsonObject step, List<string> warnings)
     {
         switch (type.ToLowerInvariant())
         {
             case "navigate":
             {
-                var url = step["url"]?.GetValue<string>() ?? "";
+                var url = Str(step["url"]) ?? "";
                 return new Step
                 {
                     Action = StepAction.Navigate,
@@ -93,7 +97,7 @@ public static class RecorderFlowIO
 
             case "change":
             {
-                var value = step["value"]?.GetValue<string>() ?? "";
+                var value = Str(step["value"]) ?? "";
                 var converted = Targeted(StepAction.SetValue, step, warnings, "Set");
                 if (converted != null) converted.Value = value;
                 return converted;
@@ -101,7 +105,7 @@ public static class RecorderFlowIO
 
             case "keydown":
             {
-                var key = step["key"]?.GetValue<string>() ?? "";
+                var key = Str(step["key"]) ?? "";
                 if (!key.Equals("Enter", StringComparison.OrdinalIgnoreCase))
                 {
                     warnings.Add($"keyDown '{key}' has no equivalent — only Enter is replayable as a key press");
@@ -132,7 +136,7 @@ public static class RecorderFlowIO
 
     private static Step? Targeted(StepAction action, JsonObject step, List<string> warnings, string verb)
     {
-        var fingerprint = FingerprintFrom(step["selectors"]?.AsArray(), warnings);
+        var fingerprint = FingerprintFrom(step["selectors"] as JsonArray, warnings);
         if (fingerprint == null)
         {
             warnings.Add($"a {action} step had no usable selector and was skipped");
@@ -156,8 +160,8 @@ public static class RecorderFlowIO
         {
             // An alternative is either a string or an array of strings (a shadow-DOM chain).
             var parts = alternative is JsonArray chain
-                ? chain.Select(c => c?.GetValue<string>()).Where(c => c != null).Select(c => c!).ToList()
-                : alternative?.GetValue<string>() is { } single ? [single] : [];
+                ? chain.Select(c => Str(c)).Where(c => c != null).Select(c => c!).ToList()
+                : Str(alternative) is { } single ? [single] : [];
 
             // A chain is one selector per shadow boundary, outermost first, so the LAST part names
             // the element and every part before it names a host on the way to it. The resolver
