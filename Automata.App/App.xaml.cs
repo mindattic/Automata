@@ -77,7 +77,7 @@ public partial class App : Application
 
 #if MINDATTIC_CAPTURE
         // Debug builds: -capture video records the window from here to exit; -capture screen 5 takes a PNG every
-        // 5 s. Output: R:\MindAttic\Capture\Automata\<timestamp>.<ext>. Hooks raised in AutomationController go through capture.json.
+        // 5 s. Output: R:\MindAttic\Media\Capture\Automata\<timestamp>.<ext>. Hooks raised in AutomationController go through capture.json.
         CaptureWpf.Init(this, e.Args);
 #endif
 
