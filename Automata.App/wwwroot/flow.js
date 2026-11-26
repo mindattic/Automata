@@ -22,7 +22,7 @@ export function requestDraft() {
     post('draftFlow', { description: description });
 }
 
-function resetDraftButton() {
+export function resetDraftButton() {
     var btn = $('btn-draft');
     if (!btn) return;
     btn.disabled = false;

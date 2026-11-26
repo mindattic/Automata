@@ -12,7 +12,7 @@ import { renderEditor } from './editor.js';
 import { renderRuns } from './runs.js';
 import { renderSchedule, onSchedulePushed } from './schedule.js';
 import { renderDemosDialog } from './demos.js';
-import { showDraft, showFeatureView } from './flow.js';
+import { showDraft, showFeatureView, resetDraftButton } from './flow.js';
 import { maybeStartTutorial, advanceTutorial } from './tutorial.js';
 import { advanceTour, onTourRunFinished } from './tour.js';
 import { maybeAskForKey } from './keysetup.js';
@@ -192,6 +192,11 @@ window.ssPanel = {
     },
     onFlowDraft: function (draft) {
         showDraft(draft || {});
+    },
+    // The host could not produce a draft (the LLM call threw): nothing will be shown, so the
+    // button 'Drafting…' put into its busy state has to be released here.
+    onDraftFailed: function () {
+        resetDraftButton();
     },
     onFeatureView: function (view) {
         showFeatureView(view || {});

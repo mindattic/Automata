@@ -1405,6 +1405,7 @@ public sealed class AutomationController
         {
             pendingDraft = null;
             await logAsync($"⚠ Drafting failed: {ex.Message}");
+            await execPanelScript("window.ssPanel.onDraftFailed()");
         }
     }
 
