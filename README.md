@@ -300,10 +300,13 @@ dotnet test Automata.Tests
 ### Run from source
 
 ```powershell
-.\run.ps1 -Launch
+.\run.ps1                        # the menu: 1) Redeploy  2) Run Debug  3) Run Release
+.\run.ps1 -Redeploy -RunRelease  # Deploy & Run (menu pick 13)
+.\run.ps1 -RunRelease            # Run the installed copy, no build
+.\run.ps1 -Redeploy -DryRun      # print what would be built and launched
 ```
 
-`run.ps1` (repo root) publishes to `C:\Apps\Automata\` (a convention specific to the maintainer's own machine); `-Launch` then opens that deployed copy. It only stops the running instance and republishes when source has changed since the last deploy, so an unchanged repo is a fast no-op; `.\run.ps1 -Force` forces a clean bin/obj rebuild. Every run also writes `C:\Apps\Automata\run.bat`, the desktop shortcut target (`.\run.ps1 -LauncherOnly` writes just that, without building): a double-click opens a menu, **1) Deploy & Run** (runs `run.ps1 -Force`, then starts the exe) or **2) Run** (starts the already-deployed exe as is), passing its arguments through either way. `dotnet run --project Automata.App` works too for a quick dev run. Deploying never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
+`run.ps1` (repo root) is the MindAttic standard run menu; `run.bat` beside it opens the same menu on a double-click and passes any arguments through. **Redeploy** publishes `Automata.App` and `Automata.Runner` (`automata-runner.exe`) into `R:\MindAttic\Apps\Automata\Debug` (framework-dependent) and `R:\MindAttic\Apps\Automata\Release` (self-contained single-file exes, with `wwwroot` as loose files beside them), stopping any copy running from that folder first, then runs `Automata.App.exe --write-settings-manifest` in each. **Run Debug** starts the Debug copy in the console (extra arguments pass through); **Run Release** starts the Release copy as a double-click would. `dotnet run --project Automata.App` works too for a quick dev run. Deploying never touches the WebView2 profile folders under `%LocalAppData%\MindAttic\Automata\`, so site logins survive redeploys.
 
 ### Publish a distributable build
 
