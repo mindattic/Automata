@@ -198,6 +198,37 @@ public sealed class RunnerCliDispatcher
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? inputs = null)
     {
+        try
+        {
+            return await RunTaskListCoreAsync(
+                run, kind, targetName, tasks, alreadyPassed, totalTasks, resumeFirst, resumeCount, ct, inputs);
+        }
+        catch (Exception ex)
+        {
+            // A browser that would not open, a store that threw, a cancel: without this the run
+            // record stayed "running" for ever, because only the normal exit completes it.
+            try
+            {
+                runs.CompleteRun(run.RunId, false,
+                    ex is OperationCanceledException ? "cancelled" : $"faulted: {ex.Message}");
+            }
+            catch (Exception) { /* the original exception is the one worth reporting */ }
+            throw;
+        }
+    }
+
+    private async Task<int> RunTaskListCoreAsync(
+        RunManifest run,
+        RunTargetKind kind,
+        string targetName,
+        List<TaskDefinition> tasks,
+        int alreadyPassed,
+        int totalTasks,
+        ParkCheckpoint? resumeFirst,
+        int resumeCount,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? inputs)
+    {
         var global = settings.Load();
 
         // ONE browser for the whole run, opened on first use and handed to every task in turn.
@@ -473,7 +504,17 @@ public sealed class RunnerCliDispatcher
         foreach (var entry in parked.Due(clock.UtcNow))
         {
             if (ct.IsCancellationRequested) break;
-            if (await ResumeParkedAsync(entry, ct) != RunnerExitCode.Success) anyFailed = true;
+            try
+            {
+                if (await ResumeParkedAsync(entry, ct) != RunnerExitCode.Success) anyFailed = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Its checkpoint is already removed and its run completed as faulted; the rest of
+                // the tick (other parked runs, everything scheduled) still has to happen.
+                output.WriteLine($"error: resuming {Short(entry.RunId)}: {ex.Message}");
+                anyFailed = true;
+            }
             resumed++;
         }
 
@@ -528,7 +569,19 @@ public sealed class RunnerCliDispatcher
             if (!started.Add(current.Id)) continue;
 
             output.WriteLine($"Due: {current.Name}");
-            var code = await RunTargetAsync(current, ct, trigger);
+            int code;
+            try
+            {
+                code = await RunTargetAsync(current, ct, trigger);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One entry faulting (its browser would not open, its task vanished) must not skip
+                // every entry after it, nor lose the bookkeeping of the ones that already ran —
+                // they would be due again on the very next tick.
+                output.WriteLine($"error: {ex.Message}");
+                code = RunnerExitCode.Fault;
+            }
             var succeeded = code == RunnerExitCode.Success;
             ran++;
             reportFailure(!succeeded);
