@@ -602,6 +602,21 @@ public sealed partial class WorkflowEngine
                             $"could not open '{target.Name}' start URL: {navError}")) yield return e;
                         yield break;
                     }
+
+                    // A fresh document is back at 100%, while the run still believes in the zoom an
+                    // earlier step set (a later navigate step would have restored it; this one did not).
+                    if (state.ZoomPercent != 100)
+                    {
+                        var restored = await BrowserActions.SetZoomAsync(scope.Browser, state.ZoomPercent, ct);
+                        if (!restored.Ok)
+                        {
+                            state.TaskStack.Remove(target.Id);
+                            await foreach (var e in FailAsync(step, scope, state,
+                                $"could not restore the {state.ZoomPercent}% zoom after opening '{target.Name}' start URL: {restored.Error}"))
+                                yield return e;
+                            yield break;
+                        }
+                    }
                 }
 
                 yield return new StepEvent.StepCompleted(step.Id, StepStatus.Passed, $"running '{target.Name}'", null);
