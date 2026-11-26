@@ -2,7 +2,7 @@
 // host echoes the tree back and the UI re-renders from it.
 
 import {
-    $, editorEl, esc, state, selectedTask, findStep, removeStep, saveTask, locateStep,
+    $, editorEl, esc, state, post, selectedTask, findStep, removeStep, saveTask, locateStep,
     ALL_ACTIONS, ACTION_LABEL, DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_WAIT_POLL_MS,
 } from './core.js';
 import { openConfirmModal } from './modal.js';
