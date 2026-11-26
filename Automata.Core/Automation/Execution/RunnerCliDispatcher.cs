@@ -703,13 +703,21 @@ public sealed class RunnerCliDispatcher
                 }
                 else
                 {
-                    if (entries.All(e => e.Id != after))
+                    // 'schedule list' prints only the first 8 characters of an id, and enable, disable
+                    // and remove accept that prefix; --after has to as well, but is stored in full
+                    // because the evaluator matches the whole id.
+                    var matches = entries.Where(e => e.Id == after).ToList();
+                    if (matches.Count == 0 && !string.IsNullOrEmpty(after))
+                        matches = entries.Where(e => e.Id.StartsWith(after, StringComparison.Ordinal)).ToList();
+                    if (matches.Count != 1)
                     {
-                        output.WriteLine($"error: no schedule entry with id '{after}'");
+                        output.WriteLine(matches.Count == 0
+                            ? $"error: no schedule entry with id '{after}'"
+                            : $"error: '{after}' matches {matches.Count} schedule entries — give more of the id");
                         return RunnerExitCode.BadArguments;
                     }
                     trigger.Kind = TriggerKind.AfterEntry;
-                    trigger.AfterEntryId = after;
+                    trigger.AfterEntryId = matches[0].Id;
                 }
 
                 var entry = new ScheduleEntry
