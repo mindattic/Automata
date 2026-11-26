@@ -418,8 +418,10 @@ public sealed class ArchiveService
         // itself has EVERY task id taken, so every one is regenerated — and a runTask step or an
         // input wired to another task in the same export has to follow its own copy rather than
         // call whatever was already in the workspace under that id.
+        var oldTaskIds = new Dictionary<TaskDefinition, string>();
         foreach (var task in tasks)
         {
+            oldTaskIds[task] = task.Id;
             if (!takenTaskIds.Add(task.Id)) // taken, or twice in this one export
             {
                 var fresh = StoreUtil.NewId();
@@ -429,10 +431,15 @@ public sealed class ArchiveService
             }
         }
 
+        var stepMaps = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         foreach (var task in tasks)
         {
             task.CollectionId = collection.Id;
-            StoreUtil.ReidentifySteps(task);
+            stepMaps[oldTaskIds[task]] = StoreUtil.ReidentifySteps(task);
+        }
+        foreach (var task in tasks)
+        {
+            StoreUtil.RemapSiblingSteps(task, stepMaps);
             StoreUtil.RemapTaskIds(task, idMap);
         }
 
@@ -495,6 +502,7 @@ public sealed class ArchiveService
         var idMap = new Dictionary<string, string>(StringComparer.Ordinal);
         var takenTaskIds = TakenTaskIds();
         var regenerated = new HashSet<TaskDefinition>();
+        var regeneratedFrom = new Dictionary<TaskDefinition, string>();
         var collectionNames = store.LoadCollections().Select(c => c.Name).ToList();
         var sections = export.Collections ?? [];
 
@@ -514,12 +522,18 @@ public sealed class ArchiveService
                 SchemaMigration.Migrate(task);
                 if (takenTaskIds.Add(task.Id)) continue;
                 var fresh = StoreUtil.NewId();
+                regeneratedFrom[task] = task.Id;
                 idMap[task.Id] = fresh;
                 task.Id = fresh;
                 takenTaskIds.Add(fresh);
                 regenerated.Add(task);
             }
         }
+
+        // A regenerated task is a copy and gets fresh step ids; a sibling that reads one of its
+        // steps has to follow, so every re-key happens before any binding is rewritten.
+        var stepMaps = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (var task in regenerated) stepMaps[regeneratedFrom[task]] = StoreUtil.ReidentifySteps(task);
 
         var importedCollections = new List<Collection>();
         var importedTasks = new List<TaskDefinition>();
@@ -535,7 +549,7 @@ public sealed class ArchiveService
             foreach (var task in section.Tasks)
             {
                 task.CollectionId = collection.Id;
-                if (regenerated.Contains(task)) StoreUtil.ReidentifySteps(task);
+                StoreUtil.RemapSiblingSteps(task, stepMaps);
                 StoreUtil.RemapTaskIds(task, idMap);
             }
             collection.TaskOrder = collection.TaskOrder

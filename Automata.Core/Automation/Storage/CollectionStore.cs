@@ -141,10 +141,17 @@ public sealed class CollectionStore
             taskIds[original.Id] = taskCopy.Id;
         }
 
-        foreach (var taskCopy in copies)
+        var stepMaps = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (var (original, taskCopy) in tasks.Zip(copies))
         {
             taskCopy.CollectionId = copy.Id;
-            StoreUtil.ReidentifySteps(taskCopy);
+            stepMaps[original.Id] = StoreUtil.ReidentifySteps(taskCopy);
+        }
+
+        // After every copy is re-keyed: a binding to a sibling's step needs the sibling's new ids.
+        foreach (var taskCopy in copies)
+        {
+            StoreUtil.RemapSiblingSteps(taskCopy, stepMaps);
             StoreUtil.RemapTaskIds(taskCopy, taskIds);
             SaveTask(taskCopy);
         }

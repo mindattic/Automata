@@ -40,7 +40,9 @@ internal static class StoreUtil
     /// So the two halves are one operation and there is no way to do only the first.
     /// </para>
     /// </summary>
-    public static void ReidentifySteps(TaskDefinition task)
+    /// <returns>Old step id to new step id, so a sibling task's bindings to these steps can follow
+    /// (see <see cref="RemapSiblingSteps"/>).</returns>
+    public static Dictionary<string, string> ReidentifySteps(TaskDefinition task)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var step in Step.Flatten(task.Steps))
@@ -50,6 +52,27 @@ internal static class StoreUtil
             step.Id = fresh;
         }
         RemapStepIds(task, map);
+        return map;
+    }
+
+    /// <summary>
+    /// Follows a re-keyed sibling: a binding that reads a step output from ANOTHER task
+    /// (<see cref="BindingRef.SourceTaskId"/>) names that step by an id the sibling's copy no longer
+    /// has. <paramref name="stepMapsByOldTaskId"/> is each re-keyed task's map from
+    /// <see cref="ReidentifySteps"/>, keyed by that task's id BEFORE any task-id remap. Call before
+    /// <see cref="RemapTaskIds"/>, which rewrites the very ids this matches on.
+    /// </summary>
+    public static void RemapSiblingSteps(
+        TaskDefinition task, IReadOnlyDictionary<string, Dictionary<string, string>> stepMapsByOldTaskId)
+    {
+        if (stepMapsByOldTaskId.Count == 0) return;
+        WalkBindings(task, binding =>
+        {
+            if (binding.SourceTaskId != null && binding.SourceStepId != null
+                && stepMapsByOldTaskId.TryGetValue(binding.SourceTaskId, out var steps)
+                && steps.TryGetValue(binding.SourceStepId, out var moved))
+                binding.SourceStepId = moved;
+        });
     }
 
     /// <summary>
