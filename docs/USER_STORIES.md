@@ -72,7 +72,7 @@ _Nothing recorded yet._
 | AUT-T49 | 2026-11-26 | fix | closed | A failed draft leaves the Draft steps button stuck on 'Drafting…' and disabled | 56c2dfd9699033ac043f48ac0bc65a59abdeceed |
 | AUT-T50 | 2026-11-26 | feature | open | Automata: adopt (or confirm) the shared run menu over deploy-lib.ps1, run Redeploy, and confirm its exe lands and starts at R:\MindAttic\Apps\Automata\Debug and \Release; repoint anything in the repo still naming an old deploy path. Outcome: both builds exist under R: and launch | — |
 | AUT-T51 | 2026-11-26 | chore | open | Delete the old C:\Apps\Automata deploy now that R:\MindAttic\Apps\Automata runs from both Debug and Release. Outcome: the folder is gone | — |
-| AUT-T52 | 2026-11-27 | chore | open | Portfolio reset (MAT-T324): release charter (docs/RELEASE.md, one milestone), bible, and triage of every open ticket into epic>feature>task for: Automata, Auto.GamePlay, Auto.WebNav, Auto.MidjourneyNav | — |
+| AUT-T52 | 2026-11-27 | chore | closed | Portfolio reset (MAT-T324): release charter (docs/RELEASE.md, one milestone), bible, and triage of every open ticket into epic>feature>task for: Automata, Auto.GamePlay, Auto.WebNav, Auto.MidjourneyNav | 75947cf, b68116c, e0a3495, 2c20af8 |
 | AUT-T53 | 2026-11-27 | feature | open | Close the engine gaps NEXT_STEPS.md lists so Automata 3.0 is complete: demo suite green, scheduler hand-off, dataset deletion | — |
 | AUT-T54 | 2026-11-27 | feature | open | Docs and release tag that describe Automata 3.0 as it ships | — |
 | AUT-T55 | 2026-11-27 | feature | open | tools/verify-demos.mjs passes every check | — |
